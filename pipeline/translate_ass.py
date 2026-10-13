@@ -46,7 +46,34 @@ def translate_api(lines, context):
     raise SystemExit("翻译行数始终对不上，请改用 --zh-file")
 
 
-def build_ass(subs, zh, title, title_duration):
+def build_ass(subs, zh, title, title_duration, style="bzrp"):
+    return (build_ass_bzrp if style == "bzrp" else build_ass_modern)(subs, zh, title, title_duration)
+
+
+def build_ass_bzrp(subs, zh, title, title_duration):
+    """默认样式，与 lyrics/bzrp_v2.ass 完全一致：384x288 画布、Arial Rounded 23、描边 1、无阴影、底边距 50；
+    标题也作为普通一行放在底部；格式 “原文 \\N♪ 中文 ♪”，不加任何行内标签。"""
+    out = pysubs2.SSAFile()
+    out.info.update({"PlayResX": "384", "PlayResY": "288", "ScaledBorderAndShadow": "yes"})
+    out.styles["Default"] = pysubs2.SSAStyle(
+        fontname=LATIN_FONT, fontsize=23,
+        primarycolor=pysubs2.Color(255, 255, 255), secondarycolor=pysubs2.Color(255, 255, 255),
+        outlinecolor=pysubs2.Color(0, 0, 0), backcolor=pysubs2.Color(0, 0, 0),
+        outline=1, shadow=0, alignment=pysubs2.Alignment.BOTTOM_CENTER,
+        marginl=10, marginr=10, marginv=50)
+    if title:
+        first = subs.events[0].start if subs.events else title_duration
+        out.events.append(pysubs2.SSAEvent(start=0, end=min(title_duration, first), text=title))
+    for e, z in zip(subs.events, zh):
+        text = e.plaintext.replace("\n", " ").strip()
+        if z and z != text:
+            text += r" \N♪ " + z + " ♪"
+        out.events.append(pysubs2.SSAEvent(start=e.start, end=e.end, text=text))
+    return out
+
+
+def build_ass_modern(subs, zh, title, title_duration):
+    """1920x1080 画布、日文 Hiragino Sans W6、中文加粗、标题在顶部。"""
     out = pysubs2.SSAFile()
     out.info.update({"PlayResX": str(PLAY_W), "PlayResY": str(PLAY_H),
                      "ScaledBorderAndShadow": "yes", "WrapStyle": "0"})
@@ -82,6 +109,8 @@ def main():
     p.add_argument("--title", help="首行标题，如 '《Song》 Artist'")
     p.add_argument("--title-duration", type=int, default=4000, help="标题最长显示毫秒")
     p.add_argument("--zh-file")
+    p.add_argument("--style", choices=["bzrp", "modern"], default="bzrp",
+                   help="bzrp=与 bzrp_v2.ass 相同（默认）；modern=1080p 画布、日文粗体、标题在顶部")
     a = p.parse_args()
 
     subs = pysubs2.load(a.srt)
@@ -94,7 +123,7 @@ def main():
     else:
         zh = translate_api(lines, a.title)
 
-    build_ass(subs, zh, a.title, a.title_duration).save(a.output)
+    build_ass(subs, zh, a.title, a.title_duration, a.style).save(a.output)
     print(f"写入 {a.output}（{len(lines)} 句，{sum(1 for z in zh if z)} 句含中文）")
 
 

@@ -33,7 +33,7 @@ my_venv/bin/python pipeline/make_mv.py --name X --from translate --to translate 
 ```
 - 密钥读仓库根目录 `.env`（与 Takit 相同的变量名，默认 `LLM_PROVIDER=deepseek`，模型 deepseek-v4-pro；可切 aliyun / siliconflow / openai）
 - 或用户自备中文：`--zh-file zh.txt`（每行对应 srt 一句，空行 = 不翻译）
-- 产物 `lyrics/X.ass`：1920x1080 PlayRes，`原文\N♪ 中文 ♪`，标题在顶部
+- 产物 `lyrics/X.ass`：默认样式与 `lyrics/bzrp_v2.ass` 一致（384x288、Arial Rounded 23、描边 1、底边距 50，`原文 \N♪ 中文 ♪`，标题作为首行在底部）；`--sub-style modern` 为 1080p 画布 + 日文粗体 + 标题在顶部
 - 已存在的文件不会被覆盖，重新生成要 `--force`
 
 ## 4. 插帧 + 渲染

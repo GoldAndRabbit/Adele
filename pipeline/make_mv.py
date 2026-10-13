@@ -197,6 +197,7 @@ def stage_translate(a, w):
         cmd += ["--title", title]
     if a.zh_file:
         cmd += ["--zh-file", a.zh_file]
+    cmd += ["--style", a.sub_style]
     run(cmd)
     print(f"\n>>> 双语字幕已生成: {out}，建议过一遍再 --from interp")
 
@@ -299,6 +300,8 @@ def main():
     p.add_argument("--max-width", type=int, default=40,
                    help="单句最大显示宽度（全角算 2），超过就拆")
     p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'")
+    p.add_argument("--sub-style", choices=["bzrp", "modern"], default="bzrp",
+                   help="字幕样式：bzrp=与 bzrp_v2.ass 相同（默认）；modern=1080p 画布、日文粗体、标题在顶部")
     p.add_argument("--zh-file", help="不调 API，直接用这个文件里的中文翻译（每行对应一句）")
     p.add_argument("--cookies-from-browser", help="yt-dlp 需要登录时: chrome / safari / firefox")
     p.add_argument("--cookies", help="cookies.txt 路径")
