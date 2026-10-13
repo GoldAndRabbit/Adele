@@ -231,6 +231,35 @@ def draw_text(canvas, xy, text, fnt, fill=(255, 255, 255), stroke=0.06, anchor="
                                 stroke_width=sw, stroke_fill=(20, 20, 24))
 
 
+def ink_width(text, fnt, tracking=0):
+    w = fnt.getbbox(text, anchor="ls")
+    return (w[2] - w[0]) + tracking * max(0, len(text) - 1)
+
+
+def fit_width(text, key, target_w, max_size):
+    """二分找最大字号，使文字墨迹宽度不超过 target_w，且字号不超过 max_size。"""
+    lo, hi = 20, max_size
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if ink_width(text, font(key, mid)) <= target_w:
+            lo = mid
+        else:
+            hi = mid - 1
+    return font(key, lo)
+
+
+def draw_text_tracked(canvas, cx, y, text, fnt, tracking, stroke):
+    """按字距逐字绘制（白字 + 深色描边 + 投影），整体以 cx 水平居中、y 为基线。"""
+    if tracking <= 0:
+        draw_text(canvas, (cx, y), text, fnt, stroke=stroke)
+        return
+    total = ink_width(text, fnt, tracking)
+    x = cx - total / 2 - fnt.getbbox(text, anchor="ls")[0]
+    for ch in text:
+        draw_text(canvas, (x, y), ch, fnt, stroke=stroke, anchor="ls")
+        x += fnt.getlength(ch) + tracking
+
+
 def fit(text, key, start, max_w):
     size = start
     while size > 30:
@@ -343,13 +372,20 @@ def compose(frame, a):
 
     # 标题 + 副标题，整体底边在安全线以上
     title_key = a.title_font or ("cjk" if CJK_RE.search(a.title) else "sans")
-    tf = fit(a.title, title_key, 220, int(cw * 0.9))
-    sf = fit(a.subtitle, "sub", 96, int(cw * 0.88)) if a.subtitle else None
+    # 标题撑满到接近左右边缘（默认 94% 画布宽），字号再受高度上限约束
+    tf = fit_width(a.title, title_key, int(cw * a.title_width), int(ch * 0.30))
+    title_w = ink_width(a.title, tf)
     sub_y = int(ch * a.text_y)
-    title_y = sub_y - (int(sf.size * 1.15) if sf else 0)
-    draw_text(canvas, (cw / 2, title_y), a.title, tf)
-    if sf:
-        draw_text(canvas, (cw / 2, sub_y), a.subtitle, sf, stroke=0.08)
+    if a.subtitle:
+        # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
+        sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.55))
+        gaps = max(1, len(a.subtitle) - 1)
+        tracking = max(0.0, (title_w - ink_width(a.subtitle, sf)) / gaps)
+        title_y = sub_y - int(sf.size * 1.12)
+        draw_text(canvas, (cw / 2, title_y), a.title, tf)
+        draw_text_tracked(canvas, cw / 2, sub_y, a.subtitle, sf, tracking, 0.08)
+    else:
+        draw_text(canvas, (cw / 2, sub_y), a.title, tf)
     return canvas.convert("RGB")
 
 
@@ -388,6 +424,8 @@ def main():
                    help="不裁切，把底部这一比例（如 0.14）模糊压暗来盖住烧录字幕；保持原构图，标题更容易放高（推荐）")
     p.add_argument("--crop-bottom", type=float, default=0.0,
                    help="取帧时先裁掉底部这一比例（如 0.14），用于画面里烧了字幕的搬运视频")
+    p.add_argument("--title-width", type=float, default=0.94,
+                   help="标题撑满的画布宽度比例（默认 0.94，接近左右边缘）；副标题与标题等宽对齐")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
     p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png），可多次")
     p.add_argument("--logo", default="adele-logo.png")
