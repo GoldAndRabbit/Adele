@@ -27,7 +27,8 @@ PAD = 1.2          # 对齐窗口前后各扩多少秒
 MIN_SCORE = 0.25   # 对齐平均分低于这个视为不可信
 SNAP = 0.15        # 起音吸附范围（秒）
 MIN_DUR = 0.8
-MAX_SHIFT = 2.5    # 新起点和原起点最多差多少秒，超过视为对齐跑偏
+MAX_SHIFT = 2.5          # 新起点和原起点差在这个范围内直接采信
+MAX_SHIFT_ORDERED = 6.0  # 差得更多时，和前后句顺序一致才采信
 
 
 def romanize(text, lang):
@@ -131,7 +132,14 @@ def main():
     for i, (ev, res) in enumerate(zip(subs.events, aligned)):
         old_s, old_e = ev.start / 1000, ev.end / 1000
         # 全局对齐有前后句约束，主要防的是整段跑偏：和原时间差太远（> MAX_SHIFT）就不信
-        ok = res is not None and abs(res[0] - old_s) < MAX_SHIFT and 0.2 < res[1] - res[0] < 12
+        # 位移小直接信；位移大（原时间本身可能是错的，比如开头把观众声当成了演唱）时，
+        # 只要和前后句的新时间顺序一致、且不超过 MAX_SHIFT_ORDERED，也信
+        prev_end = next((aligned[k][1] for k in range(i - 1, -1, -1) if aligned[k]), 0.0)
+        next_start = next((aligned[k][0] for k in range(i + 1, len(aligned)) if aligned[k]), 1e9)
+        ordered = res is not None and prev_end - 0.3 <= res[0] and res[1] <= next_start + 0.3
+        shift = abs(res[0] - old_s) if res else 1e9
+        ok = (res is not None and 0.2 < res[1] - res[0] < 12
+              and (shift < MAX_SHIFT or (ordered and shift < MAX_SHIFT_ORDERED)))
         if ok:
             rows.append((i, snap_onset(res[0], rise), res[1], res[2]))
         else:
