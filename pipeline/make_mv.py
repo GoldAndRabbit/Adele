@@ -236,14 +236,15 @@ def stage_interp(a, w):
 
 
 def stage_render(a, w):
-    ass = ROOT / "lyrics" / f"{a.name}.ass"
+    ass = Path(a.ass).resolve() if a.ass else ROOT / "lyrics" / f"{a.name}.ass"
     if not ass.exists():
         sys.exit(f"缺少字幕 {ass}")
     # ass 滤镜对路径里的空格/冒号转义很麻烦，拷到工作目录用相对路径
     shutil.copy(ass, w / "subs.ass")
     post = ROOT / "post"
     post.mkdir(exist_ok=True)
-    out = post / f"{a.name} 4K60FPS Sub-WaterMark.mp4"
+    tag = f" {a.tag}" if a.tag else ""
+    out = post / f"{a.name} 4K60FPS Sub-WaterMark{tag}.mp4"
     ext = "jpg" if any((w / "frames_out").glob("*.jpg")) else "png"
 
     if a.fast:
@@ -284,6 +285,8 @@ def main():
     p.add_argument("--zh-file", help="不调 API，直接用这个文件里的中文翻译（每行对应一句）")
     p.add_argument("--cookies-from-browser", help="yt-dlp 需要登录时: chrome / safari / firefox")
     p.add_argument("--cookies", help="cookies.txt 路径")
+    p.add_argument("--ass", help="render 用的字幕文件，默认 lyrics/<name>.ass")
+    p.add_argument("--tag", help="成品文件名后缀，用于对比不同版本，如 bzrpv2style")
     p.add_argument("--logo", default="adele-logo.png")
     p.add_argument("--logo-scale", default="0.10")
     p.add_argument("--crf", type=int, default=18)
