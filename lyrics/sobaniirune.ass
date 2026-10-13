@@ -16,74 +16,74 @@ Style: Title,Arial Rounded MT Bold,64,&H00FFFFFF,&H000000FF,&H00000000,&H8000000
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 Dialogue: 0,0:00:00.00,0:00:04.00,Title,,0,0,0,,{\fnHiragino Sans W6}《そばにいるね》 青山テルマ feat. SoulJa
-Dialogue: 0,0:00:07.08,0:00:07.58,Default,,0,0,0,,{\fnHiragino Sans W6}久しぶり
-Dialogue: 0,0:00:07.58,0:00:08.57,Default,,0,0,0,,{\fnHiragino Sans W6}久しぶり
-Dialogue: 0,0:00:08.57,0:00:09.20,Default,,0,0,0,,{\fnHiragino Sans W6}元気？
-Dialogue: 0,0:00:09.20,0:00:10.11,Default,,0,0,0,,{\fnHiragino Sans W6}元気だよ
-Dialogue: 0,0:00:10.11,0:00:10.77,Default,,0,0,0,,{\fnHiragino Sans W6}元気？
-Dialogue: 0,0:00:10.77,0:00:11.68,Default,,0,0,0,,{\fnHiragino Sans W6}元気だよ
-Dialogue: 0,0:00:11.68,0:00:14.25,Default,,0,0,0,,{\fnHiragino Sans W6}2，3年ぶりかな？これ一緒に歌うの
-Dialogue: 0,0:00:14.25,0:00:15.00,Default,,0,0,0,,{\fnHiragino Sans W6}あぁ
-Dialogue: 0,0:00:15.00,0:00:18.69,Default,,0,0,0,,{\fnHiragino Sans W6}この曲ももうすぐ２０歳
-Dialogue: 0,0:00:18.69,0:00:19.38,Default,,0,0,0,,{\fnHiragino Sans W6}二十歳
-Dialogue: 0,0:00:19.38,0:00:21.00,Default,,0,0,0,,{\fnHiragino Sans W6}すごくない？
-Dialogue: 0,0:00:21.00,0:00:22.72,Default,,0,0,0,,{\fnHiragino Sans W6}Yo、バーに行こう
-Dialogue: 0,0:00:22.72,0:00:23.79,Default,,0,0,0,,{\fnHiragino Sans W6}マジだよ、マジ
-Dialogue: 0,0:00:23.79,0:00:25.22,Default,,0,0,0,,{\fnHiragino Sans W6}ホント　信じられないよね
-Dialogue: 0,0:00:25.22,0:00:26.87,Default,,0,0,0,,{\fnHiragino Sans W6}信じられない
-Dialogue: 0,0:00:26.87,0:00:27.48,Default,,0,0,0,,{\fnHiragino Sans W6}準備いい？
-Dialogue: 0,0:00:27.48,0:00:27.98,Default,,0,0,0,,{\fnHiragino Sans W6}はい
-Dialogue: 0,0:00:27.98,0:00:28.74,Default,,0,0,0,,{\fnHiragino Sans W6}じゃあ行ってみよう
-Dialogue: 0,0:00:28.74,0:00:30.38,Default,,0,0,0,,{\fnHiragino Sans W6}お願いします
-Dialogue: 0,0:00:45.10,0:00:50.86,Default,,0,0,0,,{\fnHiragino Sans W6}あなたのこと 私は今でも思い続けているよ
-Dialogue: 0,0:00:50.86,0:00:57.00,Default,,0,0,0,,{\fnHiragino Sans W6}いくら時流れて⾏こうと Iʼm by your side baby いつでも
-Dialogue: 0,0:00:57.00,0:01:01.58,Default,,0,0,0,,{\fnHiragino Sans W6}So. どんなに離れていようと ⼼の中では
-Dialogue: 0,0:01:01.58,0:01:08.75,Default,,0,0,0,,{\fnHiragino Sans W6}いつでも⼀緒にいるけど 寂しいんだよ So baby please ただ hurry back home
-Dialogue: 0,0:01:08.75,0:01:16.12,Default,,0,0,0,,{\fnHiragino Sans W6}Baby boy あたしはここにいるよ どこもいかずに待ってるよ
-Dialogue: 0,0:01:16.12,0:01:22.20,Default,,0,0,0,,{\fnHiragino Sans W6}You know dat I love you だからこそ ⼼配しなくていいんだよ
-Dialogue: 0,0:01:22.20,0:01:28.16,Default,,0,0,0,,{\fnHiragino Sans W6}どんなに遠くにいても変わらないよこの⼼
-Dialogue: 0,0:01:28.16,0:01:34.04,Default,,0,0,0,,{\fnHiragino Sans W6}⾔いたい事わかるでしょ? あなたのこと待ってるよ
-Dialogue: 0,0:01:34.04,0:01:39.65,Default,,0,0,0,,{\fnHiragino Sans W6}んなことよりお前の⽅は元気か? ちゃんと飯⾷ってるか?
-Dialogue: 0,0:01:39.65,0:01:45.48,Default,,0,0,0,,{\fnHiragino Sans W6}ちくしょう、やっぱ⾔えねぇや また今度送るよ 俺からのLetter
-Dialogue: 0,0:01:45.48,0:01:51.10,Default,,0,0,0,,{\fnHiragino Sans W6}過ぎ去った時は戻せないけれど
-Dialogue: 0,0:01:51.10,0:01:57.01,Default,,0,0,0,,{\fnHiragino Sans W6}近くにいてくれた君が恋しいの
-Dialogue: 0,0:01:57.01,0:02:03.12,Default,,0,0,0,,{\fnHiragino Sans W6}だけど あなたとの距離が遠くなる程に
-Dialogue: 0,0:02:03.12,0:02:08.88,Default,,0,0,0,,{\fnHiragino Sans W6}忙しくみせていた あたし逃げてたの
-Dialogue: 0,0:02:08.88,0:02:16.39,Default,,0,0,0,,{\fnHiragino Sans W6}だけど ⽬を閉じる時 眠ろうとする時 逃げきれないよ あなたの事
-Dialogue: 0,0:02:16.39,0:02:21.21,Default,,0,0,0,,{\fnHiragino Sans W6}思い出しては ⼀⼈泣いてたの
-Dialogue: 0,0:02:21.21,0:02:26.88,Default,,0,0,0,,{\fnHiragino Sans W6}あなたのこと 私は今でも思い続けているよ
-Dialogue: 0,0:02:26.88,0:02:32.82,Default,,0,0,0,,{\fnHiragino Sans W6}いくら時流れて⾏こうと Iʼm by your side baby いつでも
-Dialogue: 0,0:02:32.82,0:02:37.65,Default,,0,0,0,,{\fnHiragino Sans W6}So. どんなに離れていようと ⼼の中では
-Dialogue: 0,0:02:37.65,0:02:44.86,Default,,0,0,0,,{\fnHiragino Sans W6}いつでも⼀緒にいるけど 寂しいんだよ So baby please ただ hurry back home
-Dialogue: 0,0:02:44.86,0:02:52.16,Default,,0,0,0,,{\fnHiragino Sans W6}Baby boy あたしはここにいるよ どこもいかずに待ってるよ
-Dialogue: 0,0:02:52.16,0:02:58.19,Default,,0,0,0,,{\fnHiragino Sans W6}You know dat I love you だからこそ ⼼配しなくていいんだよ
-Dialogue: 0,0:02:58.19,0:03:04.11,Default,,0,0,0,,{\fnHiragino Sans W6}どんなに遠くにいても変わらないよこの⼼
-Dialogue: 0,0:03:04.11,0:03:09.58,Default,,0,0,0,,{\fnHiragino Sans W6}⾔いたい事わかるでしょ? あなたのこと待ってるよ
-Dialogue: 0,0:03:09.58,0:03:15.64,Default,,0,0,0,,{\fnHiragino Sans W6}不器⽤な俺 遠くにいる君 伝えたい気持ちそのまま⾔えずに
-Dialogue: 0,0:03:15.64,0:03:21.20,Default,,0,0,0,,{\fnHiragino Sans W6}君は⾏っちまった 今じゃ残された君はアルバムの中
-Dialogue: 0,0:03:21.20,0:03:26.75,Default,,0,0,0,,{\fnHiragino Sans W6}アルバムの中 納めた思い出の
-Dialogue: 0,0:03:26.75,0:03:33.00,Default,,0,0,0,,{\fnHiragino Sans W6}⽇々より 何げない⼀時が 今じゃ恋しいの
-Dialogue: 0,0:03:33.00,0:03:39.14,Default,,0,0,0,,{\fnHiragino Sans W6}And now あなたからの電話待ち続けていた
-Dialogue: 0,0:03:39.14,0:03:44.86,Default,,0,0,0,,{\fnHiragino Sans W6}携帯にぎりしめながら眠りについた
-Dialogue: 0,0:03:44.86,0:03:52.39,Default,,0,0,0,,{\fnHiragino Sans W6}あたしは どこも⾏かないよ ここにいるけれど ⾒つめ合いたいあなたのその瞳
-Dialogue: 0,0:03:52.39,0:03:58.29,Default,,0,0,0,,{\fnHiragino Sans W6}ねぇわかるでしょ? あたし待ってるよ
-Dialogue: 0,0:03:58.29,0:04:00.07,Default,,0,0,0,,I’m right here baby
-Dialogue: 0,0:04:00.07,0:04:01.48,Default,,0,0,0,,I’m right here girl
-Dialogue: 0,0:04:08.83,0:04:16.15,Default,,0,0,0,,{\fnHiragino Sans W6}Baby boy あたしはここにいるよ どこもいかずに待ってるよ
-Dialogue: 0,0:04:16.15,0:04:22.13,Default,,0,0,0,,{\fnHiragino Sans W6}You know dat I love you だからこそ ⼼配しなくていいんだよ
-Dialogue: 0,0:04:22.13,0:04:28.08,Default,,0,0,0,,{\fnHiragino Sans W6}どんなに遠くにいても変わらないよこの⼼
-Dialogue: 0,0:04:28.08,0:04:33.71,Default,,0,0,0,,{\fnHiragino Sans W6}⾔いたい事わかるでしょ? あなたのこと待ってるよ
-Dialogue: 0,0:04:33.71,0:04:39.39,Default,,0,0,0,,{\fnHiragino Sans W6}俺はどこも⾏かないよ ここにいるけれど 探し続けるあなたの顔
-Dialogue: 0,0:04:39.39,0:04:45.16,Default,,0,0,0,,{\fnHiragino Sans W6}Your 笑顔 今でも触れそうだって思いながら⼿を伸ばせば 君は
-Dialogue: 0,0:04:45.16,0:04:50.86,Default,,0,0,0,,{\fnHiragino Sans W6}あなたのこと 私は今でも思い続けているよ
-Dialogue: 0,0:04:50.86,0:04:57.03,Default,,0,0,0,,{\fnHiragino Sans W6}いくら時流れて⾏こうと Iʼm by your side baby いつでも
-Dialogue: 0,0:04:57.03,0:05:01.63,Default,,0,0,0,,{\fnHiragino Sans W6}So. どんなに離れていようと ⼼の中では
-Dialogue: 0,0:05:01.63,0:05:09.19,Default,,0,0,0,,{\fnHiragino Sans W6}いつでも⼀緒にいるけど 寂しいんだよ So baby please ただ hurry back home
-Dialogue: 0,0:05:09.19,0:05:14.98,Default,,0,0,0,,{\fnHiragino Sans W6}あなたのこと 私は今でも思い続けているよ
-Dialogue: 0,0:05:14.98,0:05:20.80,Default,,0,0,0,,{\fnHiragino Sans W6}いくら時流れて⾏こうと Iʼm by your side baby いつでも
-Dialogue: 0,0:05:20.80,0:05:25.51,Default,,0,0,0,,{\fnHiragino Sans W6}So. どんなに離れていようと ⼼の中では
-Dialogue: 0,0:05:25.51,0:05:29.96,Default,,0,0,0,,{\fnHiragino Sans W6}いつでも⼀緒にいるけど 寂しいんだよ
-Dialogue: 0,0:05:29.96,0:05:36.41,Default,,0,0,0,,{\fnHiragino Sans W6}So baby please ただ hurry back home
-Dialogue: 0,0:05:36.41,0:05:37.09,Default,,0,0,0,,{\fnHiragino Sans W6}ありがとう
-Dialogue: 0,0:05:37.09,0:05:37.84,Default,,0,0,0,,{\fnHiragino Sans W6}ありがとうございます
-Dialogue: 0,0:05:43.07,0:05:43.92,Default,,0,0,0,,{\fnHiragino Sans W6}緊張した
+Dialogue: 0,0:00:07.08,0:00:07.58,Default,,0,0,0,,{\fnHiragino Sans W6}久しぶり\N{\fnHiragino Sans GB\b1\fs56}♪ 好久不见 ♪
+Dialogue: 0,0:00:07.58,0:00:08.57,Default,,0,0,0,,{\fnHiragino Sans W6}久しぶり\N{\fnHiragino Sans GB\b1\fs56}♪ 好久不见 ♪
+Dialogue: 0,0:00:08.57,0:00:09.20,Default,,0,0,0,,{\fnHiragino Sans W6}元気？\N{\fnHiragino Sans GB\b1\fs56}♪ 你好吗？ ♪
+Dialogue: 0,0:00:09.20,0:00:10.11,Default,,0,0,0,,{\fnHiragino Sans W6}元気だよ\N{\fnHiragino Sans GB\b1\fs56}♪ 我很好 ♪
+Dialogue: 0,0:00:10.11,0:00:10.77,Default,,0,0,0,,{\fnHiragino Sans W6}元気？\N{\fnHiragino Sans GB\b1\fs56}♪ 你好吗？ ♪
+Dialogue: 0,0:00:10.77,0:00:11.68,Default,,0,0,0,,{\fnHiragino Sans W6}元気だよ\N{\fnHiragino Sans GB\b1\fs56}♪ 我很好 ♪
+Dialogue: 0,0:00:11.68,0:00:14.25,Default,,0,0,0,,{\fnHiragino Sans W6}2，3年ぶりかな？これ一緒に歌うの\N{\fnHiragino Sans GB\b1\fs56}♪ 大概两三年没见了吧？一起唱这首歌 ♪
+Dialogue: 0,0:00:14.25,0:00:15.00,Default,,0,0,0,,{\fnHiragino Sans W6}あぁ\N{\fnHiragino Sans GB\b1\fs56}♪ 啊 ♪
+Dialogue: 0,0:00:15.00,0:00:18.69,Default,,0,0,0,,{\fnHiragino Sans W6}この曲ももうすぐ２０歳\N{\fnHiragino Sans GB\b1\fs56}♪ 这首歌也快20岁了 ♪
+Dialogue: 0,0:00:18.69,0:00:19.38,Default,,0,0,0,,{\fnHiragino Sans W6}二十歳\N{\fnHiragino Sans GB\b1\fs56}♪ 二十岁 ♪
+Dialogue: 0,0:00:19.38,0:00:21.00,Default,,0,0,0,,{\fnHiragino Sans W6}すごくない？\N{\fnHiragino Sans GB\b1\fs56}♪ 很厉害吧？ ♪
+Dialogue: 0,0:00:21.00,0:00:22.72,Default,,0,0,0,,{\fnHiragino Sans W6}Yo、バーに行こう\N{\fnHiragino Sans GB\b1\fs56}♪ Yo，去酒吧吧 ♪
+Dialogue: 0,0:00:22.72,0:00:23.79,Default,,0,0,0,,{\fnHiragino Sans W6}マジだよ、マジ\N{\fnHiragino Sans GB\b1\fs56}♪ 真的，真的 ♪
+Dialogue: 0,0:00:23.79,0:00:25.22,Default,,0,0,0,,{\fnHiragino Sans W6}ホント　信じられないよね\N{\fnHiragino Sans GB\b1\fs56}♪ 真的难以置信呢 ♪
+Dialogue: 0,0:00:25.22,0:00:26.87,Default,,0,0,0,,{\fnHiragino Sans W6}信じられない\N{\fnHiragino Sans GB\b1\fs56}♪ 难以置信 ♪
+Dialogue: 0,0:00:26.87,0:00:27.48,Default,,0,0,0,,{\fnHiragino Sans W6}準備いい？\N{\fnHiragino Sans GB\b1\fs56}♪ 准备好了吗？ ♪
+Dialogue: 0,0:00:27.48,0:00:27.98,Default,,0,0,0,,{\fnHiragino Sans W6}はい\N{\fnHiragino Sans GB\b1\fs56}♪ 是的 ♪
+Dialogue: 0,0:00:27.98,0:00:28.74,Default,,0,0,0,,{\fnHiragino Sans W6}じゃあ行ってみよう\N{\fnHiragino Sans GB\b1\fs56}♪ 那就开始吧 ♪
+Dialogue: 0,0:00:28.74,0:00:30.38,Default,,0,0,0,,{\fnHiragino Sans W6}お願いします\N{\fnHiragino Sans GB\b1\fs56}♪ 拜托了 ♪
+Dialogue: 0,0:00:45.10,0:00:50.86,Default,,0,0,0,,{\fnHiragino Sans W6}あなたのこと 私は今でも思い続けているよ\N{\fnHiragino Sans GB\b1\fs56}♪ 我至今依然思念着你 ♪
+Dialogue: 0,0:00:50.86,0:00:57.00,Default,,0,0,0,,{\fnHiragino Sans W6}いくら時流れて⾏こうと Iʼm by your side baby いつでも\N{\fnHiragino Sans GB\b1\fs56}♪ 无论时光如何流逝 I'm by your side baby 无论何时 ♪
+Dialogue: 0,0:00:57.00,0:01:01.58,Default,,0,0,0,,{\fnHiragino Sans W6}So. どんなに離れていようと ⼼の中では\N{\fnHiragino Sans GB\b1\fs56}♪ So. 无论相隔多远 在心中 ♪
+Dialogue: 0,0:01:01.58,0:01:08.75,Default,,0,0,0,,{\fnHiragino Sans W6}いつでも⼀緒にいるけど 寂しいんだよ So baby please ただ hurry back home\N{\fnHiragino Sans GB\b1\fs56}♪ 虽然总是在一起 却感到寂寞 So baby please 只求你 hurry back home ♪
+Dialogue: 0,0:01:08.75,0:01:16.12,Default,,0,0,0,,{\fnHiragino Sans W6}Baby boy あたしはここにいるよ どこもいかずに待ってるよ\N{\fnHiragino Sans GB\b1\fs56}♪ Baby boy 我就在这里 哪儿也不去地等着你 ♪
+Dialogue: 0,0:01:16.12,0:01:22.20,Default,,0,0,0,,{\fnHiragino Sans W6}You know dat I love you だからこそ ⼼配しなくていいんだよ\N{\fnHiragino Sans GB\b1\fs56}♪ You know dat I love you 所以 不用担心 ♪
+Dialogue: 0,0:01:22.20,0:01:28.16,Default,,0,0,0,,{\fnHiragino Sans W6}どんなに遠くにいても変わらないよこの⼼\N{\fnHiragino Sans GB\b1\fs56}♪ 无论相隔多远 这颗心都不会变 ♪
+Dialogue: 0,0:01:28.16,0:01:34.04,Default,,0,0,0,,{\fnHiragino Sans W6}⾔いたい事わかるでしょ? あなたのこと待ってるよ\N{\fnHiragino Sans GB\b1\fs56}♪ 我想说的你明白吧？ 我在等着你 ♪
+Dialogue: 0,0:01:34.04,0:01:39.65,Default,,0,0,0,,{\fnHiragino Sans W6}んなことよりお前の⽅は元気か? ちゃんと飯⾷ってるか?\N{\fnHiragino Sans GB\b1\fs56}♪ 比起那些 你还好吗？ 有好好吃饭吗？ ♪
+Dialogue: 0,0:01:39.65,0:01:45.48,Default,,0,0,0,,{\fnHiragino Sans W6}ちくしょう、やっぱ⾔えねぇや また今度送るよ 俺からのLetter\N{\fnHiragino Sans GB\b1\fs56}♪ 可恶，还是说不出口 下次再寄给你 我写的信 ♪
+Dialogue: 0,0:01:45.48,0:01:51.10,Default,,0,0,0,,{\fnHiragino Sans W6}過ぎ去った時は戻せないけれど\N{\fnHiragino Sans GB\b1\fs56}♪ 逝去的时光无法倒流 ♪
+Dialogue: 0,0:01:51.10,0:01:57.01,Default,,0,0,0,,{\fnHiragino Sans W6}近くにいてくれた君が恋しいの\N{\fnHiragino Sans GB\b1\fs56}♪ 我怀念着曾在我身边的你 ♪
+Dialogue: 0,0:01:57.01,0:02:03.12,Default,,0,0,0,,{\fnHiragino Sans W6}だけど あなたとの距離が遠くなる程に\N{\fnHiragino Sans GB\b1\fs56}♪ 但是 随着与你距离越来越远 ♪
+Dialogue: 0,0:02:03.12,0:02:08.88,Default,,0,0,0,,{\fnHiragino Sans W6}忙しくみせていた あたし逃げてたの\N{\fnHiragino Sans GB\b1\fs56}♪ 我假装忙碌 其实是在逃避 ♪
+Dialogue: 0,0:02:08.88,0:02:16.39,Default,,0,0,0,,{\fnHiragino Sans W6}だけど ⽬を閉じる時 眠ろうとする時 逃げきれないよ あなたの事\N{\fnHiragino Sans GB\b1\fs56}♪ 但是 闭上眼睛时 想要入睡时 却逃不掉 你的事 ♪
+Dialogue: 0,0:02:16.39,0:02:21.21,Default,,0,0,0,,{\fnHiragino Sans W6}思い出しては ⼀⼈泣いてたの\N{\fnHiragino Sans GB\b1\fs56}♪ 一想起你 就独自哭泣 ♪
+Dialogue: 0,0:02:21.21,0:02:26.88,Default,,0,0,0,,{\fnHiragino Sans W6}あなたのこと 私は今でも思い続けているよ\N{\fnHiragino Sans GB\b1\fs56}♪ 我至今依然思念着你 ♪
+Dialogue: 0,0:02:26.88,0:02:32.82,Default,,0,0,0,,{\fnHiragino Sans W6}いくら時流れて⾏こうと Iʼm by your side baby いつでも\N{\fnHiragino Sans GB\b1\fs56}♪ 无论时光如何流逝 I'm by your side baby 无论何时 ♪
+Dialogue: 0,0:02:32.82,0:02:37.65,Default,,0,0,0,,{\fnHiragino Sans W6}So. どんなに離れていようと ⼼の中では\N{\fnHiragino Sans GB\b1\fs56}♪ So. 无论相隔多远 在心中 ♪
+Dialogue: 0,0:02:37.65,0:02:44.86,Default,,0,0,0,,{\fnHiragino Sans W6}いつでも⼀緒にいるけど 寂しいんだよ So baby please ただ hurry back home\N{\fnHiragino Sans GB\b1\fs56}♪ 虽然总是在一起 却感到寂寞 So baby please 只求你 hurry back home ♪
+Dialogue: 0,0:02:44.86,0:02:52.16,Default,,0,0,0,,{\fnHiragino Sans W6}Baby boy あたしはここにいるよ どこもいかずに待ってるよ\N{\fnHiragino Sans GB\b1\fs56}♪ Baby boy 我就在这里 哪儿也不去地等着你 ♪
+Dialogue: 0,0:02:52.16,0:02:58.19,Default,,0,0,0,,{\fnHiragino Sans W6}You know dat I love you だからこそ ⼼配しなくていいんだよ\N{\fnHiragino Sans GB\b1\fs56}♪ You know dat I love you 所以 不用担心 ♪
+Dialogue: 0,0:02:58.19,0:03:04.11,Default,,0,0,0,,{\fnHiragino Sans W6}どんなに遠くにいても変わらないよこの⼼\N{\fnHiragino Sans GB\b1\fs56}♪ 无论相隔多远 这颗心都不会变 ♪
+Dialogue: 0,0:03:04.11,0:03:09.58,Default,,0,0,0,,{\fnHiragino Sans W6}⾔いたい事わかるでしょ? あなたのこと待ってるよ\N{\fnHiragino Sans GB\b1\fs56}♪ 我想说的你明白吧？ 我在等着你 ♪
+Dialogue: 0,0:03:09.58,0:03:15.64,Default,,0,0,0,,{\fnHiragino Sans W6}不器⽤な俺 遠くにいる君 伝えたい気持ちそのまま⾔えずに\N{\fnHiragino Sans GB\b1\fs56}♪ 笨拙的我 远方的你 想传达的心情却说不出口 ♪
+Dialogue: 0,0:03:15.64,0:03:21.20,Default,,0,0,0,,{\fnHiragino Sans W6}君は⾏っちまった 今じゃ残された君はアルバムの中\N{\fnHiragino Sans GB\b1\fs56}♪ 你走了 如今留下的你只在相册里 ♪
+Dialogue: 0,0:03:21.20,0:03:26.75,Default,,0,0,0,,{\fnHiragino Sans W6}アルバムの中 納めた思い出の\N{\fnHiragino Sans GB\b1\fs56}♪ 相册里 珍藏的回忆 ♪
+Dialogue: 0,0:03:26.75,0:03:33.00,Default,,0,0,0,,{\fnHiragino Sans W6}⽇々より 何げない⼀時が 今じゃ恋しいの\N{\fnHiragino Sans GB\b1\fs56}♪ 比起那些日子 现在更怀念那些不经意的瞬间 ♪
+Dialogue: 0,0:03:33.00,0:03:39.14,Default,,0,0,0,,{\fnHiragino Sans W6}And now あなたからの電話待ち続けていた\N{\fnHiragino Sans GB\b1\fs56}♪ And now 我一直等着你的电话 ♪
+Dialogue: 0,0:03:39.14,0:03:44.86,Default,,0,0,0,,{\fnHiragino Sans W6}携帯にぎりしめながら眠りについた\N{\fnHiragino Sans GB\b1\fs56}♪ 紧握着手机入睡 ♪
+Dialogue: 0,0:03:44.86,0:03:52.39,Default,,0,0,0,,{\fnHiragino Sans W6}あたしは どこも⾏かないよ ここにいるけれど ⾒つめ合いたいあなたのその瞳\N{\fnHiragino Sans GB\b1\fs56}♪ 我哪儿也不去 就在这里 但想凝视你的双眼 ♪
+Dialogue: 0,0:03:52.39,0:03:58.29,Default,,0,0,0,,{\fnHiragino Sans W6}ねぇわかるでしょ? あたし待ってるよ\N{\fnHiragino Sans GB\b1\fs56}♪ 呐 你明白吧？ 我在等着你 ♪
+Dialogue: 0,0:03:58.29,0:04:00.07,Default,,0,0,0,,I’m right here baby\N{\fnHiragino Sans GB\b1\fs56}♪ I'm right here baby ♪
+Dialogue: 0,0:04:00.07,0:04:01.48,Default,,0,0,0,,I’m right here girl\N{\fnHiragino Sans GB\b1\fs56}♪ I'm right here girl ♪
+Dialogue: 0,0:04:08.83,0:04:16.15,Default,,0,0,0,,{\fnHiragino Sans W6}Baby boy あたしはここにいるよ どこもいかずに待ってるよ\N{\fnHiragino Sans GB\b1\fs56}♪ Baby boy 我就在这里 哪儿也不去地等着你 ♪
+Dialogue: 0,0:04:16.15,0:04:22.13,Default,,0,0,0,,{\fnHiragino Sans W6}You know dat I love you だからこそ ⼼配しなくていいんだよ\N{\fnHiragino Sans GB\b1\fs56}♪ You know dat I love you 所以 不用担心 ♪
+Dialogue: 0,0:04:22.13,0:04:28.08,Default,,0,0,0,,{\fnHiragino Sans W6}どんなに遠くにいても変わらないよこの⼼\N{\fnHiragino Sans GB\b1\fs56}♪ 无论相隔多远 这颗心都不会变 ♪
+Dialogue: 0,0:04:28.08,0:04:33.71,Default,,0,0,0,,{\fnHiragino Sans W6}⾔いたい事わかるでしょ? あなたのこと待ってるよ\N{\fnHiragino Sans GB\b1\fs56}♪ 我想说的你明白吧？ 我在等着你 ♪
+Dialogue: 0,0:04:33.71,0:04:39.39,Default,,0,0,0,,{\fnHiragino Sans W6}俺はどこも⾏かないよ ここにいるけれど 探し続けるあなたの顔\N{\fnHiragino Sans GB\b1\fs56}♪ 我哪儿也不去 就在这里 但一直寻找着你的脸庞 ♪
+Dialogue: 0,0:04:39.39,0:04:45.16,Default,,0,0,0,,{\fnHiragino Sans W6}Your 笑顔 今でも触れそうだって思いながら⼿を伸ばせば 君は\N{\fnHiragino Sans GB\b1\fs56}♪ 你的笑容 仿佛现在还能触碰到 伸出手时 你却 ♪
+Dialogue: 0,0:04:45.16,0:04:50.86,Default,,0,0,0,,{\fnHiragino Sans W6}あなたのこと 私は今でも思い続けているよ\N{\fnHiragino Sans GB\b1\fs56}♪ 我至今依然思念着你 ♪
+Dialogue: 0,0:04:50.86,0:04:57.03,Default,,0,0,0,,{\fnHiragino Sans W6}いくら時流れて⾏こうと Iʼm by your side baby いつでも\N{\fnHiragino Sans GB\b1\fs56}♪ 无论时光如何流逝 I'm by your side baby 无论何时 ♪
+Dialogue: 0,0:04:57.03,0:05:01.63,Default,,0,0,0,,{\fnHiragino Sans W6}So. どんなに離れていようと ⼼の中では\N{\fnHiragino Sans GB\b1\fs56}♪ So. 无论相隔多远 在心中 ♪
+Dialogue: 0,0:05:01.63,0:05:09.19,Default,,0,0,0,,{\fnHiragino Sans W6}いつでも⼀緒にいるけど 寂しいんだよ So baby please ただ hurry back home\N{\fnHiragino Sans GB\b1\fs56}♪ 虽然总是在一起 却感到寂寞 So baby please 只求你 hurry back home ♪
+Dialogue: 0,0:05:09.19,0:05:14.98,Default,,0,0,0,,{\fnHiragino Sans W6}あなたのこと 私は今でも思い続けているよ\N{\fnHiragino Sans GB\b1\fs56}♪ 我至今依然思念着你 ♪
+Dialogue: 0,0:05:14.98,0:05:20.80,Default,,0,0,0,,{\fnHiragino Sans W6}いくら時流れて⾏こうと Iʼm by your side baby いつでも\N{\fnHiragino Sans GB\b1\fs56}♪ 无论时光如何流逝 I'm by your side baby 无论何时 ♪
+Dialogue: 0,0:05:20.80,0:05:25.51,Default,,0,0,0,,{\fnHiragino Sans W6}So. どんなに離れていようと ⼼の中では\N{\fnHiragino Sans GB\b1\fs56}♪ So. 无论相隔多远 在心中 ♪
+Dialogue: 0,0:05:25.51,0:05:29.96,Default,,0,0,0,,{\fnHiragino Sans W6}いつでも⼀緒にいるけど 寂しいんだよ\N{\fnHiragino Sans GB\b1\fs56}♪ 虽然总是在一起 却感到寂寞 ♪
+Dialogue: 0,0:05:29.96,0:05:36.41,Default,,0,0,0,,{\fnHiragino Sans W6}So baby please ただ hurry back home\N{\fnHiragino Sans GB\b1\fs56}♪ So baby please 只求你 hurry back home ♪
+Dialogue: 0,0:05:36.41,0:05:37.09,Default,,0,0,0,,{\fnHiragino Sans W6}ありがとう\N{\fnHiragino Sans GB\b1\fs56}♪ 谢谢 ♪
+Dialogue: 0,0:05:37.09,0:05:37.84,Default,,0,0,0,,{\fnHiragino Sans W6}ありがとうございます\N{\fnHiragino Sans GB\b1\fs56}♪ 非常感谢 ♪
+Dialogue: 0,0:05:43.07,0:05:43.92,Default,,0,0,0,,{\fnHiragino Sans W6}緊張した\N{\fnHiragino Sans GB\b1\fs56}♪ 好紧张 ♪
