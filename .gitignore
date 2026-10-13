@@ -32,3 +32,4 @@ models/realsrgan/
 # cookies 等敏感文件
 cookies*.txt
 .env
+*.log

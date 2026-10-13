@@ -31,7 +31,7 @@ whisper 结果经常有错字/漏句。让用户对照正确歌词修改 `ori_ly
 ```bash
 my_venv/bin/python pipeline/make_mv.py --name X --from translate --to translate --title "《歌名》 歌手"
 ```
-- 需要 `OPENAI_API_KEY`（可配 `OPENAI_BASE_URL`、`TRANSLATE_MODEL` 用 DeepSeek 等兼容服务）
+- 密钥读仓库根目录 `.env`（与 Takit 相同的变量名，默认 `LLM_PROVIDER=deepseek`，模型 deepseek-v4-pro；可切 aliyun / siliconflow / openai）
 - 或用户自备中文：`--zh-file zh.txt`（每行对应 srt 一句，空行 = 不翻译）
 - 产物 `lyrics/X.ass`：1920x1080 PlayRes，`原文\N♪ 中文 ♪`，标题在顶部
 - 已存在的文件不会被覆盖，重新生成要 `--force`
