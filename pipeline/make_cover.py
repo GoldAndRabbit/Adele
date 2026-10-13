@@ -22,7 +22,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 W, H = 1920, 1080
-TEXT_Y = 0.76  # 副标题基线位置（占画面高度）；B 站底部约 16% 会盖播放量/时长，不要超过 0.84
+TEXT_Y = 0.68  # 副标题基线位置（占画面高度）；B 站底部约 16% 会盖播放量/时长，不要超过 0.84
 
 FONTS = {
     "sans": ("/System/Library/Fonts/Avenir Next.ttc", 8),                    # Avenir Next Heavy
@@ -114,6 +114,30 @@ def upscale(img, work):
     return out
 
 
+def backdrop_column(strip):
+    """把边缘一条像素压成 1px 宽的“背景色”竖条。"""
+    col = np.asarray(strip.convert("RGB").resize((1, strip.height), Image.BOX), dtype=np.float32)[:, 0]
+    bright = col.mean(axis=1)
+    sat = col.max(axis=1) - col.min(axis=1)
+    # 以上部 30% 的亮度为基准，比它暗 20 以上的都算人物/阴影，过渡行不会被当成背景
+    ref = np.median(bright[: max(1, len(col) * 3 // 10)])
+    is_bg = (bright > max(120, ref - 20)) & (sat < 45)
+    if not is_bg.any():
+        return Image.fromarray(col[:, None].astype(np.uint8)).filter(ImageFilter.GaussianBlur(6))
+    last = col[np.argmax(is_bg)].copy()
+    fill_from = None
+    for y in range(len(col)):
+        if is_bg[y]:
+            last = col[y].copy()
+            fill_from = None
+        else:
+            fill_from = y if fill_from is None else fill_from
+            k = (y - fill_from) / len(col)
+            col[y] = last * (1 - 0.35 * k)  # 往下慢慢变暗，接上封面底部的压暗渐变
+    img = Image.fromarray(col[:, None].clip(0, 255).astype(np.uint8))
+    return img.resize((1, len(col))).filter(ImageFilter.GaussianBlur(40))
+
+
 def fill_169(img, mode):
     """把任意比例的图放进 16:9：主体完整居中，两侧用 extend（边缘颜色延伸）或 blur（模糊放大底图）补齐。"""
     if abs(img.width / img.height - W / H) < 0.01:
@@ -129,15 +153,16 @@ def fill_169(img, mode):
         bg = bg.crop((0, (bg.height - H) // 2, W, (bg.height - H) // 2 + H)).filter(ImageFilter.GaussianBlur(40))
         bg = Image.blend(bg, Image.new("RGB", (W, H), (0, 0, 0)), 0.25)
     else:
-        # 取左右各 6px 的平均颜色向外拉伸，再竖向轻微模糊，接缝处做渐变
-        left = fg.crop((0, 0, 6, H)).resize((1, H), Image.BOX).resize((x0 + 40, H))
-        right = fg.crop((fg.width - 6, 0, fg.width, H)).resize((1, H), Image.BOX).resize((W - x0 - fg.width + 40, H))
+        # 两侧只延伸“背景”颜色：边缘像素是人物（暗/有颜色）的行，沿用上方最近的背景色并逐渐加深，
+        # 避免把衣服横向拉成一大片黑带
+        left = backdrop_column(fg.crop((0, 0, 8, H))).resize((x0 + 90, H))
+        right = backdrop_column(fg.crop((fg.width - 8, 0, fg.width, H))).resize((W - x0 - fg.width + 90, H))
         bg = Image.new("RGB", (W, H))
-        bg.paste(left.filter(ImageFilter.GaussianBlur(6)), (0, 0))
-        bg.paste(right.filter(ImageFilter.GaussianBlur(6)), (x0 + fg.width - 40, 0))
+        bg.paste(left, (0, 0))
+        bg.paste(right, (x0 + fg.width - 90, 0))
     out = bg.copy()
     mask = Image.new("L", fg.size, 255)
-    feather = 40 if mode == "extend" else 24
+    feather = 90 if mode == "extend" else 24
     md = ImageDraw.Draw(mask)
     for i in range(feather):
         v = int(255 * i / feather)
