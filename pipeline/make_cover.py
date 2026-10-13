@@ -49,7 +49,24 @@ def duration(video):
     return float(json.loads(out.stdout)["format"]["duration"])
 
 
-CROP_BOTTOM = 0.0  # 先裁掉画面底部这一比例（去掉搬运视频烧进去的字幕），再放大补满
+CROP_BOTTOM = 0.0  # 先裁掉画面底部这一比例（去掉搬运视频烧进去的字幕），再放大补满（会放大画面、人脸下移）
+MASK_BOTTOM = 0.0  # 不裁切，把底部这一比例的条带模糊+压暗（盖住烧录字幕，保持原构图，人脸更靠上）
+
+
+def mask_bottom(img, frac):
+    """底部条带重度模糊并压暗，上沿羽化过渡。"""
+    if frac <= 0:
+        return img
+    w, h = img.size
+    top = int(h * (1 - frac))
+    feather = int(h * 0.06)
+    blurred = img.filter(ImageFilter.GaussianBlur(28))
+    blurred = Image.blend(blurred, Image.new("RGB", img.size, (0, 0, 0)), 0.55)
+    mask = Image.new("L", img.size, 0)
+    md = ImageDraw.Draw(mask)
+    for y in range(max(0, top - feather), h):
+        md.line([(0, y), (w, y)], fill=255 if y >= top else int(255 * (y - (top - feather)) / feather))
+    return Image.composite(blurred, img, mask)
 
 
 def grab(video, t):
@@ -59,7 +76,7 @@ def grab(video, t):
          "-vf", f"{pre}scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}",
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
         capture_output=True, check=True).stdout
-    return Image.frombytes("RGB", (W, H), raw)
+    return mask_bottom(Image.frombytes("RGB", (W, H), raw), MASK_BOTTOM)
 
 
 def grab_hd(video, t, work):
@@ -75,7 +92,7 @@ def grab_hd(video, t, work):
     scale = max(W / img.width, H / img.height)
     img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
     x, y = (img.width - W) // 2, (img.height - H) // 2
-    return img.crop((x, y, x + W, y + H))
+    return mask_bottom(img.crop((x, y, x + W, y + H)), MASK_BOTTOM)
 
 
 def score(img):
@@ -367,6 +384,8 @@ def main():
                    help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
     p.add_argument("--no-sr", dest="sr", action="store_false",
                    help="不做 Real-ESRGAN 高清化（默认对选中的帧做 x4 超分再缩到封面尺寸）")
+    p.add_argument("--mask-bottom", type=float, default=0.0,
+                   help="不裁切，把底部这一比例（如 0.14）模糊压暗来盖住烧录字幕；保持原构图，标题更容易放高（推荐）")
     p.add_argument("--crop-bottom", type=float, default=0.0,
                    help="取帧时先裁掉底部这一比例（如 0.14），用于画面里烧了字幕的搬运视频")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
@@ -378,6 +397,7 @@ def main():
     video = Path(a.video) if a.video else ROOT / "work" / a.name / "source.mp4"
     a.fill = a.fill or ["extend", "blur"]
     globals()["CROP_BOTTOM"] = a.crop_bottom
+    globals()["MASK_BOTTOM"] = a.mask_bottom
     out = Path(a.out_dir) if a.out_dir else ROOT / "post" / a.name / "cover"
     out.mkdir(parents=True, exist_ok=True)
 
