@@ -8,7 +8,7 @@ python pipeline/make_cover.py --name sobaniirune --title "そばにいるね" \
     --subtitle "青山テルマ feat. SoulJa · 中日字幕"
 # 已选好时间点:   --at 65.2 --at 130
 # 右上角加队徽:   --extra-logo cover/psg.png
-产物: post/covers/<name>/cover_XX.jpg（1920x1080）, post/covers/<name>/candidates.jpg
+产物: post/<name>/cover/cover_XX.jpg（1920x1080）, post/<name>/cover/candidates.jpg
 """
 
 import argparse
@@ -319,7 +319,7 @@ def main():
     p.add_argument("--image", action="append", help="用外部图片（专辑封面等）代替视频帧，可多次")
     p.add_argument("--fill", action="append", choices=["extend", "blur", "crop"],
                    help="非 16:9 图片的补齐方式，可多次（每种出一张），默认 extend + blur")
-    p.add_argument("--out-dir", help="输出目录，默认 post/covers/<name>")
+    p.add_argument("--out-dir", help="输出目录，默认 post/<name>/cover")
     p.add_argument("--text-y", type=float, default=TEXT_Y,
                    help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
@@ -330,7 +330,7 @@ def main():
 
     video = Path(a.video) if a.video else ROOT / "work" / a.name / "source.mp4"
     a.fill = a.fill or ["extend", "blur"]
-    out = Path(a.out_dir) if a.out_dir else ROOT / "post" / "covers" / a.name
+    out = Path(a.out_dir) if a.out_dir else ROOT / "post" / a.name / "cover"
     out.mkdir(parents=True, exist_ok=True)
 
     if a.image:

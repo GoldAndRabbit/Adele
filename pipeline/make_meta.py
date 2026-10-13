@@ -6,8 +6,8 @@
 事实依据只用 work/<name>/meta.json 里 yt-dlp 抓到的视频标题 / 简介 / 发布日期，
 模型负责整理成中文，不允许编造简介里没有的信息，也不引用歌词。
 
-python pipeline/make_meta.py --name sobaniirune --cover post/covers/sobaniirune/art/cover_01.jpg
-产物: post/<name>.json
+python pipeline/make_meta.py --name sobaniirune --cover post/sobaniirune/cover/art/cover_01.jpg
+产物: post/<name>/<name>.json
 """
 
 import argparse
@@ -62,7 +62,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--name", required=True)
     p.add_argument("--subtitle-langs", default="", help="字幕语言，如 '日语,中文'；默认从字幕文件推断")
-    p.add_argument("--video", help="成品视频，默认 post/<name> 4K60FPS Sub-WaterMark.mp4")
+    p.add_argument("--video", help="成品视频，默认 post/<name>/<name> 4K60FPS Sub-WaterMark.mp4")
     p.add_argument("--cover", help="选定的封面")
     p.add_argument("--note", help="补充给模型的信息（如演唱会名称、你想强调的点）")
     a = p.parse_args()
@@ -87,7 +87,7 @@ def main():
     if len(title) > TITLE_MAX:
         print(f"警告：标题 {len(title)} 字，超过 {TITLE_MAX}，请手动缩短")
 
-    video = Path(a.video) if a.video else ROOT / "post" / f"{a.name} 4K60FPS Sub-WaterMark.mp4"
+    video = Path(a.video) if a.video else ROOT / "post" / a.name / f"{a.name} 4K60FPS Sub-WaterMark.mp4"
     out = {
         "name": a.name,
         "title": title,
@@ -110,7 +110,8 @@ def main():
         "spec": {"resolution": "3840x2160", "fps": 60, "audio": "AAC 320k"},
         "files": {
             "video": str(video.relative_to(ROOT)) if video.is_relative_to(ROOT) else str(video),
-            "cover": a.cover,
+            "cover": a.cover or (f"post/{a.name}/cover/cover_01.jpg"
+                                 if (ROOT / "post" / a.name / "cover" / "cover_01.jpg").exists() else None),
             "subtitle": f"lyrics/{a.name}.ass",
         },
         "source": {
@@ -119,7 +120,8 @@ def main():
             "channel": meta.get("channel"),
         },
     }
-    dst = ROOT / "post" / f"{a.name}.json"
+    dst = ROOT / "post" / a.name / f"{a.name}.json"
+    dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n")
     print(f"写入 {dst}")
 

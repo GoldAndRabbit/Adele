@@ -45,7 +45,7 @@ my_venv/bin/python pipeline/make_mv.py --name X --from interp
 - 源已是 60fps 则跳过插帧
 - lanczos 放大到 3840x2160 → 烧 ass → 左上角 `adele-logo.png`（宽度 10%）→ x264 crf18 + AAC 320k
 - `--fast` 用 VideoToolbox HEVC 硬编；`--keep-frames` 保留 PNG
-- 成品：`post/X 4K60FPS Sub-WaterMark.mp4`
+- 成品：`post/X/X 4K60FPS Sub-WaterMark.mp4`（每个作品一个目录：视频 + `cover/` + `X.json`）
 
 ## 注意
 - 1080p PNG 帧约 3MB/帧，4 分钟 60fps ≈ 14400 帧 ≈ 40GB，开工前 `df -h` 看磁盘
@@ -60,19 +60,19 @@ my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "
 - 每张统一打上：左上 朝阳Adele logo（带深色衬底）+ 金色 4K/60FPS 徽章，中下方大标题 + 宋体副标题，副标题基线默认在 68% 高度（`--text-y` 调，越小越靠上；不要超过 0.84，底部留给 B 站播放量）
 - 右上角额外 logo（队徽等）：`--extra-logo path.png`，可多次
 - 标题字体：英文默认 Avenir Next Heavy，含日文/中文自动用 Hiragino Sans W8；`--title-font gill|serif` 可换成 Bzrp / Man of the Year 那种风格
-- 产物：`post/covers/X/candidates.jpg`（编号总图，给用户挑）、`cover_XX.jpg`（1920x1080 成品）、`frame_XX_*.jpg`（原始帧）
+- 产物：`post/X/cover/candidates.jpg`（编号总图，给用户挑）、`cover_XX.jpg`（1920x1080 成品）、`frame_XX_*.jpg`（原始帧）
 
 ### 用专辑封面等外部图片
 ```bash
-my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "..." --image cover/X_art.png --out-dir post/covers/X/art
+my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "..." --image cover/X_art.png --out-dir post/X/cover/art
 ```
 - 自动去掉左右纯色边条；分辨率不够先用 Real-ESRGAN x4 放大
 - 非 16:9 的图：`--fill extend`（边缘颜色向两侧延伸，默认推荐）/ `blur`（模糊底图）/ `crop`
 
 ## 6. 投稿元数据 JSON
 ```bash
-my_venv/bin/python pipeline/make_meta.py --name X --subtitle-langs "日语,中文" --cover post/covers/X/cover_01.jpg [--note "补充信息"]
+my_venv/bin/python pipeline/make_meta.py --name X --subtitle-langs "日语,中文" --cover post/X/cover/cover_01.jpg [--note "补充信息"]
 ```
-- 依据 `work/X/meta.json`（yt-dlp 抓的标题/简介/日期）让模型整理，产物 `post/X.json`
+- 依据 `work/X/meta.json`（yt-dlp 抓的标题/简介/日期）让模型整理，产物 `post/X/X.json`
 - 字段：title（`[4K60帧/Hi-Res] 中文名《歌名》英文名. 关键词`，≤80 字）、song、performance、intro.song、intro.performance、tags、subtitles、spec、files、source
 - 生成后**必须人工核对**：模型可能把频道口号当演出细节、给罗马字人名乱配汉字、编造数字

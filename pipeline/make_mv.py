@@ -10,7 +10,7 @@
   split      过长的句子在停顿处拆开，切点对齐人声   -> ori_lyrics/<name>.srt（原地）
   translate  调 API 生成双语 ass                  -> lyrics/<name>.ass        (需人工校对)
   interp     原生帧率抽帧 + RIFE 直接插到 60fps     -> work/<name>/frames_out/
-  render     放大到 4K + 烧字幕 + 水印             -> post/<name> 4K60FPS Sub-WaterMark.mp4
+  render     放大到 4K + 烧字幕 + 水印             -> post/<name>/<name> 4K60FPS Sub-WaterMark.mp4
 
 用法:
   my_venv/bin/python pipeline/make_mv.py --name bzrp --url "https://..." --lang Spanish --to lyrics
@@ -270,8 +270,8 @@ def stage_render(a, w):
         sys.exit(f"缺少字幕 {ass}")
     # ass 滤镜对路径里的空格/冒号转义很麻烦，拷到工作目录用相对路径
     shutil.copy(ass, w / "subs.ass")
-    post = ROOT / "post"
-    post.mkdir(exist_ok=True)
+    post = ROOT / "post" / a.name  # 每个作品一个目录：视频、cover/、<name>.json
+    post.mkdir(parents=True, exist_ok=True)
     tag = f" {a.tag}" if a.tag else ""
     out = post / f"{a.name} 4K60FPS Sub-WaterMark{tag}.mp4"
     ext = "jpg" if any((w / "frames_out").glob("*.jpg")) else "png"
