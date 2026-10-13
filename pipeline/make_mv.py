@@ -177,6 +177,7 @@ def stage_lyrics(a, w):
             run([sys.executable, ROOT / "pipeline" / "align_lyrics.py", "--ref", ref,
                  "--whisper", w / "whisper" / "vocals.json", "-o", out,
                  "--report", w / "align_report.json",
+                 "--mode", a.align_mode,
                  "--min-score", a.align_min_score, "--min-cover", a.align_min_cover])
             print(f"\n>>> 已按原始歌词校准: {out}\n>>> 看一下报告里的低置信度句和未匹配段，然后 --from split 继续")
             return
@@ -328,6 +329,8 @@ def main():
     p.add_argument("--lang", help="whisper 语言，如 English / Spanish / Japanese；不填自动识别")
     p.add_argument("--sub-lang", help="优先使用的官方字幕语言代码，如 en / es / ja")
     p.add_argument("--ref-lyrics", help="原始歌词 txt/srt，用来和 whisper 互相校准；默认找 ori_lyrics/<name>.txt")
+    p.add_argument("--align-mode", choices=["reference", "recording"], default="reference",
+                   help="歌词校准：reference=文字只来自参考歌词、识别只给时间（默认）；recording=以录音为主")
     p.add_argument("--align-min-score", type=float, default=80,
                    help="歌词校准的匹配分数门槛，现场版识别差时可降到 70")
     p.add_argument("--align-min-cover", type=float, default=0.7)

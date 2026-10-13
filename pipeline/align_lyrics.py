@@ -222,6 +222,61 @@ def align(ref_lines, segs, max_width=40):
     return events, leftovers, used_lines, scores
 
 
+REF_SCORE = 60          # reference 模式：参考句在识别流里的模糊匹配门槛
+REF_SCORE_SHORT = 75    # 读音不足 8 个字的短句
+MAX_INTERP_DUR = 4000   # 没对上的句子插值时每句最长显示 4s
+
+
+def align_reference(ref_lines, segs):
+    """以参考歌词为准：每一句都按顺序输出（文字只来自参考），识别结果只用来定时间。
+    在识别读音流里从当前位置往后找这一句，找到就用对应识别字的首尾时间并前移；
+    找不到的句子不丢，按前后已定位句子之间的空档、按字数比例插值时间，并在报告里列出。
+    识别里有、参考里没有的内容一律不进字幕。"""
+    stream = [c for seg in segs for c in seg["chars"]]
+    hyp = "".join(c[0] for c in stream)
+    out, pos = [], 0
+    for line in ref_lines:
+        r = reading(line)
+        if not r:
+            continue
+        need = REF_SCORE_SHORT if len(r) < 8 else REF_SCORE
+        window = hyp[pos:pos + max(160, len(r) * 4)]
+        al = fuzz.partial_ratio_alignment(r, window) if window else None
+        if al and al.score >= need and al.dest_end > al.dest_start:
+            s0, e0 = pos + al.dest_start, pos + al.dest_end
+            out.append({"text": line, "start": stream[s0][1], "end": stream[e0 - 1][2], "score": al.score})
+            pos = e0
+        else:
+            out.append({"text": line, "start": None, "end": None, "score": 0})
+
+    interp = []
+    i = 0
+    while i < len(out):
+        if out[i]["start"] is not None:
+            i += 1
+            continue
+        j = i
+        while j < len(out) and out[j]["start"] is None:
+            j += 1
+        lo = out[i - 1]["end"] if i > 0 else max(0, (out[j]["start"] if j < len(out) else 0) - 3000 * (j - i))
+        hi = out[j]["start"] if j < len(out) else lo + MAX_INTERP_DUR * (j - i)
+        ws = [max(1, len(reading(out[k]["text"]))) for k in range(i, j)]
+        t = lo
+        for k, wdt in zip(range(i, j), ws):
+            d = min(MAX_INTERP_DUR, (hi - lo) * wdt / sum(ws))
+            out[k]["start"], out[k]["end"] = t, t + d
+            interp.append(k)
+            t += d
+        i = j
+
+    for k, o in enumerate(out):  # 每句最短显示时长，不压到下一句
+        nxt = out[k + 1]["start"] if k + 1 < len(out) else None
+        o["end"] = max(o["end"], o["start"] + MIN_DUR)
+        if nxt is not None and o["end"] > nxt:
+            o["end"] = max(nxt, o["start"] + 100)
+    return out, interp
+
+
 def fmt(ms):
     s = int(ms // 1000)
     return f"{s // 60}:{s % 60:02d}"
@@ -234,6 +289,9 @@ def main():
     p.add_argument("-o", "--output", required=True)
     p.add_argument("--report", help="校准报告 json，默认与输出同名 .align.json")
     p.add_argument("--max-width", type=int, default=40, help="合并短语时单句最大显示宽度（全角算 2）")
+    p.add_argument("--mode", choices=["reference", "recording"], default="reference",
+                   help="reference（默认）：文字全部来自参考歌词、按顺序逐句定时，识别只给时间；"
+                        "recording：以录音为主，对不上的保留识别原文（参考歌词不全/顺序完全不同时用）")
     p.add_argument("--min-score", type=float, default=MIN_SCORE,
                    help=f"模糊匹配分数门槛，越低覆盖越多、误配风险越大（默认 {MIN_SCORE}）")
     p.add_argument("--min-cover", type=float, default=MIN_COVER,
@@ -242,6 +300,30 @@ def main():
 
     globals().update(MIN_SCORE=a.min_score, MIN_COVER=a.min_cover)
     ref = load_ref(a.ref)
+    if a.mode == "reference":
+        segs = load_segments(a.whisper)
+        out, interp = align_reference(ref, segs)
+        subs = pysubs2.SSAFile()
+        for o in out:
+            subs.events.append(pysubs2.SSAEvent(start=int(o["start"]), end=int(o["end"]), text=o["text"]))
+        subs.save(a.output)
+        matched = [o["score"] for k, o in enumerate(out) if k not in set(interp)]
+        report = {
+            "mode": "reference",
+            "lines": len(out),
+            "timed_by_asr": len(matched),
+            "mean_score": round(sum(matched) / max(1, len(matched)), 1),
+            # 时间是插值的：可能这一版没唱这句，或识别太差没找到，需要人工看时间点
+            "interpolated": [{"line": k + 1, "start": fmt(out[k]["start"])} for k in interp],
+        }
+        rp = Path(a.report or Path(a.output).with_suffix(".align.json"))
+        rp.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        print(f"参考 {len(out)} 句全部输出（文字只来自参考歌词）；{len(matched)} 句按识别定时（平均分 {report['mean_score']}），"
+              f"{len(interp)} 句时间为插值")
+        for x in report["interpolated"]:
+            print(f"  插值: 第 {x['line']} 句 @ {x['start']}")
+        print(f"报告: {rp}")
+        return
     segs = load_segments(a.whisper)
     events, leftovers, used, scores = align(ref, segs, a.max_width)
 
