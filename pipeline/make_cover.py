@@ -129,6 +129,29 @@ def badge(width):
     return img
 
 
+def badge_from_file(path, width):
+    """用现成的 4K60 徽章图：缩放、圆角、细深色描边（原图是直角、无透明通道的 jpg）。"""
+    src = Image.open(path).convert("RGBA")
+    h = int(src.height * width / src.width)
+    img = src.resize((width, h), Image.LANCZOS)
+    r = int(width * 0.08)
+    mask = Image.new("L", (width, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, width - 1, h - 1], r, fill=255)
+    img.putalpha(mask)
+    ImageDraw.Draw(img).rounded_rectangle([0, 0, width - 1, h - 1], r, outline=(30, 22, 8, 255),
+                                          width=max(2, width // 90))
+    return img
+
+
+def paste_with_shadow(canvas, img, xy, blur=8, offset=(3, 5), alpha=150):
+    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    sh = Image.new("RGBA", img.size, (0, 0, 0, alpha))
+    sh.putalpha(img.getchannel("A").point(lambda v: v * alpha // 255))
+    shadow.alpha_composite(sh, (xy[0] + offset[0], xy[1] + offset[1]))
+    canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(blur)))
+    canvas.alpha_composite(img, xy)
+
+
 def compose(frame, a):
     canvas = frame.convert("RGBA")
 
@@ -152,8 +175,10 @@ def compose(frame, a):
     canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(10)))
     canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(3)))
     canvas.alpha_composite(logo, (60, 34))
-    b = badge(int(W * 0.14))
-    canvas.alpha_composite(b, (60 + (lw - b.width) // 2, 34 + logo.height + 6))
+    bw = int(W * 0.13)
+    badge_path = ROOT / a.badge
+    b = badge_from_file(badge_path, bw) if badge_path.exists() else badge(bw)
+    paste_with_shadow(canvas, b, (60 + (lw - b.width) // 2, 34 + logo.height + 10))
 
     # 右上: 额外 logo（队徽等）
     x = W - 50
@@ -202,6 +227,7 @@ def main():
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
     p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png），可多次")
     p.add_argument("--logo", default="adele-logo.png")
+    p.add_argument("--badge", default="4K60-logo.jpg", help="4K60 徽章图，不存在时用代码画的徽章")
     a = p.parse_args()
 
     video = Path(a.video) if a.video else ROOT / "work" / a.name / "source.mp4"
