@@ -9,8 +9,9 @@
 做法（以录音为主导，适配不同编曲 / 段落顺序 / 重复副歌）:
   1. 两边都转成平假名读音（pykakasi）并归一化，汉字/假名写法不同也能对上
   2. 参考歌词先按空格/全角空格拆成短语，粒度和 whisper 片段接近（官方字幕常是两段一行的长句）
-  3. 按录音顺序逐个看 whisper 片段，在整份参考歌词里找能放进这个片段的短语（rapidfuzz 模糊匹配），
-     按分数贪心选取互不重叠的句子，文字换成参考歌词的写法，时间取对应识别字的首尾
+  3. 把整段识别拼成一条读音流（短语可以跨 whisper 片段），从头往后扫：在当前位置找最匹配的参考短语
+     （任意顺序、可重复，rapidfuzz 模糊匹配），达标就采用、跳到短语末尾，否则前进一个字；
+     文字换成参考歌词的写法，时间取对应识别字的首尾
   4. 同一原句里相邻、时间连续的短语再合并回一句（不超过 --max-width）
   5. 片段里没被任何参考句覆盖的部分保留 whisper 原文，并在报告里列出时间点，需要人工看
 
@@ -105,49 +106,99 @@ def to_phrases(lines):
     return out
 
 
-def match_segment(seg, refs):
-    """在一个 whisper 片段里贪心放入最匹配的参考句，返回 [(起, 止, 参考句序号, 分数)]（读音字下标）。"""
-    text = "".join(c[0] for c in seg["chars"])
-    cands = []
+MAX_INNER_GAP = 3000    # 一个短语内部不允许跨过超过 3s 的静音
+FRAGMENT_SCORE = 85     # 剩下的半句落在某个参考短语里的分数门槛
+
+
+def match_at(stream, p, refs):
+    """从识别流第 p 个读音字开始，找最匹配的参考短语；返回 (结束下标, 短语序号, 分数) 或 None。"""
+    best = None
     for ri, (_, r, _, _) in enumerate(refs):
         if not r:
             continue
-        al = fuzz.partial_ratio_alignment(r, text)
-        if not al or al.dest_end <= al.dest_start:
-            continue
         need = MIN_SCORE_SHORT if len(r) < 5 else MIN_SCORE
-        # 参考句比片段长时，只有一部分落在片段里；覆盖不足的不要
-        cover = (al.src_end - al.src_start) / len(r) if len(r) > len(text) else 1.0
-        if al.score >= need and cover >= MIN_COVER:
-            cands.append((al.score * min(len(r), len(text)), al.dest_start, al.dest_end, ri, al.score))
-    picked = []
-    for _, s, e, ri, sc in sorted(cands, reverse=True):
-        if all(e <= ps or s >= pe for ps, pe, _, _ in picked):
-            picked.append((s, e, ri, sc))
-    return sorted(picked)
+        window = "".join(c[0] for c in stream[p:p + int(len(r) * 1.3) + 3])
+        if len(window) < len(r) * MIN_COVER:
+            continue
+        al = fuzz.partial_ratio_alignment(r, window)
+        # 必须从 p 附近开始匹配（锚定），否则就是后面的内容，留给后面的位置去配
+        if not al or al.score < need or al.dest_start > 2 or al.dest_end <= al.dest_start:
+            continue
+        if len(r) > len(window) and (al.src_end - al.src_start) / len(r) < MIN_COVER:
+            continue
+        e = p + al.dest_end
+        if any(stream[k + 1][1] - stream[k][2] > MAX_INNER_GAP for k in range(p, e - 1)):
+            continue
+        # 分数相近时偏向更长的短语，避免被 “yeah” 这类短词抢走
+        key = len(r) * (al.score / 100) ** 2
+        if best is None or key > best[0]:
+            best = (key, e, ri, al.score)
+    return best[1:] if best else None
 
 
 def align(ref_lines, segs, max_width=40):
     refs = to_phrases(ref_lines)
+    # 整段录音拼成一条读音流，短语可以跨 whisper 片段（whisper 的断句和歌词不一样）
+    stream, words = [], []
+    for si, seg in enumerate(segs):
+        base = len(words)
+        words.extend(seg["words"])
+        for c, st, en, wi in seg["chars"]:
+            stream.append((c, st, en, base + wi))
+
     events, leftovers, used_lines, scores = [], [], set(), []
-    for seg in segs:
-        chars = seg["chars"]
-        picked = match_segment(seg, refs)
-        cursor = 0
-        for s, e, ri, sc in picked + [(len(chars), len(chars), None, None)]:
-            # 前面没被覆盖的部分：保留 whisper 原文
-            if s - cursor >= LEFTOVER_MIN:
-                wi = sorted({chars[k][3] for k in range(cursor, s)})
-                raw = "".join(seg["words"][i] for i in wi).strip()
-                events.append({"text": raw, "start": chars[cursor][1], "end": chars[s - 1][2], "from": "whisper"})
-                leftovers.append((chars[cursor][1], chars[s - 1][2], s - cursor))
-            if ri is not None:
-                text, _, li, pi = refs[ri]
-                events.append({"text": text, "start": chars[s][1], "end": chars[e - 1][2],
+    pending = []  # 还没配上的读音字下标
+
+    def flush():
+        if not pending:
+            return
+        # 按大静音切开，各自作为一句保留 whisper 原文
+        groups, cur = [], [pending[0]]
+        for k in pending[1:]:
+            if stream[k][1] - stream[cur[-1]][2] > 1500 or k != cur[-1] + 1:
+                groups.append(cur)
+                cur = [k]
+            else:
+                cur.append(k)
+        groups.append(cur)
+        for g in groups:
+            if len(g) < LEFTOVER_MIN:
+                continue
+            frag = "".join(stream[k][0] for k in g)
+            # 半句：识别没错，只是短语被切开后剩下的一截 -> 用它所在短语的完整文字
+            best = max(((fuzz.partial_ratio(frag, r), ri) for ri, (_, r, _, _) in enumerate(refs)
+                        if r and len(frag) >= len(r) * 0.5), default=(0, None))
+            if best[0] >= FRAGMENT_SCORE:
+                text, _, li, pi = refs[best[1]]
+                events.append({"text": text, "start": stream[g[0]][1], "end": stream[g[-1]][2],
                                "from": "ref", "line": li, "phrase": pi})
                 used_lines.add(li)
-                scores.append(sc)
-            cursor = max(cursor, e)
+                scores.append(best[0])
+                continue
+            wi = sorted({stream[k][3] for k in g})
+            raw = "".join(words[i] for i in wi).strip()
+            events.append({"text": raw, "start": stream[g[0]][1], "end": stream[g[-1]][2], "from": "whisper"})
+            # 记下它在参考里的最佳分：高分 = 识别大概率没错，只是半句/伴唱重复
+            frag_best = max((fuzz.partial_ratio(frag, r) for _, r, _, _ in refs if r), default=0)
+            leftovers.append((stream[g[0]][1], stream[g[-1]][2], len(g), frag_best))
+        pending.clear()
+
+    p = 0
+    while p < len(stream):
+        hit = match_at(stream, p, refs)
+        if hit is None:
+            pending.append(p)
+            p += 1
+            continue
+        flush()
+        e, ri, sc = hit
+        text, _, li, pi = refs[ri]
+        events.append({"text": text, "start": stream[p][1], "end": stream[e - 1][2],
+                       "from": "ref", "line": li, "phrase": pi})
+        used_lines.add(li)
+        scores.append(sc)
+        p = e
+    flush()
 
     events.sort(key=lambda o: o["start"])
     # 同一原句里前后相接的短语合并回一句
@@ -203,8 +254,14 @@ def main():
     report = {
         "events": len(events),
         "from_reference": from_ref,
-        "from_whisper_needs_review": [  # 这些句保留的是 whisper 原文，需要人工核对文字
-            {"start": fmt(s), "end": fmt(e), "chars": n} for s, e, n in leftovers],
+        # 保留 whisper 原文的句子：读音能在参考里找到（半句、伴唱重复），文字大概率没错
+        "from_whisper_likely_ok": [
+            {"start": fmt(s), "end": fmt(e), "chars": n, "score": round(sc)} for s, e, n, sc in leftovers
+            if sc >= FRAGMENT_SCORE],
+        # 读音在参考里找不到：识别错误、即兴、喊话，需要人工核对
+        "from_whisper_needs_review": [
+            {"start": fmt(s), "end": fmt(e), "chars": n, "score": round(sc)} for s, e, n, sc in leftovers
+            if sc < FRAGMENT_SCORE],
         "mean_score": round(sum(scores) / max(1, len(scores)), 1),
         "reference_lines_used": len(used),
         "reference_lines_total": len(ref),
@@ -212,11 +269,12 @@ def main():
     rp = Path(a.report or Path(a.output).with_suffix(".align.json"))
     rp.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
+    ok, review = report["from_whisper_likely_ok"], report["from_whisper_needs_review"]
     print(f"输出 {len(events)} 句：{from_ref} 句用参考歌词的文字（平均分 {report['mean_score']}），"
-          f"{len(leftovers)} 句保留 whisper 原文需人工核对")
+          f"{len(ok)} 句是能在参考里找到的半句/伴唱（保留识别文字），{len(review)} 句需人工核对")
     print(f"参考歌词 {len(ref)} 句里用到了 {len(used)} 句（其余这一版可能没唱）")
-    for s, e, n in leftovers:
-        print(f"  需核对: {fmt(s)} - {fmt(e)}  ({n} 字)")
+    for x in review:
+        print(f"  需核对: {x['start']} - {x['end']}  ({x['chars']} 字，最佳分 {x['score']})")
     print(f"报告: {rp}")
 
 
