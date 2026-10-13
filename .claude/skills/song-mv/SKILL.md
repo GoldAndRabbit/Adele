@@ -43,7 +43,7 @@ my_venv/bin/python pipeline/make_mv.py --name X --from interp
 ```
 - 降到 1080p 后按**原生帧率**抽帧，RIFE v4.6 `-n` 一步插到 60fps（24/25/30 都适用，不再先 dup 到 30）
 - 源已是 60fps 则跳过插帧
-- lanczos 放大到 3840x2160 → 烧 ass → 左上角 `adele-logo.png`（宽度 10%）→ x264 crf18 + FLAC 无损音频（B 站 Hi-Res无损 标靠这个；`--aac` 可改 AAC）
+- lanczos 放大到 3840x2160 → 烧 ass → 左上角 `adele-logo.png`（宽度 10%）→ x264 crf18 + **FLAC 48kHz/24bit 无损音频（必须，B 站 “Hi-Res无损” 标靠这个；渲染结束会自动检查，不是 FLAC 直接报错）**
 - `--fast` 用 VideoToolbox HEVC 硬编；`--keep-frames` 保留 PNG
 - 成品：`post/X/X 4K60FPS Sub-WaterMark.mp4`（每个作品一个目录：视频 + `cover/` + `X.json`）
 

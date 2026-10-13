@@ -264,6 +264,18 @@ def stage_interp(a, w):
         shutil.rmtree(fin)
 
 
+def check_hires(path):
+    """成品音轨必须是 FLAC 48kHz/24bit，否则 B 站不显示 Hi-Res无损。"""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                          "stream=codec_name,sample_rate,bits_per_raw_sample", "-of", "json", str(path)],
+                         check=True, capture_output=True, text=True).stdout
+    st = json.loads(out)["streams"][0]
+    ok = st.get("codec_name") == "flac" and st.get("sample_rate") == "48000" and st.get("bits_per_raw_sample") == "24"
+    if not ok:
+        sys.exit(f"音轨不是 FLAC 48kHz/24bit（{st}），B 站不会显示 Hi-Res无损")
+    print("音轨检查: FLAC 48kHz/24bit ✓（Hi-Res无损）")
+
+
 def stage_render(a, w):
     ass = Path(a.ass).resolve() if a.ass else ROOT / "lyrics" / f"{a.name}.ass"
     if not ass.exists():
@@ -292,10 +304,11 @@ def stage_render(a, w):
          "[sub][wm]overlay=15:15:format=auto,format=yuv420p[v]",
          "-map", "[v]", "-map", "1:a",
          *venc,
-         # 默认和旧脚本一样直接放 FLAC（48kHz/24bit）进 mp4：B 站据此给 “Hi-Res无损” 标；--aac 改成 AAC 320k
-         *(["-c:a", "aac", "-b:a", "320k"] if a.aac else ["-c:a", "copy"]),
+         # 必须是 FLAC（48kHz/24bit）原样放进 mp4：B 站靠它给 “Hi-Res无损” 标，不要改成 AAC
+         "-c:a", "copy",
          "-shortest", "-movflags", "+faststart",
          out], cwd=w)
+    check_hires(out)
     print(f"\n>>> 成品: {out}")
     if not a.keep_frames:
         shutil.rmtree(w / "frames_out", ignore_errors=True)
@@ -324,8 +337,6 @@ def main():
     p.add_argument("--tag", help="成品文件名后缀，用于对比不同版本，如 bzrpv2style")
     p.add_argument("--logo", default="adele-logo.png")
     p.add_argument("--logo-scale", default="0.10")
-    p.add_argument("--aac", action="store_true",
-                   help="音频用 AAC 320k（默认 FLAC 无损，B 站会显示 Hi-Res无损）")
     p.add_argument("--crf", type=int, default=18)
     p.add_argument("--fast", action="store_true", help="用 VideoToolbox HEVC 硬编，快很多")
     p.add_argument("--frame-format", choices=["auto", "png", "jpg"], default="auto",
