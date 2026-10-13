@@ -61,6 +61,12 @@ my_venv/bin/python pipeline/make_mv.py --name X --from split --to translate --ti
 - 已存在的文件不覆盖，重新生成加 `--force`
 - 歌名的通行中文译名要准确（例：そばにいるね = 在你身边，不是“留在我身边”）
 
+## 3.5 时间轴精校（refine 阶段，默认在 split 和 translate 之间自动跑）
+- `pipeline/refine_timing.py`：torchaudio MMS_FA 多语种强制对齐（模型 1.2GB，首次自动下载），整首歌所有句子按顺序一次性对齐，句间 `*` 吸收间奏/和声/喊话；日文先用 pykakasi 转罗马音
+- 再把起点吸附到 ±0.15s 内人声能量上升最快处，字幕比开口提前 `--lead 0.12` 秒；与原时间差 >2.5s 的句子视为对齐跑偏、保持原时间
+- 验证指标：字幕出现前后 0.3s 的人声能量增益（Linkin Park：中位 0.3dB → 7.0dB，“踩点”句子 28% → 72%）
+- 只重做时间轴不重翻译：从现有 ass 抽出中文做 `--zh-file`，再 `--from translate --to translate --force`
+
 ## 4. 插帧 + 渲染
 ```bash
 my_venv/bin/python pipeline/make_mv.py --name X --from interp --keep-frames

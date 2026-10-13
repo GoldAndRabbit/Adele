@@ -8,6 +8,7 @@
   prep       截取片段、降到 1080p、导出 flac       -> work/<name>/video_1080.mp4, audios/<name>.flac
   lyrics     官方字幕优先，否则 demucs + whisper   -> ori_lyrics/<name>.srt   (需人工校对)
   split      过长的句子在停顿处拆开，切点对齐人声   -> ori_lyrics/<name>.srt（原地）
+  refine     强制对齐(MMS_FA)+起音吸附+提前量精校时间轴 -> ori_lyrics/<name>.srt（原地，原文件备份）
   translate  调 API 生成双语 ass                  -> lyrics/<name>.ass        (需人工校对)
   interp     原生帧率抽帧 + RIFE 直接插到 60fps     -> work/<name>/frames_out/
   render     放大到 4K + 烧字幕 + 水印             -> post/<name>/<name> 4K60FPS Sub-WaterMark.mp4
@@ -29,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VENV_BIN = ROOT / "my_venv" / "bin"
-STAGES = ["download", "prep", "lyrics", "split", "translate", "interp", "render"]
+STAGES = ["download", "prep", "lyrics", "split", "refine", "translate", "interp", "render"]
 TARGET_FPS = 60
 
 
@@ -202,6 +203,21 @@ def stage_split(a, w):
          "--vocals", vocals, "--max-width", a.max_width])
 
 
+LANG_CODES = {"english": "en", "japanese": "ja", "spanish": "es", "en": "en", "ja": "ja", "es": "es"}
+
+
+def stage_refine(a, w):
+    srt = ROOT / "ori_lyrics" / f"{a.name}.srt"
+    vocals = ROOT / "separated" / "htdemucs" / a.name / "vocals.wav"
+    if not vocals.exists():
+        run([tool("demucs"), ROOT / "audios" / f"{a.name}.flac", "-n", "htdemucs",
+             "--two-stems=vocals", "-o", ROOT / "separated", "--jobs=4"])
+    shutil.copy(srt, w / "before_refine.srt")
+    lang = LANG_CODES.get((a.lang or "en").lower(), "en")
+    run([sys.executable, ROOT / "pipeline" / "refine_timing.py", srt, "--vocals", vocals,
+         "--lang", lang, "--lead", a.lead, "-o", srt, "--report", w / "timing_report.json"])
+
+
 def stage_translate(a, w):
     src = ROOT / "ori_lyrics" / f"{a.name}.srt"
     out = ROOT / "lyrics" / f"{a.name}.ass"
@@ -338,6 +354,7 @@ def main():
     p.add_argument("--whisper-model", default="large-v3")
     p.add_argument("--max-width", type=int, default=40,
                    help="单句最大显示宽度（全角算 2），超过就拆")
+    p.add_argument("--lead", type=float, default=0.12, help="字幕比开口提前出现的秒数（refine 阶段）")
     p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'")
     p.add_argument("--sub-style", choices=["bzrp", "modern"], default="bzrp",
                    help="字幕样式：bzrp=与 bzrp_v2.ass 相同（默认）；modern=1080p 画布、日文粗体、标题在顶部")
