@@ -79,6 +79,68 @@ def grab(video, t):
     return mask_bottom(Image.frombytes("RGB", (W, H), raw), MASK_BOTTOM)
 
 
+def has_burned_sub(video, t):
+    """画面底部中间有没有烧录字幕（搬运视频常见的黑底白字条）：同时有较多纯白和纯黑像素。"""
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.2f}", "-i", str(video), "-frames:v", "1",
+                          "-vf", "scale=640:360", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                         capture_output=True, check=True).stdout
+    g = np.frombuffer(raw, np.uint8).reshape(360, 640)
+    band = g[int(360 * 0.88):int(360 * 0.97), int(640 * 0.10):int(640 * 0.90)].astype(int)
+    # 字幕底框：连续若干列大部分像素接近纯黑；框里有白字。短句的小框也要能认出来
+    long_line = (band > 215).mean() > 0.01 and (band < 25).mean() > 0.15
+    dark_cols = (band < 30).mean(axis=0) > 0.35
+    best, run = 0, 0
+    for d in dark_cols:
+        run = run + 1 if d else 0
+        best = max(best, run)
+    short_line = best > band.shape[1] * 0.04 and (band > 200).mean() > 0.003
+    return long_line or short_line
+
+
+def clean_time(video, t, span=2.0, step=0.25):
+    """在 t 前后 span 秒内找离 t 最近、底部没有烧录字幕的时刻（两句歌词之间的空档）。"""
+    offsets = sorted(np.arange(-span, span + 1e-6, step), key=abs)
+    for d in offsets:
+        if t + d >= 0 and not has_burned_sub(video, t + d):
+            if abs(d) > 1e-6:
+                print(f"  {t:.1f}s 有烧录字幕，改用 {t + d:.2f}s")
+            return round(t + d, 2)
+    print(f"  {t:.1f}s 前后 {span}s 内都有字幕，保留原时间点（可配合 --mask-bottom）")
+    return t
+
+
+INPAINT_SUBS = False  # 只把烧录字幕的黑底白字框抹掉（OpenCV inpaint），画面其他地方不动
+
+
+def inpaint_subs(img):
+    """抹掉底部居中的烧录字幕：按“纯白、低饱和、横向连成一行”的文字定位，外扩一圈盖住黑底框，
+    再用周围画面修补（OpenCV inpaint）。背景本来就暗时黑框和背景连成一片，所以按文字找而不是按黑框找。"""
+    import cv2
+
+    arr = np.asarray(img.convert("RGB"))
+    h, w = arr.shape[:2]
+    y0, y1 = int(h * 0.88), int(h * 0.985)
+    hsv = cv2.cvtColor(arr[y0:y1], cv2.COLOR_RGB2HSV)
+    text = ((hsv[..., 2] > 200) & (hsv[..., 1] < 60)).astype(np.uint8) * 255
+    text = cv2.dilate(text, np.ones((9, 45), np.uint8))  # 把一行字连成一块
+    n, _, stats, _ = cv2.connectedComponentsWithStats(text)
+    boxes = []
+    for i in range(1, n):
+        x, y, bw, bh, _ = stats[i]
+        cx = x + bw / 2
+        if bw > w * 0.03 and bh < h * 0.07 and w * 0.2 < cx < w * 0.8:
+            boxes.append((x, y + y0, bw, bh))
+    if not boxes:
+        return img
+    mask = np.zeros((h, w), np.uint8)
+    pad = int(h * 0.026)
+    for x, y, bw, bh in boxes:
+        mask[max(0, y - pad):min(h, y + bh + pad), max(0, x - pad):min(w, x + bw + pad)] = 255
+    out = cv2.inpaint(arr, mask, 11, cv2.INPAINT_TELEA)
+    print(f"  抹掉烧录字幕 {len(boxes)} 处")
+    return Image.fromarray(out)
+
+
 def grab_hd(video, t, work):
     """高清取帧：按原始分辨率截帧（含 crop-bottom）→ Real-ESRGAN x4 → Lanczos 缩到封面尺寸并居中裁切。
     1080p 素材裁掉底部字幕后只剩 ~930 行，直接拉伸会糊。"""
@@ -88,6 +150,8 @@ def grab_hd(video, t, work):
                     "-vf", pre, str(tmp)], check=True)
     img = Image.open(tmp).convert("RGB")
     tmp.unlink()
+    if INPAINT_SUBS:
+        img = inpaint_subs(img)
     img = upscale(img, work, force=True)
     scale = max(W / img.width, H / img.height)
     img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
@@ -377,8 +441,10 @@ def compose(frame, a):
     title_w = ink_width(a.title, tf)
     sub_y = int(ch * a.text_y)
     if a.subtitle:
+        # “A · B · C” 里的空格在宋体里很宽，白白占掉宽度、字就放不大；去掉分隔符两边的空格
+        a.subtitle = re.sub(r"\s*[·・]\s*", "·", a.subtitle)
         # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
-        sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.55))
+        sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.6))
         gaps = max(1, len(a.subtitle) - 1)
         tracking = max(0.0, (title_w - ink_width(a.subtitle, sf)) / gaps)
         title_y = sub_y - int(sf.size * 1.12)
@@ -420,6 +486,10 @@ def main():
                    help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
     p.add_argument("--no-sr", dest="sr", action="store_false",
                    help="不做 Real-ESRGAN 高清化（默认对选中的帧做 x4 超分再缩到封面尺寸）")
+    p.add_argument("--inpaint-subs", action="store_true",
+                   help="画面有烧录字幕时，只把字幕框用周围画面修补掉，保持选定的帧和构图（推荐）")
+    p.add_argument("--avoid-subs", action="store_true",
+                   help="画面有烧录字幕时，在每个时间点前后 2s 内找没字幕的那一帧（两句之间的空档），不用遮挡（推荐）")
     p.add_argument("--mask-bottom", type=float, default=0.0,
                    help="不裁切，把底部这一比例（如 0.14）模糊压暗来盖住烧录字幕；保持原构图，标题更容易放高（推荐）")
     p.add_argument("--crop-bottom", type=float, default=0.0,
@@ -436,6 +506,7 @@ def main():
     a.fill = a.fill or ["extend", "blur"]
     globals()["CROP_BOTTOM"] = a.crop_bottom
     globals()["MASK_BOTTOM"] = a.mask_bottom
+    globals()["INPAINT_SUBS"] = a.inpaint_subs
     out = Path(a.out_dir) if a.out_dir else ROOT / "post" / a.name / "cover"
     out.mkdir(parents=True, exist_ok=True)
 
@@ -443,6 +514,8 @@ def main():
         frames = [(f"{Path(pth).stem}_{m}", load_image(pth, m, out)) for pth in a.image for m in a.fill]
     else:
         times = a.at if a.at else [t for t, _ in pick_frames(video, a.n)]
+        if a.avoid_subs:
+            times = [clean_time(video, t) for t in times]
         if a.sr:
             print(f"Real-ESRGAN 高清化 {len(times)} 帧 ...")
             frames = [(f"{t:.1f}s", grab_hd(video, t, out)) for t in times]
