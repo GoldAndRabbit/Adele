@@ -44,7 +44,9 @@ def load_env(path=os.path.join(ROOT, ".env")):
 
 PLAY_W, PLAY_H = 1920, 1080
 LATIN_FONT = "Arial Rounded MT Bold"
-CJK_FONT = "Hiragino Sans GB"
+CJK_FONT = "Hiragino Sans GB"      # 中文译文（\b1 加粗）
+JA_FONT = "Hiragino Sans W6"       # 日文/含汉字的原文，Arial 没有这些字形，fallback 字体太细
+CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
 
 SYSTEM_PROMPT = """你是专业的歌词译者。用户给出一首歌按时间轴切分的歌词行（JSON 数组），
 请逐行翻译成简体中文，要求：
@@ -100,11 +102,15 @@ def build_ass(subs, zh, title, title_duration):
     out.styles["Title"].alignment = pysubs2.Alignment.TOP_CENTER
     out.styles["Title"].marginv = 60
     if title:
-        out.events.append(pysubs2.SSAEvent(start=0, end=title_duration, text=title, style="Title"))
+        t = (r"{\fn" + JA_FONT + "}" + title) if CJK_RE.search(title) else title
+        out.events.append(pysubs2.SSAEvent(start=0, end=title_duration, text=t, style="Title"))
     for e, z in zip(subs.events, zh):
         text = e.plaintext.replace("\n", " ").strip()
-        if z and z != text:
-            text += r"\N{\fn" + CJK_FONT + r"\fs56}♪ " + z + " ♪"
+        orig = text
+        if CJK_RE.search(text):
+            text = r"{\fn" + JA_FONT + "}" + text
+        if z and z != orig:
+            text += r"\N{\fn" + CJK_FONT + r"\b1\fs56}♪ " + z + " ♪"
         out.events.append(pysubs2.SSAEvent(start=e.start, end=e.end, text=text))
     return out
 
