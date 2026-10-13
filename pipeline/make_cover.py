@@ -49,10 +49,14 @@ def duration(video):
     return float(json.loads(out.stdout)["format"]["duration"])
 
 
+CROP_BOTTOM = 0.0  # 先裁掉画面底部这一比例（去掉搬运视频烧进去的字幕），再放大补满
+
+
 def grab(video, t):
+    pre = f"crop=iw:ih*{1 - CROP_BOTTOM:.3f}:0:0," if CROP_BOTTOM > 0 else ""
     raw = subprocess.run(
         ["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
-         "-vf", f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}",
+         "-vf", f"{pre}scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}",
          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
         capture_output=True, check=True).stdout
     return Image.frombytes("RGB", (W, H), raw)
@@ -246,9 +250,19 @@ def paste_with_shadow(canvas, img, xy, blur=8, offset=(3, 5), alpha=150):
 
 
 def crop_ratio(img, ratio):
-    """从 16:9 底图中间裁出指定宽高比（4:3 封面用）。"""
+    """从 16:9 底图裁出指定宽高比（4:3 封面用）。裁切窗口放在细节最多的位置（人脸/主体通常最清晰），
+    而不是固定居中，避免把偏在一侧的人物裁掉半张脸。"""
     w = int(img.height * ratio)
-    x = (img.width - w) // 2
+    g = np.asarray(img.convert("L").resize((img.width // 4, img.height // 4)), dtype=np.float32)
+    lap = np.abs(g[1:-1, 1:-1] * 4 - g[:-2, 1:-1] - g[2:, 1:-1] - g[1:-1, :-2] - g[1:-1, 2:])
+    col = np.pad(lap[: lap.shape[0] * 2 // 3].sum(axis=0), (1, 1))  # 只看上 2/3，下方会被标题盖住
+    win = w // 4
+    sums = np.convolve(col, np.ones(win), mode="valid")
+    center = (img.width - w) // 2
+    # 偏好居中：细节差不多时不乱跑
+    bias = 1 - 0.15 * np.abs(np.arange(len(sums)) * 4 - center) / max(center, 1)
+    x = int(np.argmax(sums * bias)) * 4
+    x = min(max(x, 0), img.width - w)
     return img.crop((x, 0, x + w, img.height))
 
 
@@ -333,6 +347,8 @@ def main():
     p.add_argument("--out-dir", help="输出目录，默认 post/<name>/cover")
     p.add_argument("--text-y", type=float, default=TEXT_Y,
                    help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
+    p.add_argument("--crop-bottom", type=float, default=0.0,
+                   help="取帧时先裁掉底部这一比例（如 0.14），用于画面里烧了字幕的搬运视频")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
     p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png），可多次")
     p.add_argument("--logo", default="adele-logo.png")
@@ -341,6 +357,7 @@ def main():
 
     video = Path(a.video) if a.video else ROOT / "work" / a.name / "source.mp4"
     a.fill = a.fill or ["extend", "blur"]
+    globals()["CROP_BOTTOM"] = a.crop_bottom
     out = Path(a.out_dir) if a.out_dir else ROOT / "post" / a.name / "cover"
     out.mkdir(parents=True, exist_ok=True)
 
