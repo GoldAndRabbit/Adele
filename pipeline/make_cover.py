@@ -22,7 +22,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 W, H = 1920, 1080
-SAFE_BOTTOM = 0.84  # B 站封面底部会盖播放量/时长，文字不要低于这里
+TEXT_Y = 0.76  # 副标题基线位置（占画面高度）；B 站底部约 16% 会盖播放量/时长，不要超过 0.84
 
 FONTS = {
     "sans": ("/System/Library/Fonts/Avenir Next.ttc", 8),                    # Avenir Next Heavy
@@ -261,7 +261,7 @@ def compose(frame, a):
     title_key = a.title_font or ("cjk" if CJK_RE.search(a.title) else "sans")
     tf = fit(a.title, title_key, 220, int(W * 0.9))
     sf = fit(a.subtitle, "sub", 96, int(W * 0.86)) if a.subtitle else None
-    sub_y = int(H * SAFE_BOTTOM)
+    sub_y = int(H * a.text_y)
     title_y = sub_y - (int(sf.size * 1.15) if sf else 0)
     draw_text(canvas, (W / 2, title_y), a.title, tf)
     if sf:
@@ -295,6 +295,8 @@ def main():
     p.add_argument("--fill", action="append", choices=["extend", "blur", "crop"],
                    help="非 16:9 图片的补齐方式，可多次（每种出一张），默认 extend + blur")
     p.add_argument("--out-dir", help="输出目录，默认 post/covers/<name>")
+    p.add_argument("--text-y", type=float, default=TEXT_Y,
+                   help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
     p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png），可多次")
     p.add_argument("--logo", default="adele-logo.png")
