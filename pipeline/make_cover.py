@@ -128,7 +128,7 @@ def inpaint_subs(img):
     for i in range(1, n):
         x, y, bw, bh, _ = stats[i]
         cx = x + bw / 2
-        if bw > w * 0.03 and bh < h * 0.07 and w * 0.2 < cx < w * 0.8:
+        if bw > w * 0.08 and h * 0.025 < bh < h * 0.11 and w * 0.2 < cx < w * 0.8:
             boxes.append((x, y + y0, bw, bh))
     if not boxes:
         return img
