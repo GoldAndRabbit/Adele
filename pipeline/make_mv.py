@@ -95,7 +95,8 @@ def stage_download(a, w):
                           capture_output=True, text=True)
     if info.returncode == 0:
         d = json.loads(info.stdout)
-        keep = {k: d.get(k) for k in ("title", "channel", "duration", "language", "track", "artist")}
+        keep = {k: d.get(k) for k in ("title", "channel", "duration", "language", "track", "artist",
+                                    "upload_date", "description", "tags", "webpage_url")}
         (w / "meta.json").write_text(json.dumps(keep, ensure_ascii=False, indent=2))
 
 

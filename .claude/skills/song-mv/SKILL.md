@@ -60,3 +60,18 @@ my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "
 - 右上角额外 logo（队徽等）：`--extra-logo path.png`，可多次
 - 标题字体：英文默认 Avenir Next Heavy，含日文/中文自动用 Hiragino Sans W8；`--title-font gill|serif` 可换成 Bzrp / Man of the Year 那种风格
 - 产物：`post/covers/X/candidates.jpg`（编号总图，给用户挑）、`cover_XX.jpg`（1920x1080 成品）、`frame_XX_*.jpg`（原始帧）
+
+### 用专辑封面等外部图片
+```bash
+my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "..." --image cover/X_art.png --out-dir post/covers/X/art
+```
+- 自动去掉左右纯色边条；分辨率不够先用 Real-ESRGAN x4 放大
+- 非 16:9 的图：`--fill extend`（边缘颜色向两侧延伸，默认推荐）/ `blur`（模糊底图）/ `crop`
+
+## 6. 投稿元数据 JSON
+```bash
+my_venv/bin/python pipeline/make_meta.py --name X --subtitle-langs "日语,中文" --cover post/covers/X/cover_01.jpg [--note "补充信息"]
+```
+- 依据 `work/X/meta.json`（yt-dlp 抓的标题/简介/日期）让模型整理，产物 `post/X.json`
+- 字段：title（`[4K60帧/Hi-Res] 中文名《歌名》英文名. 关键词`，≤80 字）、song、performance、intro.song、intro.performance、tags、subtitles、spec、files、source
+- 生成后**必须人工核对**：模型可能把频道口号当演出细节、给罗马字人名乱配汉字、编造数字

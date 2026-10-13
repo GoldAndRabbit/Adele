@@ -20,27 +20,7 @@ import re
 
 import pysubs2
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# 与 Takit workers/src/agent/model.ts 相同的供应商表：(base_url, 密钥变量, 默认模型)
-PROVIDERS = {
-    "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY", "deepseek-v4-pro"),
-    "aliyun": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "ALIYUN_BAILIAN_API_KEY", "qwen-max"),
-    "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY", "deepseek-ai/DeepSeek-V3"),
-    "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY", "gpt-4.1"),
-}
-
-
-def load_env(path=os.path.join(ROOT, ".env")):
-    """读取 .env（不覆盖已有环境变量），省得每次 export。"""
-    if not os.path.exists(path):
-        return
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+from llm import chat_json
 
 PLAY_W, PLAY_H = 1920, 1080
 LATIN_FONT = "Arial Rounded MT Bold"
@@ -57,29 +37,9 @@ SYSTEM_PROMPT = """你是专业的歌词译者。用户给出一首歌按时间�
 
 
 def translate_api(lines, context):
-    from openai import OpenAI
-
-    load_env()
-    provider = os.environ.get("LLM_PROVIDER", "deepseek")
-    base_url, key_var, default_model = PROVIDERS[provider]
-    if not os.environ.get(key_var):
-        raise SystemExit(f"缺少 {key_var}（放到 {ROOT}/.env 或 export），或改用 --zh-file")
-    client = OpenAI(base_url=os.environ.get("OPENAI_BASE_URL", base_url), api_key=os.environ[key_var])
-    model = os.environ.get("TRANSLATE_MODEL", default_model)
-    # DeepSeek 默认关闭思考模式：翻译不需要长推理，也避免 JSON 被截断
-    extra = {"thinking": {"type": "disabled"}} if provider == "deepseek" else {}
-    print(f"翻译: {provider} / {model}")
     user = (f"歌曲: {context}\n" if context else "") + json.dumps(lines, ensure_ascii=False)
     for attempt in range(3):
-        resp = client.chat.completions.create(
-            model=model,
-            temperature=0.3,
-            response_format={"type": "json_object"},
-            extra_body=extra,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT},
-                      {"role": "user", "content": user}],
-        )
-        zh = json.loads(resp.choices[0].message.content).get("zh", [])
+        zh = chat_json(SYSTEM_PROMPT, user, label="翻译").get("zh", [])
         if len(zh) == len(lines):
             return [z.strip() for z in zh]
         print(f"返回行数 {len(zh)} != {len(lines)}，重试 {attempt + 1}/3")

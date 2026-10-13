@@ -86,6 +86,73 @@ def pick_frames(video, n, samples=48):
     return sorted(chosen, key=lambda x: x[0])
 
 
+# ---------------------------------------------------------------- 外部图片（专辑封面等）
+
+def trim_bars(img, tol=25):
+    """去掉左右/上下纯色边条（YouTube 音频视频常见的 pillarbox）。"""
+    a = np.asarray(img.convert("RGB")).astype(int)
+    edge = np.concatenate([a[:, :4].reshape(-1, 3), a[:, -4:].reshape(-1, 3)])
+    if edge.std(axis=0).max() > 12:  # 两边不是纯色，不当作边条
+        return img
+    diff = np.abs(a - edge.mean(axis=0)).max(axis=2) > tol
+    cols = np.where(diff.mean(axis=0) > 0.05)[0]
+    rows = np.where(diff.mean(axis=1) > 0.05)[0]
+    return img.crop((cols.min(), rows.min(), cols.max() + 1, rows.max() + 1))
+
+
+def upscale(img, work):
+    """分辨率不够时用 Real-ESRGAN x4 放大，比直接拉伸清楚。"""
+    exe, models = ROOT / "realesrgan-ncnn-vulkan", ROOT / "models"
+    if img.height >= H or not exe.exists() or not (models / "realesrgan-x4plus.bin").exists():
+        return img
+    src, dst = work / "_sr_in.png", work / "_sr_out.png"
+    img.save(src)
+    subprocess.run([str(exe), "-i", str(src), "-o", str(dst), "-m", str(models),
+                    "-n", "realesrgan-x4plus", "-s", "4"], check=True, capture_output=True)
+    out = Image.open(dst).convert("RGB")
+    src.unlink(); dst.unlink()
+    return out
+
+
+def fill_169(img, mode):
+    """把任意比例的图放进 16:9：主体完整居中，两侧用 extend（边缘颜色延伸）或 blur（模糊放大底图）补齐。"""
+    if abs(img.width / img.height - W / H) < 0.01:
+        return img.resize((W, H), Image.LANCZOS)
+    if mode == "crop":
+        return img.resize((W, int(img.height * W / img.width)), Image.LANCZOS).crop(
+            (0, 0, W, H)) if img.width / img.height < W / H else \
+            img.resize((int(img.width * H / img.height), H), Image.LANCZOS).crop((0, 0, W, H))
+    fg = img.resize((int(img.width * H / img.height), H), Image.LANCZOS)
+    x0 = (W - fg.width) // 2
+    if mode == "blur":
+        bg = img.resize((W, int(img.height * W / img.width)), Image.LANCZOS)
+        bg = bg.crop((0, (bg.height - H) // 2, W, (bg.height - H) // 2 + H)).filter(ImageFilter.GaussianBlur(40))
+        bg = Image.blend(bg, Image.new("RGB", (W, H), (0, 0, 0)), 0.25)
+    else:
+        # 取左右各 6px 的平均颜色向外拉伸，再竖向轻微模糊，接缝处做渐变
+        left = fg.crop((0, 0, 6, H)).resize((1, H), Image.BOX).resize((x0 + 40, H))
+        right = fg.crop((fg.width - 6, 0, fg.width, H)).resize((1, H), Image.BOX).resize((W - x0 - fg.width + 40, H))
+        bg = Image.new("RGB", (W, H))
+        bg.paste(left.filter(ImageFilter.GaussianBlur(6)), (0, 0))
+        bg.paste(right.filter(ImageFilter.GaussianBlur(6)), (x0 + fg.width - 40, 0))
+    out = bg.copy()
+    mask = Image.new("L", fg.size, 255)
+    feather = 40 if mode == "extend" else 24
+    md = ImageDraw.Draw(mask)
+    for i in range(feather):
+        v = int(255 * i / feather)
+        md.line([(i, 0), (i, H)], fill=v)
+        md.line([(fg.width - 1 - i, 0), (fg.width - 1 - i, H)], fill=v)
+    out.paste(fg, (x0, 0), mask)
+    return out
+
+
+def load_image(path, mode, work):
+    img = trim_bars(Image.open(path).convert("RGB"))
+    print(f"  {Path(path).name}: 去边后 {img.width}x{img.height}")
+    return fill_169(upscale(img, work), mode)
+
+
 # ---------------------------------------------------------------- 绘制
 
 def draw_text(canvas, xy, text, fnt, fill=(255, 255, 255), stroke=0.06, anchor="ms"):
@@ -224,6 +291,10 @@ def main():
     p.add_argument("--video", help="取帧的视频，默认 work/<name>/source.mp4（原始 4K）")
     p.add_argument("--n", type=int, default=6, help="候选数量")
     p.add_argument("--at", type=float, action="append", help="指定取帧时间（秒），可多次")
+    p.add_argument("--image", action="append", help="用外部图片（专辑封面等）代替视频帧，可多次")
+    p.add_argument("--fill", action="append", choices=["extend", "blur", "crop"],
+                   help="非 16:9 图片的补齐方式，可多次（每种出一张），默认 extend + blur")
+    p.add_argument("--out-dir", help="输出目录，默认 post/covers/<name>")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
     p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png），可多次")
     p.add_argument("--logo", default="adele-logo.png")
@@ -231,17 +302,22 @@ def main():
     a = p.parse_args()
 
     video = Path(a.video) if a.video else ROOT / "work" / a.name / "source.mp4"
-    out = ROOT / "post" / "covers" / a.name
+    a.fill = a.fill or ["extend", "blur"]
+    out = Path(a.out_dir) if a.out_dir else ROOT / "post" / "covers" / a.name
     out.mkdir(parents=True, exist_ok=True)
 
-    frames = [(t, grab(video, t)) for t in a.at] if a.at else pick_frames(video, a.n)
+    if a.image:
+        frames = [(f"{Path(pth).stem}_{m}", load_image(pth, m, out)) for pth in a.image for m in a.fill]
+    else:
+        frames = [(f"{t:.1f}s", grab(video, t)) for t in a.at] if a.at else \
+            [(f"{t:.1f}s", img) for t, img in pick_frames(video, a.n)]
     covers = []
-    for i, (t, img) in enumerate(frames, 1):
+    for i, (label, img) in enumerate(frames, 1):
         c = compose(img, a)
         c.save(out / f"cover_{i:02d}.jpg", quality=95)
-        img.save(out / f"frame_{i:02d}_{t:.1f}s.jpg", quality=95)
+        img.save(out / f"frame_{i:02d}_{label}.jpg", quality=95)
         covers.append(c)
-        print(f"cover_{i:02d}.jpg  <- {t:.1f}s")
+        print(f"cover_{i:02d}.jpg  <- {label}")
     contact_sheet(covers).save(out / "candidates.jpg", quality=92)
     print(f"候选总图: {out / 'candidates.jpg'}")
 
