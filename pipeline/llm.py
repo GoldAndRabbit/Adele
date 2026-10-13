@@ -27,7 +27,7 @@ def load_env(path=os.path.join(ROOT, ".env")):
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
-def chat_json(system, user, temperature=0.3, label="LLM"):
+def chat_json(system, user, temperature=0.3, label="LLM", effort=None):
     """发一轮对话，要求模型返回 JSON 对象，返回解析后的 dict。"""
     from openai import OpenAI
 
@@ -38,12 +38,19 @@ def chat_json(system, user, temperature=0.3, label="LLM"):
         raise SystemExit(f"缺少 {key_var}（放到 {ROOT}/.env 或 export）")
     client = OpenAI(base_url=os.environ.get("OPENAI_BASE_URL", base_url), api_key=os.environ[key_var])
     model = os.environ.get("TRANSLATE_MODEL", default_model)
-    # DeepSeek 默认关闭思考模式：这些任务不需要长推理，也避免 JSON 被截断
-    extra = {"thinking": {"type": "disabled"}} if provider == "deepseek" else {}
-    print(f"{label}: {provider} / {model}")
+    # DeepSeek 思考模式：effort=None 关闭；low/medium/high 开启（歌词翻译默认 high，见 translate_ass.py）
+    effort = effort or os.environ.get("LLM_EFFORT") or None
+    extra, kw = {}, {"temperature": temperature}
+    if provider == "deepseek":
+        if effort:
+            extra = {"thinking": {"type": "enabled"}, "reasoning_effort": effort}
+            kw = {"max_tokens": 32768}  # 思考内容也计入 max_tokens
+        else:
+            extra = {"thinking": {"type": "disabled"}}
+    print(f"{label}: {provider} / {model}" + (f" / 思考 {effort}" if effort else ""))
     resp = client.chat.completions.create(
         model=model,
-        temperature=temperature,
+        **kw,
         response_format={"type": "json_object"},
         extra_body=extra,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],

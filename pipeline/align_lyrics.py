@@ -249,7 +249,11 @@ def align_reference(ref_lines, segs):
         else:
             out.append({"text": line, "start": None, "end": None, "score": 0})
 
-    interp = []
+    # 没对上的句子分两种：这一版唱了但没识别出来（前后空档够唱这几句）→ 插值；
+    # 这一版根本没唱（删减版/现场改编，空档不够或在首尾之外）→ 丢掉，不能把没唱的词放上去
+    timed = [(o["end"] - o["start"]) / max(1, len(reading(o["text"]))) for o in out if o["start"] is not None]
+    ms_per_char = sorted(timed)[len(timed) // 2] if timed else 250
+    interp, dropped = [], []
     i = 0
     while i < len(out):
         if out[i]["start"] is not None:
@@ -258,23 +262,37 @@ def align_reference(ref_lines, segs):
         j = i
         while j < len(out) and out[j]["start"] is None:
             j += 1
-        lo = out[i - 1]["end"] if i > 0 else max(0, (out[j]["start"] if j < len(out) else 0) - 3000 * (j - i))
-        hi = out[j]["start"] if j < len(out) else lo + MAX_INTERP_DUR * (j - i)
         ws = [max(1, len(reading(out[k]["text"]))) for k in range(i, j)]
-        t = lo
-        for k, wdt in zip(range(i, j), ws):
-            d = min(MAX_INTERP_DUR, (hi - lo) * wdt / sum(ws))
-            out[k]["start"], out[k]["end"] = t, t + d
-            interp.append(k)
-            t += d
+        need = sum(ws) * ms_per_char
+        # 首尾之外的空档以识别到的演唱起止为界：识别在那里还有内容，说明确实在唱
+        lo = out[i - 1]["end"] if i > 0 else (stream[0][1] if stream else 0)
+        hi = out[j]["start"] if j < len(out) else (stream[-1][2] if stream else lo)
+        fits = hi > lo and need * 0.5 <= hi - lo <= need * 2.5 + 3000
+        if fits:
+            t = lo
+            for k, wdt in zip(range(i, j), ws):
+                d = min(MAX_INTERP_DUR, (hi - lo) * wdt / sum(ws))
+                out[k]["start"], out[k]["end"] = t, t + d
+                interp.append(k)
+                t += d
+        else:
+            dropped.extend(range(i, j))
         i = j
+    for k in dropped:
+        out[k]["drop"] = True
+    out_kept = [o for o in out if not o.get("drop")]
+    # 报告里用参考歌词的行号
+    idx_map = [k for k, o in enumerate(out) if not o.get("drop")]
+    interp = [idx_map.index(k) for k in interp]
+    out_ref_lines = out
+    out = out_kept
 
     for k, o in enumerate(out):  # 每句最短显示时长，不压到下一句
         nxt = out[k + 1]["start"] if k + 1 < len(out) else None
         o["end"] = max(o["end"], o["start"] + MIN_DUR)
         if nxt is not None and o["end"] > nxt:
             o["end"] = max(nxt, o["start"] + 100)
-    return out, interp
+    return out, interp, [k + 1 for k, o in enumerate(out_ref_lines) if o.get("drop")]
 
 
 def fmt(ms):
@@ -302,7 +320,7 @@ def main():
     ref = load_ref(a.ref)
     if a.mode == "reference":
         segs = load_segments(a.whisper)
-        out, interp = align_reference(ref, segs)
+        out, interp, dropped = align_reference(ref, segs)
         subs = pysubs2.SSAFile()
         for o in out:
             subs.events.append(pysubs2.SSAEvent(start=int(o["start"]), end=int(o["end"]), text=o["text"]))
@@ -315,10 +333,12 @@ def main():
             "mean_score": round(sum(matched) / max(1, len(matched)), 1),
             # 时间是插值的：可能这一版没唱这句，或识别太差没找到，需要人工看时间点
             "interpolated": [{"line": k + 1, "start": fmt(out[k]["start"])} for k in interp],
+            # 这一版没唱（或识别完全找不到且没有合适空档）的参考行号，不进字幕
+            "dropped_reference_lines": dropped,
         }
         rp = Path(a.report or Path(a.output).with_suffix(".align.json"))
         rp.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-        print(f"参考 {len(out)} 句全部输出（文字只来自参考歌词）；{len(matched)} 句按识别定时（平均分 {report['mean_score']}），"
+        print(f"参考歌词里 {len(dropped)} 句这一版没唱/找不到位置，已丢弃；输出 {len(out)} 句（文字只来自参考歌词）；{len(matched)} 句按识别定时（平均分 {report['mean_score']}），"
               f"{len(interp)} 句时间为插值")
         for x in report["interpolated"]:
             print(f"  插值: 第 {x['line']} 句 @ {x['start']}")

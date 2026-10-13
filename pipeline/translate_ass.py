@@ -33,13 +33,14 @@ SYSTEM_PROMPT = """你是专业的歌词译者。用户给出一首歌按时间�
 - 输出 JSON: {"zh": [...]}，长度与输入完全一致，一一对应，不合并不拆分
 - 结合整首歌上下文，译文自然、有歌词感，不要逐字硬译
 - 纯语气词/拟声词（如 Oh, Uh-uh, Na-na, Yeah）或已经是中文的行，对应位置输出空字符串
+- 片假名可能是外来语或日式英语，按读音还原成原词再翻译；任何一行都不要输出“意义不明”之类的说明，实在无法理解就输出空字符串
 - 不要添加任何解释"""
 
 
 def translate_api(lines, context):
     user = (f"歌曲: {context}\n" if context else "") + json.dumps(lines, ensure_ascii=False)
     for attempt in range(3):
-        zh = chat_json(SYSTEM_PROMPT, user, label="翻译").get("zh", [])
+        zh = chat_json(SYSTEM_PROMPT, user, label="翻译", effort=os.environ.get("TRANSLATE_EFFORT", "high")).get("zh", [])
         if len(zh) == len(lines):
             return [z.strip() for z in zh]
         print(f"返回行数 {len(zh)} != {len(lines)}，重试 {attempt + 1}/3")

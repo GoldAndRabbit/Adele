@@ -41,7 +41,8 @@ my_venv/bin/python pipeline/make_mv.py --name X --url "LINK" --lang Japanese --s
 - **没有官方字幕**：demucs 分离人声 → whisper large-v3（逐字时间戳 json）→ **自动补漏**：人声明显很响、但 whisper 超过 5s 没识别的区间（现场录音的开头最常见），单独截出来从几个起点重识别，取词最多的结果合并回去
 - **有原始歌词就自动互相校准**（强烈建议）：歌词放 `ori_lyrics/X.txt`（一行一句；`[Verse]` 段落标记会自动去掉；顺序不必与这一版一致）或 `--ref-lyrics path`（txt/srt，比如同一首歌其他视频的官方字幕）
   - 以录音为主导：两边转平假名读音（pykakasi），把参考歌词拆成短语，整段识别连成一条流从头扫，在任意位置模糊匹配参考短语（rapidfuzz），可跨 whisper 片段、可乱序、可重复；同一原句相邻短语再合并
-  - **默认 reference 模式**：文字只来自参考歌词、按顺序逐句输出，whisper 只用来定时间；找不到的句子按前后插值时间并在报告里列出；识别里有、参考里没有的内容一律不进字幕
+  - **默认 reference 模式**：文字只来自参考歌词、按顺序逐句定位，whisper 只用来定时间；识别里有、参考里没有的内容一律不进字幕。没定位到的句子：前后空档够唱 → 插值时间；空档不够（删减版/现场没唱）→ 丢弃，不能把没唱的词放上去。报告列出插值和丢弃的行
+  - 翻译输入只有参考歌词文本；DeepSeek 默认开 high 思考（`TRANSLATE_EFFORT` 可改），片假名按外来语还原，不输出“意义不明”
   - `--align-mode recording`：以录音为主、对不上的保留 whisper 原文（只在参考歌词不全或顺序完全不同时用）
   - 现场版识别差时放宽门槛：`--align-min-score 70 --align-min-cover 0.6`（默认 80 / 0.7）
   - 报告 `work/X/align_report.json`：`from_whisper_needs_review` 是需要用户核对的时间点
