@@ -60,7 +60,7 @@ my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "
 - 每张统一打上：左上 朝阳Adele logo（带深色衬底）+ 金色 4K/60FPS 徽章，中下方大标题 + 宋体副标题，副标题基线默认在 66% 高度（`--text-y` 调，越小越靠上；不要超过 0.84，底部留给 B 站播放量）
 - 右上角额外 logo（队徽等）：`--extra-logo path.png`，可多次
 - 标题字体：英文默认 Avenir Next Heavy，含日文/中文自动用 Hiragino Sans W8；`--title-font gill|serif` 可换成 Bzrp / Man of the Year 那种风格
-- 产物：`post/X/cover/candidates.jpg`（编号总图，给用户挑）、`cover_XX.jpg`（1920x1080 成品）、`frame_XX_*.jpg`（原始帧）
+- 产物：每张候选同时出 **16:9 `cover_XX.jpg`（1920x1080）和 4:3 `cover_XX_4x3.jpg`（1440x1080）**，4:3 单独排版（不是从 16:9 成品裁）；`candidates.jpg` / `candidates_4x3.jpg` 编号总图；`frame_XX_*.jpg` 原始帧。B 站投稿两种都要
 
 ### 用专辑封面等外部图片
 ```bash

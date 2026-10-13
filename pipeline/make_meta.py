@@ -88,6 +88,10 @@ def main():
         print(f"警告：标题 {len(title)} 字，超过 {TITLE_MAX}，请手动缩短")
 
     video = Path(a.video) if a.video else ROOT / "post" / a.name / f"{a.name} 4K60FPS Sub-WaterMark.mp4"
+    # 16:9 和 4:3 两种封面（make_cover.py 同时生成 cover_XX.jpg 和 cover_XX_4x3.jpg）
+    cover = a.cover or (f"post/{a.name}/cover/cover_01.jpg"
+                        if (ROOT / "post" / a.name / "cover" / "cover_01.jpg").exists() else None)
+    cover_43 = cover[:-4] + "_4x3.jpg" if cover else None
     out = {
         "name": a.name,
         "title": title,
@@ -110,8 +114,8 @@ def main():
         "spec": {"resolution": "3840x2160", "fps": 60, "audio": "AAC 320k"},
         "files": {
             "video": str(video.relative_to(ROOT)) if video.is_relative_to(ROOT) else str(video),
-            "cover": a.cover or (f"post/{a.name}/cover/cover_01.jpg"
-                                 if (ROOT / "post" / a.name / "cover" / "cover_01.jpg").exists() else None),
+            "cover": cover,
+            "cover_4x3": cover_43 if cover_43 and (ROOT / cover_43).exists() else None,
             "subtitle": f"lyrics/{a.name}.ass",
         },
         "source": {

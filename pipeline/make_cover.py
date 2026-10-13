@@ -8,7 +8,8 @@ python pipeline/make_cover.py --name sobaniirune --title "そばにいるね" \
     --subtitle "青山テルマ feat. SoulJa · 中日字幕"
 # 已选好时间点:   --at 65.2 --at 130
 # 右上角加队徽:   --extra-logo cover/psg.png
-产物: post/<name>/cover/cover_XX.jpg（1920x1080）, post/<name>/cover/candidates.jpg
+产物: post/<name>/cover/cover_XX.jpg（16:9，1920x1080）、cover_XX_4x3.jpg（4:3，1440x1080）、
+      candidates.jpg / candidates_4x3.jpg（编号总图）
 """
 
 import argparse
@@ -244,20 +245,29 @@ def paste_with_shadow(canvas, img, xy, blur=8, offset=(3, 5), alpha=150):
     canvas.alpha_composite(img, xy)
 
 
+def crop_ratio(img, ratio):
+    """从 16:9 底图中间裁出指定宽高比（4:3 封面用）。"""
+    w = int(img.height * ratio)
+    x = (img.width - w) // 2
+    return img.crop((x, 0, x + w, img.height))
+
+
 def compose(frame, a):
+    """按画布实际尺寸排版：logo/徽章按高度定大小，标题按当前宽度自适应，16:9 和 4:3 共用。"""
     canvas = frame.convert("RGBA")
+    cw, ch = canvas.size
 
     # 下半部分压暗，保证白字可读
-    grad = Image.new("L", (1, H))
-    for y in range(H):
-        grad.putpixel((0, y), int(170 * max(0, (y / H - 0.4) / 0.6) ** 1.4))
-    dark = Image.new("RGBA", (W, H), (0, 0, 0, 255))
-    dark.putalpha(grad.resize((W, H)))
+    grad = Image.new("L", (1, ch))
+    for y in range(ch):
+        grad.putpixel((0, y), int(170 * max(0, (y / ch - 0.4) / 0.6) ** 1.4))
+    dark = Image.new("RGBA", (cw, ch), (0, 0, 0, 255))
+    dark.putalpha(grad.resize((cw, ch)))
     canvas.alpha_composite(dark)
 
     # 左上: 朝阳Adele logo + 4K 徽章
     logo = Image.open(ROOT / a.logo).convert("RGBA")
-    lw = int(W * 0.16)
+    lw = int(ch * 0.284)
     logo = logo.resize((lw, int(logo.height * lw / logo.width)), Image.LANCZOS)
     # 白色 logo 在浅色画面上会消失，垫一层模糊的深色投影
     glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
@@ -267,16 +277,16 @@ def compose(frame, a):
     canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(10)))
     canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(3)))
     canvas.alpha_composite(logo, (60, 34))
-    bw = int(W * 0.13)
+    bw = int(ch * 0.231)
     badge_path = ROOT / a.badge
     b = badge_from_file(badge_path, bw) if badge_path.exists() else badge(bw)
     paste_with_shadow(canvas, b, (60 + (lw - b.width) // 2, 34 + logo.height + 10))
 
     # 右上: 额外 logo（队徽等）
-    x = W - 50
+    x = cw - 50
     for p in a.extra_logo or []:
         ex = Image.open(p).convert("RGBA")
-        eh = int(H * 0.2)
+        eh = int(ch * 0.2)
         ex = ex.resize((int(ex.width * eh / ex.height), eh), Image.LANCZOS)
         x -= ex.width
         canvas.alpha_composite(ex, (x, 40))
@@ -284,18 +294,19 @@ def compose(frame, a):
 
     # 标题 + 副标题，整体底边在安全线以上
     title_key = a.title_font or ("cjk" if CJK_RE.search(a.title) else "sans")
-    tf = fit(a.title, title_key, 220, int(W * 0.9))
-    sf = fit(a.subtitle, "sub", 96, int(W * 0.86)) if a.subtitle else None
-    sub_y = int(H * a.text_y)
+    tf = fit(a.title, title_key, 220, int(cw * 0.9))
+    sf = fit(a.subtitle, "sub", 96, int(cw * 0.88)) if a.subtitle else None
+    sub_y = int(ch * a.text_y)
     title_y = sub_y - (int(sf.size * 1.15) if sf else 0)
-    draw_text(canvas, (W / 2, title_y), a.title, tf)
+    draw_text(canvas, (cw / 2, title_y), a.title, tf)
     if sf:
-        draw_text(canvas, (W / 2, sub_y), a.subtitle, sf, stroke=0.08)
+        draw_text(canvas, (cw / 2, sub_y), a.subtitle, sf, stroke=0.08)
     return canvas.convert("RGB")
 
 
 def contact_sheet(covers, cols=3):
-    tw, th = 640, 360
+    th = 360
+    tw = int(th * covers[0].width / covers[0].height)
     rows = (len(covers) + cols - 1) // cols
     sheet = Image.new("RGB", (cols * tw + (cols + 1) * 16, rows * th + (rows + 1) * 16), (24, 24, 28))
     d = ImageDraw.Draw(sheet)
@@ -338,15 +349,20 @@ def main():
     else:
         frames = [(f"{t:.1f}s", grab(video, t)) for t in a.at] if a.at else \
             [(f"{t:.1f}s", img) for t, img in pick_frames(video, a.n)]
-    covers = []
+    # B 站投稿要两种封面：16:9（1920x1080）和 4:3（1440x1080），4:3 单独排版而不是从 16:9 成品裁
+    covers, covers43 = [], []
     for i, (label, img) in enumerate(frames, 1):
         c = compose(img, a)
+        c43 = compose(crop_ratio(img, 4 / 3), a)
         c.save(out / f"cover_{i:02d}.jpg", quality=95)
+        c43.save(out / f"cover_{i:02d}_4x3.jpg", quality=95)
         img.save(out / f"frame_{i:02d}_{label}.jpg", quality=95)
         covers.append(c)
-        print(f"cover_{i:02d}.jpg  <- {label}")
+        covers43.append(c43)
+        print(f"cover_{i:02d}.jpg + cover_{i:02d}_4x3.jpg  <- {label}")
     contact_sheet(covers).save(out / "candidates.jpg", quality=92)
-    print(f"候选总图: {out / 'candidates.jpg'}")
+    contact_sheet(covers43).save(out / "candidates_4x3.jpg", quality=92)
+    print(f"候选总图: {out / 'candidates.jpg'}，{out / 'candidates_4x3.jpg'}")
 
 
 if __name__ == "__main__":
