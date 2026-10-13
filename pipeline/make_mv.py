@@ -7,6 +7,7 @@
   download   yt-dlp 下载原视频 + 官方字幕         -> work/<name>/source.mp4
   prep       截取片段、降到 1080p、导出 flac       -> work/<name>/video_1080.mp4, audios/<name>.flac
   lyrics     官方字幕优先，否则 demucs + whisper   -> ori_lyrics/<name>.srt   (需人工校对)
+  split      过长的句子在停顿处拆开，切点对齐人声   -> ori_lyrics/<name>.srt（原地）
   translate  调 API 生成双语 ass                  -> lyrics/<name>.ass        (需人工校对)
   interp     原生帧率抽帧 + RIFE 直接插到 60fps     -> work/<name>/frames_out/
   render     放大到 4K + 烧字幕 + 水印             -> post/<name> 4K60FPS Sub-WaterMark.mp4
@@ -28,7 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VENV_BIN = ROOT / "my_venv" / "bin"
-STAGES = ["download", "prep", "lyrics", "translate", "interp", "render"]
+STAGES = ["download", "prep", "lyrics", "split", "translate", "interp", "render"]
 TARGET_FPS = 60
 
 
@@ -168,6 +169,19 @@ def stage_lyrics(a, w):
     print(f"\n>>> 原文歌词已生成: {out}\n>>> 请对照正确歌词校对（时间轴不变，只改文字），然后用 --from translate 继续")
 
 
+def stage_split(a, w):
+    srt = ROOT / "ori_lyrics" / f"{a.name}.srt"
+    vocals = ROOT / "separated" / "htdemucs" / a.name / "vocals.wav"
+    if not vocals.exists():
+        run([tool("demucs"), ROOT / "audios" / f"{a.name}.flac", "-n", "htdemucs",
+             "--two-stems=vocals", "-o", ROOT / "separated", "--jobs=4"])
+    backup = w / "ori_unsplit.srt"
+    if not backup.exists():
+        shutil.copy(srt, backup)
+    run([sys.executable, ROOT / "pipeline" / "split_long.py", srt,
+         "--vocals", vocals, "--max-width", a.max_width])
+
+
 def stage_translate(a, w):
     src = ROOT / "ori_lyrics" / f"{a.name}.srt"
     out = ROOT / "lyrics" / f"{a.name}.ass"
@@ -281,6 +295,8 @@ def main():
     p.add_argument("--sub-lang", help="优先使用的官方字幕语言代码，如 en / es / ja")
     p.add_argument("--whisper", action="store_true", help="忽略官方字幕，强制 whisper 识别")
     p.add_argument("--whisper-model", default="large-v3")
+    p.add_argument("--max-width", type=int, default=40,
+                   help="单句最大显示宽度（全角算 2），超过就拆")
     p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'")
     p.add_argument("--zh-file", help="不调 API，直接用这个文件里的中文翻译（每行对应一句）")
     p.add_argument("--cookies-from-browser", help="yt-dlp 需要登录时: chrome / safari / firefox")
