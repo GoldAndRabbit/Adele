@@ -292,7 +292,8 @@ def stage_render(a, w):
          "[sub][wm]overlay=15:15:format=auto,format=yuv420p[v]",
          "-map", "[v]", "-map", "1:a",
          *venc,
-         "-c:a", "aac", "-b:a", "320k",
+         # 默认和旧脚本一样直接放 FLAC（48kHz/24bit）进 mp4：B 站据此给 “Hi-Res无损” 标；--aac 改成 AAC 320k
+         *(["-c:a", "aac", "-b:a", "320k"] if a.aac else ["-c:a", "copy"]),
          "-shortest", "-movflags", "+faststart",
          out], cwd=w)
     print(f"\n>>> 成品: {out}")
@@ -323,6 +324,8 @@ def main():
     p.add_argument("--tag", help="成品文件名后缀，用于对比不同版本，如 bzrpv2style")
     p.add_argument("--logo", default="adele-logo.png")
     p.add_argument("--logo-scale", default="0.10")
+    p.add_argument("--aac", action="store_true",
+                   help="音频用 AAC 320k（默认 FLAC 无损，B 站会显示 Hi-Res无损）")
     p.add_argument("--crf", type=int, default=18)
     p.add_argument("--fast", action="store_true", help="用 VideoToolbox HEVC 硬编，快很多")
     p.add_argument("--frame-format", choices=["auto", "png", "jpg"], default="auto",

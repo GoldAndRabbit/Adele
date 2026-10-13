@@ -111,7 +111,7 @@ def main():
         },
         "tags": gen.get("tags", []),
         "subtitles": langs,
-        "spec": {"resolution": "3840x2160", "fps": 60, "audio": "AAC 320k"},
+        "spec": {"resolution": "3840x2160", "fps": 60, "audio": "FLAC 48kHz/24bit (Hi-Res)"},
         "files": {
             "video": str(video.relative_to(ROOT)) if video.is_relative_to(ROOT) else str(video),
             "cover": cover,
