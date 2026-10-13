@@ -1,78 +1,101 @@
 ---
 name: song-mv
-description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插帧 + 水印 + 原文/中文双语歌词的成品视频。当用户给出歌曲链接并要求“做视频 / 出 4K60 / 加双语字幕 / 按 bzrp 流程”时使用。
+description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插帧 + 水印 + 原文/中文双语歌词的成品视频，以及 B 站投稿用的 16:9 / 4:3 封面和元数据 JSON。当用户给出歌曲链接并要求“做视频 / 出 4K60 / 加双语字幕 / 做封面 / 投稿信息 / 按 bzrp 流程”时使用。
 ---
 
 # 歌曲 4K60 双语视频流程
 
-脚本：`pipeline/make_mv.py`（总控），`pipeline/translate_ass.py`（双语 ass）。
-一律用 `my_venv/bin/python` 运行（里面有 yt-dlp / whisper / demucs / pysubs2 / openai）。
+一律用 `my_venv/bin/python` 运行（里面有 yt-dlp / whisper / demucs / pysubs2 / openai / pykakasi / rapidfuzz）。
+
+| 脚本 | 作用 |
+|---|---|
+| `pipeline/make_mv.py` | 总控，阶段 `download → prep → lyrics → split → translate → interp → render`，`--from/--to` 断点续跑 |
+| `pipeline/fill_whisper_gaps.py` | 补 whisper 漏识别的段落（lyrics 阶段自动调用） |
+| `pipeline/align_lyrics.py` | 原始歌词 ↔ whisper 互相校准（有参考歌词时 lyrics 阶段自动调用） |
+| `pipeline/split_long.py` | 长句在停顿处拆开（split 阶段） |
+| `pipeline/translate_ass.py` | 双语 ass（translate 阶段） |
+| `pipeline/make_cover.py` | 封面：16:9 + 4:3 |
+| `pipeline/make_meta.py` | 投稿元数据 JSON |
+| `pipeline/llm.py` | 模型调用，密钥读仓库根目录 `.env`（与 Takit 同名变量，默认 DeepSeek） |
+
+产物目录：**每个作品一个文件夹** `post/X/`：`X 4K60FPS Sub-WaterMark.mp4` + `cover/` + `X.json`。中间文件在 `work/X/`。
+
+## 硬性要求
+- **音轨必须是 FLAC 48kHz/24bit**（B 站 “Hi-Res无损” 标靠它）。render 阶段强制 `-c:a copy` 放 flac，渲染后自动检查，不符直接报错；不要改成 AAC
+- **歌词文本和译文不由 Claude 自己写**：来源只能是官方字幕、whisper 识别、用户提供/自己保存的歌词文件、翻译 API。用户贴在对话里的歌词，请用户自己存成 `ori_lyrics/X.txt`
+- 投稿 JSON 里的事实必须有出处（视频简介、用户提供、可查证的资料），模型生成后要人工核对
 
 ## 0. 先确认参数
-- `--name`：短名，全部文件以它命名（如 `bzrp`）
-- 是否需要截取片段 `--start/--end`（直播/合集视频常需要；先 `--to download` 下载后看时长再定）
-- 歌曲语言：`--lang English|Spanish|Japanese...`（whisper 用），`--sub-lang en|es|ja`（官方字幕用）
-- 标题行 `--title "《歌名》 歌手"`
+- `--name`：短名，全部文件以它命名
+- 是否截取 `--start/--end`（直播/合集常需要；先 `--to download` 看时长）
+- `--lang English|Spanish|Japanese...`（whisper），`--sub-lang en|es|ja`（官方字幕）
+- 视频是否自带烧录字幕（搬运视频常见）：字幕默认样式离底部约 17%，一般不会和底部烧录字幕重叠；封面取帧要用 `--crop-bottom`
 
 ## 1. 下载 + 预处理 + 原文歌词
 ```bash
-my_venv/bin/python -m pip install -U yt-dlp   # YouTube 经常变，先升级
-my_venv/bin/python pipeline/make_mv.py --name X --url "LINK" --lang Spanish --sub-lang es --to lyrics
+my_venv/bin/python -m pip install -U "yt-dlp[default]"   # YouTube 经常变；[default] 带 JS 验证解析器
+my_venv/bin/python pipeline/make_mv.py --name X --url "LINK" --lang Japanese --sub-lang ja --to lyrics
 ```
-- 报 “Sign in to confirm you’re not a bot” → 加 `--cookies-from-browser chrome`（先征得用户同意）
-- 有官方人工字幕就用它，否则 demucs 分离人声 + whisper large-v3 识别；`--whisper` 可强制识别
-- 产物 `ori_lyrics/X.srt`
-- **有原始歌词时自动互相校准**：把歌词放到 `ori_lyrics/X.txt`（一行一句、按演唱顺序）或用 `--ref-lyrics path`（txt/srt）。`pipeline/align_lyrics.py` 字符级对齐，文字取歌词、时间取 whisper 逐字时间戳；报告 `work/X/align_report.json` 列出低置信度句和“唱了但歌词里没有”的段落
+- 报 “Sign in to confirm you’re not a bot” → `--cookies-from-browser chrome`（先征得用户同意）
+- **有官方人工字幕**：直接用，产物 `ori_lyrics/X.srt`
+- **没有官方字幕**：demucs 分离人声 → whisper large-v3（逐字时间戳 json）→ **自动补漏**：人声明显很响、但 whisper 超过 5s 没识别的区间（现场录音的开头最常见），单独截出来从几个起点重识别，取词最多的结果合并回去
+- **有原始歌词就自动互相校准**（强烈建议）：歌词放 `ori_lyrics/X.txt`（一行一句；`[Verse]` 段落标记会自动去掉；顺序不必与这一版一致）或 `--ref-lyrics path`（txt/srt，比如同一首歌其他视频的官方字幕）
+  - 以录音为主导：两边转平假名读音（pykakasi），把参考歌词拆成短语，整段识别连成一条流从头扫，在任意位置模糊匹配参考短语（rapidfuzz），可跨 whisper 片段、可乱序、可重复；同一原句相邻短语再合并
+  - 文字取参考歌词，时间取 whisper；对不上的保留 whisper 原文并列出时间点
+  - 现场版识别差时放宽门槛：`--align-min-score 70 --align-min-cover 0.6`（默认 80 / 0.7）
+  - 报告 `work/X/align_report.json`：`from_whisper_needs_review` 是需要用户核对的时间点
 
-## 2. 人工校对原文（检查点）
-whisper 结果经常有错字/漏句。让用户对照正确歌词修改 `ori_lyrics/X.srt` 的文字，**时间轴不动**。
-可帮用户做格式层面的检查（时间重叠、空行、明显的重复幻听行、开头静音段的幻觉文本），但歌词文本和翻译内容不要由 Claude 自己写出——来源只能是官方字幕、whisper 识别、用户提供的文本或翻译 API。
+## 2. 人工校对（检查点）
+把需核对的时间点给用户，让用户改 `ori_lyrics/X.srt` 的文字，**时间轴不动**。
+Claude 只做格式层面的检查（时长、重叠、句数、覆盖范围、开头是否漏识别），汇报时只给统计和时间点，不贴歌词。
 
-## 3. 双语字幕
+## 3. 拆长句 + 双语字幕
 ```bash
-my_venv/bin/python pipeline/make_mv.py --name X --from translate --to translate --title "《歌名》 歌手"
+my_venv/bin/python pipeline/make_mv.py --name X --from split --to translate --title "《歌名》 歌手"
 ```
-- 密钥读仓库根目录 `.env`（与 Takit 相同的变量名，默认 `LLM_PROVIDER=deepseek`，模型 deepseek-v4-pro；可切 aliyun / siliconflow / openai）
-- 或用户自备中文：`--zh-file zh.txt`（每行对应 srt 一句，空行 = 不翻译）
-- 产物 `lyrics/X.ass`：默认样式与 `lyrics/bzrp_v2.ass` 一致（384x288、Arial Rounded 23、描边 1、底边距 50，`原文 \N♪ 中文 ♪`，标题作为首行在底部）；`--sub-style modern` 为 1080p 画布 + 日文粗体 + 标题在顶部
-- 已存在的文件不会被覆盖，重新生成要 `--force`
+- split：超过 40 宽（全角算 2）的句子在空格/标点处拆开，切点对齐 demucs 人声能量最低处（换气）；`--max-width` 可调
+- translate：DeepSeek 翻译（`.env` 里 `LLM_PROVIDER` 可切 aliyun / siliconflow / openai）；或 `--zh-file zh.txt`（每行对应一句）
+- 产物 `lyrics/X.ass`，默认样式与 `lyrics/bzrp_v2.ass` 一致（384x288、Arial Rounded 23、描边 1、底边距 50，`原文 \N♪ 中文 ♪`，标题作为首行在底部）；`--sub-style modern` 是 1080p 画布 + 日文粗体 + 标题在顶部
+- 已存在的文件不覆盖，重新生成加 `--force`
+- 歌名的通行中文译名要准确（例：そばにいるね = 在你身边，不是“留在我身边”）
 
 ## 4. 插帧 + 渲染
 ```bash
-my_venv/bin/python pipeline/make_mv.py --name X --from interp
+my_venv/bin/python pipeline/make_mv.py --name X --from interp --keep-frames
 ```
-- 降到 1080p 后按**原生帧率**抽帧，RIFE v4.6 `-n` 一步插到 60fps（24/25/30 都适用，不再先 dup 到 30）
-- 源已是 60fps 则跳过插帧
-- lanczos 放大到 3840x2160 → 烧 ass → 左上角 `adele-logo.png`（宽度 10%）→ x264 crf18 + **FLAC 48kHz/24bit 无损音频（必须，B 站 “Hi-Res无损” 标靠这个；渲染结束会自动检查，不是 FLAC 直接报错）**
-- `--fast` 用 VideoToolbox HEVC 硬编；`--keep-frames` 保留 PNG
-- 成品：`post/X/X 4K60FPS Sub-WaterMark.mp4`（每个作品一个目录：视频 + `cover/` + `X.json`）
+- 可以在 lyrics 阶段跑的同时并行插帧（RIFE 用 GPU，whisper 用 CPU）
+- 降到 1080p 后按**原生帧率**抽帧，RIFE v4.6 `-n` 一步插到 60fps；源已是 60fps 则跳过
+- PNG 帧按磁盘余量自动选 png/jpg（`--frame-format` 可指定）
+- lanczos 放大到 3840x2160 → 烧 ass → 左上角 `adele-logo.png` → x264 crf18 + FLAC
+- 只改字幕时 `--from render`（需要之前 `--keep-frames`）；对比不同版本用 `--ass 文件 --tag 后缀`
+- 校验：ffprobe 看 3840x2160 / 60/1 / 帧数 / 时长与源一致 / flac 48000 24bit；抽一帧看字幕、水印、是否压到烧录字幕
 
-## 注意
-- 1080p PNG 帧约 3MB/帧，4 分钟 60fps ≈ 14400 帧 ≈ 40GB，开工前 `df -h` 看磁盘
-- 校验成品：`ffprobe` 看 3840x2160 / 60/1 / 时长与音频一致；抽一帧截图看字幕和水印
-- 只改了字幕时只需 `--from render`（需 `--keep-frames` 保留过帧，否则从 `interp` 重来）
-
-## 5. 封面候选
+## 5. 封面（16:9 + 4:3）
 ```bash
-my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中英字幕"
+my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕" [--at 60 --at 120] [--crop-bottom 0.14]
 ```
-- 从原始 4K 视频均匀取 48 帧，按清晰度/亮度挑 6 张（`--n` 改数量，`--at 65.2` 指定时间点）
-- 每张统一打上：左上 朝阳Adele logo（带深色衬底）+ 金色 4K/60FPS 徽章，中下方大标题 + 宋体副标题，副标题基线默认在 66% 高度（`--text-y` 调，越小越靠上；不要超过 0.84，底部留给 B 站播放量）
-- 右上角额外 logo（队徽等）：`--extra-logo path.png`，可多次
-- 标题字体：英文默认 Avenir Next Heavy，含日文/中文自动用 Hiragino Sans W8；`--title-font gill|serif` 可换成 Bzrp / Man of the Year 那种风格
-- 产物：每张候选同时出 **16:9 `cover_XX.jpg`（1920x1080）和 4:3 `cover_XX_4x3.jpg`（1440x1080）**，4:3 单独排版（不是从 16:9 成品裁）；`candidates.jpg` / `candidates_4x3.jpg` 编号总图；`frame_XX_*.jpg` 原始帧。B 站投稿两种都要
-
-### 用专辑封面等外部图片
-```bash
-my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "..." --image cover/X_art.png --out-dir post/X/cover/art
-```
-- 自动去掉左右纯色边条；分辨率不够先用 Real-ESRGAN x4 放大
-- 非 16:9 的图：`--fill extend`（边缘颜色向两侧延伸，默认推荐）/ `blur`（模糊底图）/ `crop`
+- 默认从原视频均匀取 48 帧、按清晰度挑 6 张；自动挑的常是全景，**优先用 `--at` 指定人物特写**：脸在画面上半部分、标题落在下巴以下
+- 每张同时出 **16:9 `cover_XX.jpg`（1920x1080）和 4:3 `cover_XX_4x3.jpg`（1440x1080）**，B 站两种都要；4:3 单独排版，裁切窗口自动对准画面上部细节最多处（人脸），不会裁掉半张脸
+- 统一元素：左上 朝阳Adele logo（深色衬底）+ `4K60-logo.jpg` 徽章（自动圆角、描边、投影），中部大标题 + 宋体副标题，副标题基线默认 0.66 高度（`--text-y`，不要超过 0.84）
+- `--crop-bottom 0.14`：画面里烧了字幕的视频，取帧时先裁掉底部再补满
+- 右上角额外 logo：`--extra-logo path.png`；标题字体 `--title-font gill|serif`
+- 用专辑封面等外部图：`--image cover/X_art.png`，自动去边条、分辨率不足先 Real-ESRGAN x4；方图补成横版用 `--fill extend`（只延伸背景色，推荐）
+- 选定后 `cover/` 里只留 `cover_01.jpg` 和 `cover_01_4x3.jpg`
 
 ## 6. 投稿元数据 JSON
 ```bash
-my_venv/bin/python pipeline/make_meta.py --name X --subtitle-langs "日语,中文" --cover post/X/cover/cover_01.jpg [--note "补充信息"]
+my_venv/bin/python pipeline/make_meta.py --name X --subtitle-langs "日语,中文" --note "演出名称、日期、场地、场次等补充"
 ```
-- 依据 `work/X/meta.json`（yt-dlp 抓的标题/简介/日期）让模型整理，产物 `post/X/X.json`
-- 字段：title（`[4K60帧/Hi-Res] 中文名《歌名》英文名. 关键词`，≤80 字）、song、performance、intro.song、intro.performance、tags、subtitles、spec、files、source
-- 生成后**必须人工核对**：模型可能把频道口号当演出细节、给罗马字人名乱配汉字、编造数字
+- 依据 `work/X/meta.json`（yt-dlp 抓的标题/简介/日期）+ `--note`，产物 `post/X/X.json`
+- 字段：title（`[4K60帧/Hi-Res] 中文名《歌名》英文名. 关键词`，≤80 字）、song、performance、intro.song、intro.performance、tags、subtitles、spec、files（video / cover / cover_4x3 / subtitle）、source
+- **生成后逐条核对并手动改**，模型常见错误：
+  - 把频道口号当演出细节（如 THE FIRST TAKE 的“一支麦克风”）
+  - 给罗马字人名乱配汉字
+  - 编造材料里没有的事实（吉尼斯纪录、现场乐队伴奏等），换成有出处的说法或删掉
+  - 无依据的夸张（“国民级”）；不写不确定的成员名字
+
+## 7. 收尾
+用户确认成品后：
+- 删对比版/草稿视频，`post/X/` 只留成品、`cover/` 两张封面、`X.json`
+- 字幕不再改了就删 `work/X/frames_out/`（几十 GB）
+- 代码改动提交并推送（`git push`）
