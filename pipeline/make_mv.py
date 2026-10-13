@@ -151,18 +151,31 @@ def stage_lyrics(a, w):
                 e.start = max(e.start, 0)
     else:
         flac = ROOT / "audios" / f"{a.name}.flac"
-        # 人声分离后再识别，背景乐对 whisper 干扰很大
-        run([tool("demucs"), flac, "-n", "htdemucs", "--two-stems=vocals",
-             "-o", ROOT / "separated", "--jobs=4"])
         vocals = ROOT / "separated" / "htdemucs" / a.name / "vocals.wav"
-        cmd = [tool("whisper"), vocals, "--model", a.whisper_model,
-               "--temperature", "0.0", "--best_of", "5", "--beam_size", "5",
-               "--condition_on_previous_text", "False",
-               "--output_format", "srt", "--output_dir", w / "whisper",
-               "--word_timestamps", "True", "--max_line_width", "48", "--max_line_count", "1"]
-        if a.lang:
-            cmd += ["--language", a.lang]
-        run(cmd)
+        # 人声分离后再识别，背景乐对 whisper 干扰很大
+        if not vocals.exists():
+            run([tool("demucs"), flac, "-n", "htdemucs", "--two-stems=vocals",
+                 "-o", ROOT / "separated", "--jobs=4"])
+        if not (w / "whisper" / "vocals.json").exists() or a.force:
+            cmd = [tool("whisper"), vocals, "--model", a.whisper_model,
+                   "--temperature", "0.0", "--best_of", "5", "--beam_size", "5",
+                   "--condition_on_previous_text", "False",
+                   "--output_format", "all", "--output_dir", w / "whisper",
+                   "--word_timestamps", "True", "--max_line_width", "48", "--max_line_count", "1"]
+            if a.lang:
+                cmd += ["--language", a.lang]
+            run(cmd)
+
+        # 有原始歌词就做互相校准：文字取歌词，时间取 whisper 逐字时间戳
+        ref = Path(a.ref_lyrics) if a.ref_lyrics else ROOT / "ori_lyrics" / f"{a.name}.txt"
+        if ref.exists():
+            out.parent.mkdir(exist_ok=True)
+            run([sys.executable, ROOT / "pipeline" / "align_lyrics.py", "--ref", ref,
+                 "--whisper", w / "whisper" / "vocals.json", "-o", out,
+                 "--report", w / "align_report.json"])
+            print(f"\n>>> 已按原始歌词校准: {out}\n>>> 看一下报告里的低置信度句和未匹配段，然后 --from split 继续")
+            return
+        print("没有原始歌词（ori_lyrics/<name>.txt 或 --ref-lyrics），只能用 whisper 原始结果")
         subs = pysubs2.load(str(w / "whisper" / "vocals.srt"))
 
     out.parent.mkdir(exist_ok=True)
@@ -295,6 +308,7 @@ def main():
     p.add_argument("--end", help="截取结束时间，如 00:40:04")
     p.add_argument("--lang", help="whisper 语言，如 English / Spanish / Japanese；不填自动识别")
     p.add_argument("--sub-lang", help="优先使用的官方字幕语言代码，如 en / es / ja")
+    p.add_argument("--ref-lyrics", help="原始歌词 txt/srt，用来和 whisper 互相校准；默认找 ori_lyrics/<name>.txt")
     p.add_argument("--whisper", action="store_true", help="忽略官方字幕，强制 whisper 识别")
     p.add_argument("--whisper-model", default="large-v3")
     p.add_argument("--max-width", type=int, default=40,

@@ -22,6 +22,7 @@ my_venv/bin/python pipeline/make_mv.py --name X --url "LINK" --lang Spanish --su
 - 报 “Sign in to confirm you’re not a bot” → 加 `--cookies-from-browser chrome`（先征得用户同意）
 - 有官方人工字幕就用它，否则 demucs 分离人声 + whisper large-v3 识别；`--whisper` 可强制识别
 - 产物 `ori_lyrics/X.srt`
+- **有原始歌词时自动互相校准**：把歌词放到 `ori_lyrics/X.txt`（一行一句、按演唱顺序）或用 `--ref-lyrics path`（txt/srt）。`pipeline/align_lyrics.py` 字符级对齐，文字取歌词、时间取 whisper 逐字时间戳；报告 `work/X/align_report.json` 列出低置信度句和“唱了但歌词里没有”的段落
 
 ## 2. 人工校对原文（检查点）
 whisper 结果经常有错字/漏句。让用户对照正确歌词修改 `ori_lyrics/X.srt` 的文字，**时间轴不动**。
