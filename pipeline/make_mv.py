@@ -165,6 +165,10 @@ def stage_lyrics(a, w):
             if a.lang:
                 cmd += ["--language", a.lang]
             run(cmd)
+            # 现场录音常有整段被 whisper 跳过（尤其开头），按人声能量找出来单独补识别
+            run([sys.executable, ROOT / "pipeline" / "fill_whisper_gaps.py", "--vocals", vocals,
+                 "--json", w / "whisper" / "vocals.json", "--whisper", tool("whisper"),
+                 "--model", a.whisper_model] + (["--lang", a.lang] if a.lang else []))
 
         # 有原始歌词就做互相校准：文字取歌词，时间取 whisper 逐字时间戳
         ref = Path(a.ref_lyrics) if a.ref_lyrics else ROOT / "ori_lyrics" / f"{a.name}.txt"
@@ -172,7 +176,8 @@ def stage_lyrics(a, w):
             out.parent.mkdir(exist_ok=True)
             run([sys.executable, ROOT / "pipeline" / "align_lyrics.py", "--ref", ref,
                  "--whisper", w / "whisper" / "vocals.json", "-o", out,
-                 "--report", w / "align_report.json"])
+                 "--report", w / "align_report.json",
+                 "--min-score", a.align_min_score, "--min-cover", a.align_min_cover])
             print(f"\n>>> 已按原始歌词校准: {out}\n>>> 看一下报告里的低置信度句和未匹配段，然后 --from split 继续")
             return
         print("没有原始歌词（ori_lyrics/<name>.txt 或 --ref-lyrics），只能用 whisper 原始结果")
@@ -323,6 +328,9 @@ def main():
     p.add_argument("--lang", help="whisper 语言，如 English / Spanish / Japanese；不填自动识别")
     p.add_argument("--sub-lang", help="优先使用的官方字幕语言代码，如 en / es / ja")
     p.add_argument("--ref-lyrics", help="原始歌词 txt/srt，用来和 whisper 互相校准；默认找 ori_lyrics/<name>.txt")
+    p.add_argument("--align-min-score", type=float, default=80,
+                   help="歌词校准的匹配分数门槛，现场版识别差时可降到 70")
+    p.add_argument("--align-min-cover", type=float, default=0.7)
     p.add_argument("--whisper", action="store_true", help="忽略官方字幕，强制 whisper 识别")
     p.add_argument("--whisper-model", default="large-v3")
     p.add_argument("--max-width", type=int, default=40,
