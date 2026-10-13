@@ -62,6 +62,22 @@ def grab(video, t):
     return Image.frombytes("RGB", (W, H), raw)
 
 
+def grab_hd(video, t, work):
+    """高清取帧：按原始分辨率截帧（含 crop-bottom）→ Real-ESRGAN x4 → Lanczos 缩到封面尺寸并居中裁切。
+    1080p 素材裁掉底部字幕后只剩 ~930 行，直接拉伸会糊。"""
+    pre = f"crop=iw:ih*{1 - CROP_BOTTOM:.3f}:0:0" if CROP_BOTTOM > 0 else "null"
+    tmp = work / "_grab.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
+                    "-vf", pre, str(tmp)], check=True)
+    img = Image.open(tmp).convert("RGB")
+    tmp.unlink()
+    img = upscale(img, work, force=True)
+    scale = max(W / img.width, H / img.height)
+    img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
+    x, y = (img.width - W) // 2, (img.height - H) // 2
+    return img.crop((x, y, x + W, y + H))
+
+
 def score(img):
     """清晰度（拉普拉斯方差）为主，太暗/太亮扣分。"""
     g = np.asarray(img.convert("L").resize((480, 270)), dtype=np.float32)
@@ -105,10 +121,12 @@ def trim_bars(img, tol=25):
     return img.crop((cols.min(), rows.min(), cols.max() + 1, rows.max() + 1))
 
 
-def upscale(img, work):
+def upscale(img, work, force=False):
     """分辨率不够时用 Real-ESRGAN x4 放大，比直接拉伸清楚。"""
     exe, models = ROOT / "realesrgan-ncnn-vulkan", ROOT / "models"
-    if img.height >= H or not exe.exists() or not (models / "realesrgan-x4plus.bin").exists():
+    if (img.height >= H and not force) or not exe.exists() or not (models / "realesrgan-x4plus.bin").exists():
+        if force:
+            print("  未找到 realesrgan-ncnn-vulkan / models/realesrgan-x4plus，跳过高清化")
         return img
     src, dst = work / "_sr_in.png", work / "_sr_out.png"
     img.save(src)
@@ -347,6 +365,8 @@ def main():
     p.add_argument("--out-dir", help="输出目录，默认 post/<name>/cover")
     p.add_argument("--text-y", type=float, default=TEXT_Y,
                    help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
+    p.add_argument("--no-sr", dest="sr", action="store_false",
+                   help="不做 Real-ESRGAN 高清化（默认对选中的帧做 x4 超分再缩到封面尺寸）")
     p.add_argument("--crop-bottom", type=float, default=0.0,
                    help="取帧时先裁掉底部这一比例（如 0.14），用于画面里烧了字幕的搬运视频")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
@@ -364,8 +384,12 @@ def main():
     if a.image:
         frames = [(f"{Path(pth).stem}_{m}", load_image(pth, m, out)) for pth in a.image for m in a.fill]
     else:
-        frames = [(f"{t:.1f}s", grab(video, t)) for t in a.at] if a.at else \
-            [(f"{t:.1f}s", img) for t, img in pick_frames(video, a.n)]
+        times = a.at if a.at else [t for t, _ in pick_frames(video, a.n)]
+        if a.sr:
+            print(f"Real-ESRGAN 高清化 {len(times)} 帧 ...")
+            frames = [(f"{t:.1f}s", grab_hd(video, t, out)) for t in times]
+        else:
+            frames = [(f"{t:.1f}s", grab(video, t)) for t in times]
     # B 站投稿要两种封面：16:9（1920x1080）和 4:3（1440x1080），4:3 单独排版而不是从 16:9 成品裁
     covers, covers43 = [], []
     for i, (label, img) in enumerate(frames, 1):

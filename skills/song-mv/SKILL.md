@@ -77,7 +77,8 @@ my_venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "
 - 默认从原视频均匀取 48 帧、按清晰度挑 6 张；自动挑的常是全景，**优先用 `--at` 指定人物特写**：脸在画面上半部分、标题落在下巴以下
 - 每张同时出 **16:9 `cover_XX.jpg`（1920x1080）和 4:3 `cover_XX_4x3.jpg`（1440x1080）**，B 站两种都要；4:3 单独排版，裁切窗口自动对准画面上部细节最多处（人脸），不会裁掉半张脸
 - 统一元素：左上 朝阳Adele logo（深色衬底）+ `4K60-logo.jpg` 徽章（自动圆角、描边、投影），中部大标题 + 宋体副标题，副标题基线默认 0.66 高度（`--text-y`，不要超过 0.84）
-- `--crop-bottom 0.14`：画面里烧了字幕的视频，取帧时先裁掉底部再补满
+- 选中的帧默认做 **Real-ESRGAN x4 高清化**（原分辨率截帧 → x4 超分 → Lanczos 缩到封面尺寸），约 20s/帧；`--no-sr` 关闭
+- `--crop-bottom 0.14`：画面里烧了字幕的视频，取帧时先裁掉底部再补满；这类特写帧脸偏大偏下，标题用 `--text-y 0.80` 避免压脸
 - 右上角额外 logo：`--extra-logo path.png`；标题字体 `--title-font gill|serif`
 - 用专辑封面等外部图：`--image cover/X_art.png`，自动去边条、分辨率不足先 Real-ESRGAN x4；方图补成横版用 `--fill extend`（只延伸背景色，推荐）
 - 选定后 `cover/` 里只留 `cover_01.jpg` 和 `cover_01_4x3.jpg`
