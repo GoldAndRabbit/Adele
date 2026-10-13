@@ -1,0 +1,20 @@
+requests
+yt-dlp
+librosa
+demucs
+ipykernel
+huggingface_hub
+openai-whisper
+openai
+numpy==1.26.4
+torch
+torchvision
+torchaudio
+huggingface_hub
+Cython
+transformers
+# nemo_toolkit[all]
+opencc-python-reimplemented==0.1.6
+jupyter
+ipywidgets
+ipython

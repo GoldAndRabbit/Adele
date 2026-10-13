@@ -1,0 +1,34 @@
+# 环境
+my_venv/
+**/__pycache__/
+.DS_Store
+.ipynb_checkpoints/
+
+# 媒体产物（体积大，不入库）
+*.mp4
+*.mkv
+*.webm
+*.flac
+*.wav
+*.m4a
+*.part
+*.ytdl
+audios/
+separated/
+videos_debug/
+post/
+work/
+input_frames/
+output_frames/
+cover/
+
+# 大图 / 可选模型
+image_ir.png
+v3_ir.png
+realesrgan-ncnn-vulkan
+models/realesrgan-x4plus.*
+models/realsrgan/
+
+# cookies 等敏感文件
+cookies*.txt
+.env

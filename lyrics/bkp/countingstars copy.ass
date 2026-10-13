@@ -1,0 +1,81 @@
+[Script Info]
+Title: Counting Stars - OneRepublic (Bilingual)
+ScriptType: v4.00+
+PlayResX: 384
+PlayResY: 288
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,16,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:09.88,0:00:14.35,Default,,0,0,0,,Lately, I been, I been losin' sleep\N最近我总是辗转反侧 难以入眠
+Dialogue: 0,0:00:15.20,0:00:19.80,Default,,0,0,0,,Dreamin' about the things that we could be\N对我们曾有过的愿景 浮想联翩
+Dialogue: 0,0:00:20.45,0:00:25.03,Default,,0,0,0,,But, baby, I been, I been prayin' hard\N但亲爱的 我始终在虔诚祈祷
+Dialogue: 0,0:00:25.85,0:00:31.37,Default,,0,0,0,,Said, "No more countin' dollars, we'll be countin' stars"\N别再数钱 我们一起数星星
+Dialogue: 0,0:00:32.58,0:00:40.25,Default,,0,0,0,,We'll be countin' stars\N我们一起数星星
+Dialogue: 0,0:00:56.90,0:00:59.50,Default,,0,0,0,,I see this life like a swingin' vine\N生活就像一株跃动的藤蔓
+Dialogue: 0,0:00:59.50,0:01:01.50,Default,,0,0,0,,Swing my heart across the line\N携心跨越世俗界限
+Dialogue: 0,0:01:01.50,0:01:03.50,Default,,0,0,0,,In my face is flashin' signs\N在我脸上 划过迹象
+Dialogue: 0,0:01:03.50,0:01:05.50,Default,,0,0,0,,Seek it out and ye shall find\N遍寻之后 你能发现
+Dialogue: 0,0:01:05.50,0:01:07.25,Default,,0,0,0,,The old, but I'm not that old\N成熟 但不老态龙钟
+Dialogue: 0,0:01:07.25,0:01:09.25,Default,,0,0,0,,Young, but I'm not that bold\N年轻 却未鲁莽
+Dialogue: 0,0:01:09.25,0:01:11.25,Default,,0,0,0,,And I don't think the world is sold\N坚信这个世界美好如初
+Dialogue: 0,0:01:11.25,0:01:13.60,Default,,0,0,0,,On just doin' what we're told\N我只是循规蹈矩地生活着
+Dialogue: 0,0:01:13.60,0:01:21.06,Default,,0,0,0,,I feel somethin' so right doin' the wrong thing\N明知何为对 却行错误之事
+Dialogue: 0,0:01:21.50,0:01:29.58,Default,,0,0,0,,And I feel somethin' so wrong doin' the right thing\N明知何为错 却行正确之举
+Dialogue: 0,0:01:29.58,0:01:33.00,Default,,0,0,0,,I couldn't lie, couldn't lie, couldn't lie\N我欺骗过 伪装过 失真过
+Dialogue: 0,0:01:33.00,0:01:36.88,Default,,0,0,0,,Everything that kills me makes me feel alive\N所有打击 皆让我感受生命的脉动
+Dialogue: 0,0:01:36.88,0:01:40.70,Default,,0,0,0,,Lately, I been, I been losin' sleep\N最近我总是辗转反侧 难以入眠
+Dialogue: 0,0:01:40.70,0:01:44.36,Default,,0,0,0,,Dreamin' about the things that we could be\N对我们曾有过的愿景 浮想联翩
+Dialogue: 0,0:01:44.36,0:01:48.61,Default,,0,0,0,,But, baby, I been, I been prayin' hard\N但亲爱的 我始终在虔诚祈祷
+Dialogue: 0,0:01:48.61,0:01:52.44,Default,,0,0,0,,Said, "No more countin' dollars, we'll be countin' stars"\N别再数钱 我们一起数星星
+Dialogue: 0,0:01:52.44,0:01:56.45,Default,,0,0,0,,Lately, I been, I been losin' sleep\N最近我总是辗转反侧 难以入眠
+Dialogue: 0,0:01:56.45,0:02:00.46,Default,,0,0,0,,Dreamin' about the things that we could be\N对我们曾有过的愿景 浮想联翩
+Dialogue: 0,0:02:00.46,0:02:04.56,Default,,0,0,0,,But, baby, I been, I been prayin' hard\N但亲爱的 我始终在虔诚祈祷
+Dialogue: 0,0:02:04.56,0:02:09.61,Default,,0,0,0,,Said, "No more countin' dollars, we'll be, we'll be countin' stars"\N别再数钱 我们一起数星星
+Dialogue: 0,0:02:15.18,0:02:18.13,Default,,0,0,0,,I feel your love, and I feel it burn\N我感觉到爱火在胸中熊起
+Dialogue: 0,0:02:18.13,0:02:20.13,Default,,0,0,0,,Down this river, every turn\N于河流的每个迂回处翻腾
+Dialogue: 0,0:02:20.13,0:02:22.31,Default,,0,0,0,,"Hope" is our four-letter word\N希望只是个四字单词
+Dialogue: 0,0:02:22.31,0:02:24.13,Default,,0,0,0,,Make that money, watch it burn\N抛开身外之物 任其燃烧殆尽
+Dialogue: 0,0:02:24.13,0:02:25.90,Default,,0,0,0,,Old, but I'm not that old\N我虽上年纪 但未必老态龙钟
+Dialogue: 0,0:02:25.90,0:02:27.90,Default,,0,0,0,,Young, but I'm not that bold\N虽还年轻 却不致鲁莽失礼
+Dialogue: 0,0:02:27.90,0:02:30.08,Default,,0,0,0,,And I don't think the world is sold\N坚信这个世界美好如初
+Dialogue: 0,0:02:30.08,0:02:32.15,Default,,0,0,0,,On just doin' what we're told\N我只是循规蹈矩地生活着
+Dialogue: 0,0:02:32.15,0:02:40.33,Default,,0,0,0,,And I feel somethin' so wrong doin' the right thing\N明知何为错 却行正确之举
+Dialogue: 0,0:02:40.33,0:02:43.65,Default,,0,0,0,,I couldn't lie, couldn't lie, couldn't lie\N我欺骗过 伪装过 失真过
+Dialogue: 0,0:02:43.65,0:02:47.45,Default,,0,0,0,,Everything that drowns me makes me wanna fly\N但置我于低谷者 定能助我以崛起
+Dialogue: 0,0:02:47.45,0:02:51.48,Default,,0,0,0,,Lately, I been, I been losin' sleep\N最近我总是辗转反侧 难以入眠
+Dialogue: 0,0:02:51.48,0:02:55.40,Default,,0,0,0,,Dreamin' about the things that we could be\N对我们曾有过的愿景 浮想联翩
+Dialogue: 0,0:02:55.40,0:02:59.48,Default,,0,0,0,,But, baby, I been, I been prayin' hard\N但亲爱的 我始终在虔诚祈祷
+Dialogue: 0,0:02:59.48,0:03:03.53,Default,,0,0,0,,Said, "No more countin' dollars, we'll be countin' stars"\N别再数钱 我们一起数星星
+Dialogue: 0,0:03:03.53,0:03:07.10,Default,,0,0,0,,Lately, I been, I been losin' sleep\N最近我总是辗转反侧 难以入眠
+Dialogue: 0,0:03:07.10,0:03:11.10,Default,,0,0,0,,Dreamin' about the things that we could be\N对我们曾有过的愿景 浮想联翩
+Dialogue: 0,0:03:11.10,0:03:15.08,Default,,0,0,0,,But, baby, I been, I been prayin' hard\N但亲爱的 我始终在虔诚祈祷
+Dialogue: 0,0:03:15.08,0:03:20.93,Default,,0,0,0,,Said, "No more countin' dollars, we'll be, we'll be countin' stars"\N别再数钱 我们一起数星星
+Dialogue: 0,0:04:29.98,0:04:31.98,Default,,0,0,0,,Oh, take that money, watch it burn\N抛开身外之物 任其燃烧殆尽
+Dialogue: 0,0:04:31.98,0:04:33.60,Default,,0,0,0,,Sink in the river the lessons I learned\N将过往教训 沉入河底
+Dialogue: 0,0:04:33.60,0:04:35.63,Default,,0,0,0,,Take that money, watch it burn\N抛开身外之物 任其燃烧殆尽
+Dialogue: 0,0:04:35.63,0:04:37.63,Default,,0,0,0,,Sink in the river the lessons I learned\N将过往教训 沉入河底
+Dialogue: 0,0:04:37.63,0:04:39.63,Default,,0,0,0,,Take that money, watch it burn\N抛开身外之物 任其燃烧殆尽
+Dialogue: 0,0:04:39.63,0:04:41.63,Default,,0,0,0,,Sink in the river the lessons I learned\N将过往教训 沉入河底
+Dialogue: 0,0:04:41.63,0:04:43.63,Default,,0,0,0,,Take that money, watch it burn\N抛开身外之物 任其燃烧殆尽
+Dialogue: 0,0:04:43.63,0:04:45.63,Default,,0,0,0,,Sink in the river the lessons I learned\N将过往教训 沉入河底
+Dialogue: 0,0:04:45.63,0:04:52.65,Default,,0,0,0,,Everything that kills me makes me feel alive\N沉舟侧畔千帆过 病树前头万木春
+Dialogue: 0,0:04:52.65,0:04:56.18,Default,,0,0,0,,Lately, I been, I been losin' sleep\N最近我总是辗转反侧 难以入眠
+Dialogue: 0,0:04:56.18,0:04:59.88,Default,,0,0,0,,Dreamin' about the things that we could be\N对我们曾有过的愿景 浮想联翩
+Dialogue: 0,0:04:59.88,0:05:04.30,Default,,0,0,0,,But, baby, I been, I been prayin' hard\N但亲爱的 我始终在虔诚祈祷
+Dialogue: 0,0:05:04.30,0:05:08.28,Default,,0,0,0,,Said, "No more countin' dollars, we'll be countin' stars"\N别再数钱 我们一起数星星
+Dialogue: 0,0:05:08.28,0:05:12.58,Default,,0,0,0,,Lately, I been, I been losin' sleep\N最近我总是辗转反侧 难以入眠
+Dialogue: 0,0:05:12.58,0:05:16.15,Default,,0,0,0,,Dreamin' about the things that we could be\N对我们曾有过的愿景 浮想联翩
+Dialogue: 0,0:05:16.15,0:05:20.08,Default,,0,0,0,,But, baby, I been, I been prayin' hard\N但亲爱的 我始终在虔诚祈祷
+Dialogue: 0,0:05:20.08,0:05:24.45,Default,,0,0,0,,Said, "No more countin' dollars, we'll be, we'll be countin' stars"\N别再数钱 我们一起数星星
+Dialogue: 0,0:05:24.45,0:05:26.15,Default,,0,0,0,,Take that money, watch it burn\N抛开身外之物 任其燃烧殆尽
+Dialogue: 0,0:05:26.15,0:05:27.83,Default,,0,0,0,,Sink in the river the lessons I learned\N将过往教训 沉入河底
+Dialogue: 0,0:05:27.83,0:05:29.47,Default,,0,0,0,,Take that money, watch it burn\N抛开身外之物 任其燃烧殆尽
+Dialogue: 0,0:05:29.47,0:05:31.50,Default,,0,0,0,,Sink in the river the lessons I learned\N将过往教训 沉入河底
+Dialogue: 0,0:05:31.50,0:05:33.49,Default,,0,0,0,,Take that money, watch it burn\N抛开身外之物 任其燃烧殆尽
+Dialogue: 0,0:05:33.49,0:05:35.41,Default,,0,0,0,,Sink in the river the lessons I learned\N将过往教训 沉入河底
+Dialogue: 0,0:05:35.41,0:05:37.77,Default,,0,0,0,,Take that money, watch it burn\N抛开身外之物 任其燃烧殆尽
+Dialogue: 0,0:05:37.77,0:05:40.77,Default,,0,0,0,,Sink in the river the lessons I learned\N将过往教训 沉入河底
