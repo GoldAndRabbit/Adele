@@ -186,6 +186,25 @@ def stage_translate(a, w):
     print(f"\n>>> 双语字幕已生成: {out}，建议过一遍再 --from interp")
 
 
+def pick_frame_ext(a, video, info, w):
+    """估算 PNG 帧占用磁盘，放不下就改用高质量 JPEG（源本身就是 4:2:0，肉眼无损）。"""
+    if a.frame_format != "auto":
+        return a.frame_format
+    sample = w / "_sample"
+    shutil.rmtree(sample, ignore_errors=True)
+    sample.mkdir()
+    step = info["duration"] / 6
+    for i in range(1, 6):
+        run(["ffmpeg", "-v", "error", "-ss", f"{step * i:.2f}", "-i", video,
+             "-frames:v", "1", sample / f"{i}.png"])
+    avg = sum(f.stat().st_size for f in sample.glob("*.png")) / 5
+    shutil.rmtree(sample)
+    need = avg * info["duration"] * (info["fps"] + TARGET_FPS) * 1.3
+    free = shutil.disk_usage(w).free
+    print(f"PNG 预计占用 {need / 1e9:.0f}GB，剩余 {free / 1e9:.0f}GB")
+    return "png" if need < free * 0.85 else "jpg"
+
+
 def stage_interp(a, w):
     video = w / "video_1080.mp4"
     info = probe(video)
@@ -193,11 +212,13 @@ def stage_interp(a, w):
     for d in (fin, fout):
         shutil.rmtree(d, ignore_errors=True)
         d.mkdir()
+    ext = pick_frame_ext(a, video, info, w)
+    q = ["-q:v", "1"] if ext == "jpg" else []
 
     # 以原生帧率 CFR 抽帧（不像旧流程先 dup 到 30fps，避免 24/25fps 素材插帧后顿挫）
-    run(["ffmpeg", "-hide_banner", "-i", video, "-vf", f"fps={info['fps_str']}",
-         fin / "%08d.png"])
-    n_in = len(list(fin.glob("*.png")))
+    run(["ffmpeg", "-hide_banner", "-i", video, "-vf", f"fps={info['fps_str']}", *q,
+         fin / f"%08d.{ext}"])
+    n_in = len(list(fin.glob(f"*.{ext}")))
     n_out = round(n_in * TARGET_FPS / info["fps"])
 
     if info["fps"] >= TARGET_FPS - 0.5:
@@ -207,9 +228,9 @@ def stage_interp(a, w):
         return
 
     # RIFE v4 支持任意时间步，-n 直接指定目标帧数，一步到 60fps
-    print(f"RIFE: {n_in} 帧 @ {info['fps']:.3f} -> {n_out} 帧 @ {TARGET_FPS}")
+    print(f"RIFE: {n_in} 帧 @ {info['fps']:.3f} -> {n_out} 帧 @ {TARGET_FPS} ({ext})")
     run([ROOT / "rife-ncnn-vulkan", "-i", fin, "-o", fout,
-         "-m", ROOT / "models" / "rife-v4.6", "-n", n_out, "-j", "3:6:3"])
+         "-m", ROOT / "models" / "rife-v4.6", "-n", n_out, "-j", "3:6:3", "-f", f"%08d.{ext}"])
     if not a.keep_frames:
         shutil.rmtree(fin)
 
@@ -223,6 +244,7 @@ def stage_render(a, w):
     post = ROOT / "post"
     post.mkdir(exist_ok=True)
     out = post / f"{a.name} 4K60FPS Sub-WaterMark.mp4"
+    ext = "jpg" if any((w / "frames_out").glob("*.jpg")) else "png"
 
     if a.fast:
         venc = ["-c:v", "hevc_videotoolbox", "-q:v", "70", "-tag:v", "hvc1"]
@@ -231,7 +253,7 @@ def stage_render(a, w):
                 "-profile:v", "high", "-level", "5.2"]
 
     run(["ffmpeg", "-y", "-hide_banner",
-         "-framerate", TARGET_FPS, "-i", "frames_out/%08d.png",
+         "-framerate", TARGET_FPS, "-i", f"frames_out/%08d.{ext}",
          "-i", ROOT / "audios" / f"{a.name}.flac",
          "-i", ROOT / a.logo,
          "-filter_complex",
@@ -266,6 +288,8 @@ def main():
     p.add_argument("--logo-scale", default="0.10")
     p.add_argument("--crf", type=int, default=18)
     p.add_argument("--fast", action="store_true", help="用 VideoToolbox HEVC 硬编，快很多")
+    p.add_argument("--frame-format", choices=["auto", "png", "jpg"], default="auto",
+                   help="中间帧格式，auto 会按磁盘余量选择")
     p.add_argument("--keep-frames", action="store_true", help="保留 PNG 帧（默认渲染后删除，很占盘）")
     p.add_argument("--force", action="store_true", help="覆盖已存在的歌词/字幕文件")
     p.add_argument("--from", dest="from_", choices=STAGES, default=STAGES[0])
