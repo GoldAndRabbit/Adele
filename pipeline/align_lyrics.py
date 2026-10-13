@@ -183,8 +183,13 @@ def main():
     p.add_argument("-o", "--output", required=True)
     p.add_argument("--report", help="校准报告 json，默认与输出同名 .align.json")
     p.add_argument("--max-width", type=int, default=40, help="合并短语时单句最大显示宽度（全角算 2）")
+    p.add_argument("--min-score", type=float, default=MIN_SCORE,
+                   help=f"模糊匹配分数门槛，越低覆盖越多、误配风险越大（默认 {MIN_SCORE}）")
+    p.add_argument("--min-cover", type=float, default=MIN_COVER,
+                   help=f"参考短语落在片段里的最低比例（默认 {MIN_COVER}）")
     a = p.parse_args()
 
+    globals().update(MIN_SCORE=a.min_score, MIN_COVER=a.min_cover)
     ref = load_ref(a.ref)
     segs = load_segments(a.whisper)
     events, leftovers, used, scores = align(ref, segs, a.max_width)
