@@ -97,7 +97,7 @@ my_venv/bin/python pipeline/make_mv.py --name X --from split --to translate --ti
 - 纯声学重解码整段替换：错句清零但误删效果器段落的正确句
 - V8 宽松顺序用于官方字幕：过度插入重复句（71→106 句）
 
-`--sub-shift 0.3`：渲染时再整体提前 0.3s（人眼对画面变化反应快）。只重做时间轴不重翻译：句子没变时从 ass 抽中文做 `--zh-file`，否则 `--from translate --force`。
+精校流程下不再额外 `--sub-shift`（见下方渲染说明）。只重做时间轴不重翻译：句子没变时从 ass 抽中文做 `--zh-file`，否则 `--from translate --force`。
 
 ## 4. 插帧 + 渲染
 ```bash
