@@ -108,7 +108,7 @@ my_venv/bin/python pipeline/make_mv.py --name X --from interp --keep-frames
 - PNG 帧按磁盘余量自动选 png/jpg（`--frame-format` 可指定）
 - lanczos 放大到 3840x2160 → 烧 ass → 左上角 `adele-logo.png` → x264 crf18 + FLAC
 - 只改字幕时 `--from render`（需要之前 `--keep-frames`）；对比不同版本用 `--ass 文件 --tag 后缀`
-- `--sub-shift 0.3`：渲染时字幕整体再提前 0.3s（叠加在 refine 的 0.12s 提前量之上），人眼对画面变化反应快，提前一点更跟手；标题行不动
+- `--sub-shift`：渲染时字幕整体再提前的秒数（叠加在 refine 的 0.12s 提前量之上，标题行不动）。**走了精校流程默认不需要**（起点已对齐到开口处）；只在时间轴本身偏晚时（旧流程、没精校）才用，0.1~0.3s
 - 校验：ffprobe 看 3840x2160 / 60/1 / 帧数 / 时长与源一致 / flac 48000 24bit；抽一帧看字幕、水印、是否压到烧录字幕
 
 ## 5. 封面（16:9 + 4:3）
