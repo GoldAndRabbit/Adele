@@ -86,6 +86,43 @@ def score_maps(sc, texts, rate, theta, n_grid):
     return S, D, NT
 
 
+def anchor_bonus(S, D, NT, texts, windows, n_grid, w_pos=1.5, w_neg=0.6):
+    """Qwen3-ASR 滑窗锚点：段落中心落在某些窗口里，按这些窗口里“这句”的文字匹配度加分；
+    窗口里明确是别的句子（某句 >=85）而这句很低（<50）时扣分。分数按 token 数缩放，和声学分同量纲。"""
+    from rapidfuzz import fuzz
+    from align_lyrics import reading
+
+    W = len(windows)
+    rt = [reading(t) for t in texts]
+    rw = [reading(w["text"]) for w in windows]
+    A = np.zeros((len(texts), W), dtype=np.float32)
+    for u, r in enumerate(rt):
+        for wi, x in enumerate(rw):
+            A[u, wi] = fuzz.partial_ratio(r, x) if r and x else 0
+    top = A.max(0) if len(texts) else np.zeros(W)
+    G = n_grid + 1
+    pos = np.zeros((len(texts), G), dtype=np.float32)
+    neg = np.zeros((len(texts), G), dtype=np.float32)
+    for g in range(G):
+        c = g * GRID
+        ws = [wi for wi, w in enumerate(windows) if w["start"] + 0.5 <= c <= w["end"] - 0.5 and rw[wi]]
+        if not ws:
+            continue
+        best = A[:, ws].max(1)
+        pos[:, g] = np.clip((best - 70) / 30, 0, 1)
+        neg[:, g] = ((best < 50) & (top[ws].max() >= 85)).astype(np.float32)
+    out = S.copy()
+    for k in range(S.shape[0]):
+        for u in range(S.shape[1]):
+            d = D[u, k]
+            if d <= 0:
+                continue
+            cidx = np.minimum(np.arange(G) + d // 2, G - 1)
+            adj = (w_pos * pos[u, cidx] - w_neg * neg[u, cidx]) * NT[u]
+            out[k, u] = np.where(S[k, u] > -1e8, S[k, u] + adj, S[k, u])
+    return out
+
+
 def with_theta(S, NT, theta):
     return np.where(S > -1e8, S - theta * NT[None, :, None], -1e9).astype(np.float32)
 
@@ -227,6 +264,9 @@ def main():
                    help="第二遍补空档用的放宽门槛（只作用于严格解码后长时间有人声没字幕的地方）；设为空可关闭")
     p.add_argument("--strict-order", type=lambda v: v.lower() in ("1", "true", "yes"), default=None,
                    help="参考歌词是否就是演唱顺序；默认：官方字幕(srt)=是，歌词 txt=否")
+    p.add_argument("--anchors", help="qwen_asr.py 产出的滑窗识别结果 json，作为结构锚点")
+    p.add_argument("--anchor-w", type=float, default=1.5, help="锚点加分（每 token）")
+    p.add_argument("--anchor-neg", type=float, default=0.6, help="锚点明确否定时扣分（每 token）")
     p.add_argument("--section-skip", action="store_true", help="实验：按 [段落] 整段跳过便宜、段中跳句贵")
     p.add_argument("--seg-cost", type=float, default=1.0, help="每多放一句的固定代价")
     p.add_argument("--gap-min", type=float, default=2.0, help="多长的有声空档才做第二遍")
@@ -251,6 +291,10 @@ def main():
     print(f"{len(lines)} 句（{len(texts)} 种文字），{n_grid} 格，速率 {rate:.3f}s/字，θ={a.theta}")
 
     S_raw, D, NT = score_maps(sc, texts, rate, a.theta, n_grid)
+    if a.anchors and Path(a.anchors).exists():
+        wins = json.loads(Path(a.anchors).read_text())["windows"]
+        S_raw = anchor_bonus(S_raw, D, NT, texts, wins, n_grid, a.anchor_w, a.anchor_neg)
+        print(f"Qwen3-ASR 锚点: {len(wins)} 个窗口，权重 +{a.anchor_w}/-{a.anchor_neg}")
     strict = a.strict_order if a.strict_order is not None else Path(a.ref).suffix.lower() in (".srt", ".ass", ".vtt")
     # 段落感知的跳过罚分：HKT48 上实测让顺序更乱，默认关闭
     sections = section_ids(a.ref, len(lines)) if a.section_skip else None
