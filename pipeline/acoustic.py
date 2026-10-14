@@ -129,6 +129,10 @@ def main():
     p.add_argument("--replace-margin", type=float, default=0.5, help="hybrid：替换要比原句高出多少")
     p.add_argument("--hide-below", type=float, default=1.5, help="hybrid：低于门槛再减多少才隐藏")
     p.add_argument("--hide-low", action="store_true", help="解码后仍不可信的句子直接隐藏")
+    p.add_argument("--no-fill-gaps", dest="fill_gaps", action="store_false",
+                   help="不补空档（默认：两句之间有明显演唱却没字幕时，按声学分数插入可信的参考句）")
+    p.add_argument("--no-hold-sustain", dest="hold_sustain", action="store_false",
+                   help="不延长拖音（默认：句末人声还在持续时字幕留到人声停下）")
     p.add_argument("--no-trim-tail", dest="trim_tail", action="store_false",
                    help="不做句尾收紧（默认人声停了 0.8s 以上就让字幕在 0.4s 后消失）")
     p.add_argument("-o", "--output")
@@ -196,14 +200,89 @@ def main():
         hidden = len(out) - len(kept)
         out = kept
 
+    y = sc.y
+    hop = 160
+    k = len(y) // hop
+    db = 20 * np.log10(np.sqrt((y[: k * hop].reshape(k, hop) ** 2).mean(1)) + 1e-9)
+    db = np.convolve(db, np.ones(25) / 25, mode="same")
+    voiced = db > np.percentile(db, 95) - 18
+    out.sort(key=lambda x: x[0])
+
+    inserted = 0
+    if a.fill_gaps:
+        # 补空档：两句字幕之间有明显演唱（>=0.5s）却没字幕 -> 用声学分数在全部参考句里找最像的，够可信才插入
+        filled = []
+        bounds = [(0.0, 0.0)] + [(x[0], x[1]) for x in out] + [(len(y) / SR, len(y) / SR)]
+        for (_, g0), (g1, _) in zip(bounds[:-1], bounds[1:]):
+            i0, i1 = int(g0 * 100), int(g1 * 100)
+            if i1 - i0 < 50:
+                continue
+            seg = voiced[i0:i1]
+            idx = np.where(seg)[0]
+            if len(idx) < 50:
+                continue
+            s0, s1 = (i0 + idx[0]) / 100, (i0 + idx[-1] + 1) / 100
+            dur = s1 - s0
+            best = None
+            for text, _ in cand:
+                exp = char_count(sc, text) * rate
+                if not 0.35 * dur <= exp <= 2.5 * dur:
+                    continue
+                ev_ = sc.evidence(text, max(g0, s0 - 0.2), min(g1, s1 + 0.2))
+                if best is None or ev_ > best[0]:
+                    best = (ev_, text)
+            if best and best[0] >= min_ev:
+                filled.append((s0, min(g1 - 0.05, max(s1, s0 + 0.8)), best[1], best[0]))
+        inserted = len(filled)
+        out = sorted(out + filled, key=lambda x: x[0])
+
+    spread = 0
+    if a.fill_gaps:
+        # 挤压句摊开：连续被压得极短（<0.5 倍应有时长）的句子，连同它前面没字幕的演唱空档一起，按字数重新铺开
+        exp = lambda x: char_count(sc, x[2]) * rate
+        squeezed = lambda x: (x[1] - x[0]) < 0.5 * exp(x)
+        i = 0
+        while i < len(out):
+            if not squeezed(out[i]):
+                i += 1
+                continue
+            j = i
+            while j < len(out) and squeezed(out[j]):
+                j += 1
+            lo = out[i - 1][1] if i > 0 else 0.0
+            hi = out[j][0] if j < len(out) else out[j - 1][1]
+            vi = np.where(voiced[int(lo * 100):int(hi * 100)])[0]
+            if len(vi):
+                lo = max(lo, lo + vi[0] / 100 - 0.1)
+            if hi - lo > sum(x[1] - x[0] for x in out[i:j]) + 0.5:
+                tot = sum(exp(x) for x in out[i:j])
+                t = lo
+                for m in range(i, j):
+                    d = (hi - lo) * exp(out[m]) / tot
+                    out[m] = (t, t + d, out[m][2], out[m][3])
+                    t += d
+                    spread += 1
+            i = j
+
+    extended = 0
+    if a.hold_sustain:
+        # 拖音：句子结束后人声还在持续，字幕跟着留到人声停下（不超过下一句前 0.05s，最多 +4s）
+        held = []
+        for n_, (s_, e_, text, v_) in enumerate(out):
+            nxt = out[n_ + 1][0] if n_ + 1 < len(out) else len(y) / SR
+            i = int(e_ * 100)
+            j = i
+            while j < len(voiced) and voiced[j] and j < int((nxt - 0.05) * 100) and j < i + 400:
+                j += 1
+            if j - i >= 20:
+                e_ = j / 100 + 0.15
+                e_ = min(e_, nxt - 0.05)
+                extended += 1
+            held.append((s_, e_, text, v_))
+        out = held
+
     if a.trim_tail:
         # 句尾收紧：这句时间里人声停了超过 0.8s，字幕在停下后 0.4s 消失（最短 0.8s）
-        y = sc.y
-        hop = 160
-        k = len(y) // hop
-        db = 20 * np.log10(np.sqrt((y[: k * hop].reshape(k, hop) ** 2).mean(1)) + 1e-9)
-        db = np.convolve(db, np.ones(25) / 25, mode="same")
-        voiced = db > np.percentile(db, 95) - 18
         trimmed = []
         for s_, e_, text, v_ in out:
             i0, i1 = int(s_ * 100), int(e_ * 100)
@@ -219,10 +298,12 @@ def main():
     for s, e, text, _ in out:
         res.events.append(pysubs2.SSAEvent(start=int(s * 1000), end=int(e * 1000), text=text))
     res.save(a.output)
-    rep.update({"stretches": stretches, "hidden": hidden, "out_lines": len(out)})
+    rep.update({"stretches": stretches, "hidden": hidden, "out_lines": len(out),
+                "gap_inserted": inserted, "squeezed_spread": spread, "sustain_extended": extended})
     if a.report:
         Path(a.report).write_text(json.dumps(rep, ensure_ascii=False, indent=2) + "\n")
-    print(f"{len(ev)} 句，不可信 {int(low.sum())} 句（门槛 {min_ev:.2f}）；重解码 {len(stretches)} 段 -> 输出 {len(out)} 句，隐藏 {hidden} 句")
+    print(f"{len(ev)} 句，不可信 {int(low.sum())} 句（门槛 {min_ev:.2f}）；重解码 {len(stretches)} 段 -> 输出 {len(out)} 句，"
+          f"隐藏 {hidden} 句；补空档插入 {inserted} 句；挤压句摊开 {spread} 句；拖音延长 {extended} 句")
     for s in stretches:
         print(f"  {s['from']:.1f}-{s['to']:.1f}s: {s['before']} 句 -> {s['after']} 句")
 
