@@ -276,12 +276,29 @@ def main():
             j = i
             while j < len(voiced) and voiced[j] and j < int((nxt - 0.05) * 100) and j < i + 400:
                 j += 1
+            if j - i >= 20 and len(sc.tokens(text)) < 6:
+                j = min(j, i + 50)  # Yeah/Oh 这类短语气词最多延长 0.5s，不能挂一整段
             if j - i >= 20:
                 e_ = j / 100 + 0.15
                 e_ = min(e_, nxt - 0.05)
                 extended += 1
             held.append((s_, e_, text, v_))
         out = held
+
+    bridged = 0
+    if a.hold_sustain:
+        # 短空档桥接：两句之间 < 3.5s、大部分时间有人声（多半是拖音/即兴，参考里没有对应句），前一句保持到下一句前
+        br = []
+        for n_, (s_, e_, text, v_) in enumerate(out):
+            if n_ + 1 < len(out) and len(sc.tokens(text)) >= 6:
+                nxt = out[n_ + 1][0]
+                gap = nxt - e_
+                seg = voiced[int(e_ * 100):int(nxt * 100)]
+                if 0.3 < gap < 3.5 and len(seg) and seg.mean() >= 0.6:
+                    e_ = nxt - 0.05
+                    bridged += 1
+            br.append((s_, e_, text, v_))
+        out = br
 
     if a.trim_tail:
         # 句尾收紧：这句时间里人声停了超过 0.8s，字幕在停下后 0.4s 消失（最短 0.8s）
@@ -301,7 +318,8 @@ def main():
         res.events.append(pysubs2.SSAEvent(start=int(s * 1000), end=int(e * 1000), text=text))
     res.save(a.output)
     rep.update({"stretches": stretches, "hidden": hidden, "out_lines": len(out),
-                "gap_inserted": inserted, "squeezed_spread": spread, "sustain_extended": extended})
+                "gap_inserted": inserted, "squeezed_spread": spread, "sustain_extended": extended,
+                "bridged": bridged})
     if a.report:
         Path(a.report).write_text(json.dumps(rep, ensure_ascii=False, indent=2) + "\n")
     print(f"{len(ev)} 句，不可信 {int(low.sum())} 句（门槛 {min_ev:.2f}）；重解码 {len(stretches)} 段 -> 输出 {len(out)} 句，"

@@ -245,10 +245,16 @@ def stage_refine(a, w):
          "--skip-cost", "100", "--seg-cost", "0", "--vocals", voc, "--lang", lang,
          "--rate-from", w / "before_refine.srt", "--theta", a.theta, "-o", srt, "--report", w / "decode_report.json"])
     run([py, pl / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+    # 4) 推理插入 + 邻句校验：ASR 认不出的段落（说唱/对唱）按参考歌词顺序补句；同句连续两次换成上一句
+    run([py, pl / "infer_insert.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang,
+         "-o", srt, "--report", w / "infer_report.json"])
     run([py, pl / "refine_timing.py", srt, "--vocals", voc, "--lang", lang, "--lead", a.lead,
          "-o", srt, "--report", w / "timing_report.json"])
+    # 5) 后处理：拖音延长、短空档桥接、句尾收紧（结构已定，不做声学补空档）
     run([py, pl / "acoustic.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang, "--mode", "post",
-         "-o", srt, "--report", w / "acoustic_report.json"])
+         "--no-fill-gaps", "-o", srt, "--report", w / "acoustic_report.json"])
+    run([py, pl / "infer_insert.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang, "--min-gap", "1.2",
+         "-o", srt, "--report", w / "infer_report2.json"])
     run([py, pl / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
 
 

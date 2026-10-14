@@ -33,6 +33,7 @@ SYSTEM_PROMPT = """你是专业的歌词译者。用户给出一首歌按时间�
 - 输出 JSON: {"zh": [...]}，长度与输入完全一致，一一对应，不合并不拆分
 - 结合整首歌上下文，译文自然、有歌词感，不要逐字硬译
 - 纯语气词/拟声词（如 Oh, Uh-uh, Na-na, Yeah）或已经是中文的行，对应位置输出空字符串
+- 句中夹带的语气词（oh / yeah / ah / uh / woah / hey 等）不要翻译成“哦/耶/啊/呃”，直接省略，只翻有实际意义的部分
 - 片假名可能是外来语或日式英语，按读音还原成原词再翻译；任何一行都不要输出“意义不明”之类的说明，实在无法理解就输出空字符串
 - 不要添加任何解释"""
 
@@ -47,11 +48,39 @@ def translate_api(lines, context):
     raise SystemExit("翻译行数始终对不上，请改用 --zh-file")
 
 
-def build_ass(subs, zh, title, title_duration, style="bzrp"):
-    return (build_ass_bzrp if style == "bzrp" else build_ass_modern)(subs, zh, title, title_duration)
+def build_ass(subs, zh, title, title_duration, style="bzrp", title_zh=None):
+    return (build_ass_bzrp if style == "bzrp" else build_ass_modern)(subs, zh, title, title_duration, title_zh)
 
 
-def build_ass_bzrp(subs, zh, title, title_duration):
+INTERJ_SRC = re.compile(r"\b(oh+|ooh+|yeah|ah+|uh+|woah|whoa|hey|na|la)\b", re.I)
+INTERJ_ZH = re.compile(r"(^|[\s，,。.!！?？、…~～])(哦|噢|喔|耶|呃|啊|呀|哟|哇|嘿)+(?=$|[\s，,。.!！?？、…~～])")
+
+
+def strip_interjections(src, zh):
+    """原文有语气词时，把译文里对应的“哦/耶/啊…”去掉（包括去掉后多余的标点）。"""
+    if not zh or not INTERJ_SRC.search(src):
+        return zh
+    out = INTERJ_ZH.sub(r"\1", zh)
+    out = re.sub(r"[，,、\s]+$", "", out)
+    out = re.sub(r"^[，,、\s]+", "", out)
+    out = re.sub(r"([，,、])\s*[，,、]+", r"\1", out)
+    return out.strip()
+
+
+TITLE_PROMPT = """把歌曲视频标题行翻译成中文，输出 JSON {"zh": "..."}。
+- 输入形如“《歌名》 歌手”；输出同样格式“《中文歌名》 中文歌手名”
+- 歌名、歌手有通行中文译名就用通行译名（如 Linkin Park → 林肯公园，青山テルマ → 青山黛玛，そばにいるね → 在你身边）
+- 没有通行译名的歌手名保留原文；不要加任何解释"""
+
+
+def translate_title(title, cache):
+    key = "__title__::" + title
+    if key not in cache:
+        cache[key] = chat_json(TITLE_PROMPT, title, label="标题翻译").get("zh", "").strip()
+    return cache[key]
+
+
+def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None):
     """默认样式，与 lyrics/bzrp_v2.ass 完全一致：384x288 画布、Arial Rounded 23、描边 1、无阴影、底边距 50；
     标题也作为普通一行放在底部；格式 “原文 \\N♪ 中文 ♪”，不加任何行内标签。"""
     out = pysubs2.SSAFile()
@@ -64,7 +93,8 @@ def build_ass_bzrp(subs, zh, title, title_duration):
         marginl=10, marginr=10, marginv=50)
     if title:
         first = subs.events[0].start if subs.events else title_duration
-        out.events.append(pysubs2.SSAEvent(start=0, end=min(title_duration, first), text=title))
+        t = title + (r" \N" + title_zh if title_zh and title_zh != title else "")
+        out.events.append(pysubs2.SSAEvent(start=0, end=min(title_duration, first), text=t))
     for e, z in zip(subs.events, zh):
         text = e.plaintext.replace("\n", " ").strip()
         if z and z != text:
@@ -73,7 +103,7 @@ def build_ass_bzrp(subs, zh, title, title_duration):
     return out
 
 
-def build_ass_modern(subs, zh, title, title_duration):
+def build_ass_modern(subs, zh, title, title_duration, title_zh=None):
     """1920x1080 画布、日文 Hiragino Sans W6、中文加粗、标题在顶部。"""
     out = pysubs2.SSAFile()
     out.info.update({"PlayResX": str(PLAY_W), "PlayResY": str(PLAY_H),
@@ -91,6 +121,8 @@ def build_ass_modern(subs, zh, title, title_duration):
     out.styles["Title"].marginv = 60
     if title:
         t = (r"{\fn" + JA_FONT + "}" + title) if CJK_RE.search(title) else title
+        if title_zh and title_zh != title:
+            t += r"\N{\fn" + CJK_FONT + r"\b1\fs56}" + title_zh
         out.events.append(pysubs2.SSAEvent(start=0, end=title_duration, text=t, style="Title"))
     for e, z in zip(subs.events, zh):
         text = e.plaintext.replace("\n", " ").strip()
@@ -126,6 +158,10 @@ def main():
         cache = {}
         if a.cache and os.path.exists(a.cache):
             cache = json.load(open(a.cache, encoding="utf-8"))
+        # 旧缓存里带语气词的句子（可能被译成“哦/耶”）先清掉译文里的语气词
+        for k_ in list(cache):
+            if not k_.startswith("__"):
+                cache[k_] = strip_interjections(k_, cache[k_])
         todo = sorted({l for l in lines if l and l not in cache}, key=lines.index)
         if todo:
             # 只翻新句子，但把整首歌词（去重）作为上下文给模型，保证语气和已有译文一致
@@ -134,12 +170,21 @@ def main():
             for k, v in zip(todo, translate_api(todo, ctx)):
                 cache[k] = v
         print(f"译文缓存: 复用 {len(set(lines)) - len(todo)} 句，新翻 {len(todo)} 句")
-        zh = [cache.get(l, "") for l in lines]
+        zh = [strip_interjections(l, cache.get(l, "")) for l in lines]
+        for l, z in zip(lines, zh):
+            if l in cache:
+                cache[l] = z
         if a.cache:
             with open(a.cache, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=1)
 
-    build_ass(subs, zh, a.title, a.title_duration, a.style).save(a.output)
+    title_zh = None
+    if a.title and not a.zh_file:
+        title_zh = translate_title(a.title, cache)
+        if a.cache:
+            with open(a.cache, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=1)
+    build_ass(subs, zh, a.title, a.title_duration, a.style, title_zh).save(a.output)
     print(f"写入 {a.output}（{len(lines)} 句，{sum(1 for z in zh if z)} 句含中文）")
 
 
