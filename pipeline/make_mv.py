@@ -216,6 +216,16 @@ def stage_refine(a, w):
     lang = LANG_CODES.get((a.lang or "en").lower(), "en")
     run([sys.executable, ROOT / "pipeline" / "refine_timing.py", srt, "--vocals", vocals,
          "--lang", lang, "--lead", a.lead, "-o", srt, "--report", w / "timing_report.json"])
+    # 声学体检 + 混合重解码：MMS 声学打分找出错位嫌疑段，只在明显更好时替换、极低分才隐藏，句尾收紧
+    ref = Path(a.ref_lyrics) if a.ref_lyrics else ROOT / "ori_lyrics" / f"{a.name}.txt"
+    if not ref.exists():
+        ref = find_official_subs(a, w)
+    if ref:
+        run([sys.executable, ROOT / "pipeline" / "acoustic.py", srt, "--ref", ref, "--vocals", vocals,
+             "--lang", lang, "-o", srt, "--report", w / "acoustic_report.json"])
+        # 重解码可能换进未拆分的长句，再拆一遍
+        run([sys.executable, ROOT / "pipeline" / "split_long.py", srt, "--vocals", vocals,
+             "--max-width", a.max_width])
 
 
 def stage_translate(a, w):
