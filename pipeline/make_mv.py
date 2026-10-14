@@ -314,6 +314,16 @@ def stage_render(a, w):
         sys.exit(f"缺少字幕 {ass}")
     # ass 滤镜对路径里的空格/冒号转义很麻烦，拷到工作目录用相对路径
     shutil.copy(ass, w / "subs.ass")
+    if a.sub_shift:
+        # 整体提前/推后字幕（人眼对画面变化反应快，提前一点看起来更跟手）；标题行不动
+        import pysubs2
+        subs = pysubs2.load(str(w / "subs.ass"))
+        ms = int(a.sub_shift * 1000)
+        for ev in subs.events:
+            if ev.style == "Default" and ev.start > 0:
+                ev.start, ev.end = max(0, ev.start - ms), max(0, ev.end - ms)
+        subs.save(str(w / "subs.ass"))
+        print(f"字幕整体提前 {a.sub_shift}s")
     post = ROOT / "post" / a.name  # 每个作品一个目录：视频、cover/、<name>.json
     post.mkdir(parents=True, exist_ok=True)
     tag = f" {a.tag}" if a.tag else ""
@@ -373,6 +383,8 @@ def main():
     p.add_argument("--cookies", help="cookies.txt 路径")
     p.add_argument("--ass", help="render 用的字幕文件，默认 lyrics/<name>.ass")
     p.add_argument("--tag", help="成品文件名后缀，用于对比不同版本，如 bzrpv2style")
+    p.add_argument("--sub-shift", type=float, default=0.0,
+                   help="渲染时字幕整体提前的秒数（在 refine 的提前量之上再叠加），如 0.3")
     p.add_argument("--logo", default="adele-logo.png")
     p.add_argument("--logo-scale", default="0.10")
     p.add_argument("--crf", type=int, default=18)
