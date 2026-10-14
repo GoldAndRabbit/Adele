@@ -110,6 +110,7 @@ def main():
     p.add_argument("--title", help="首行标题，如 '《Song》 Artist'")
     p.add_argument("--title-duration", type=int, default=4000, help="标题最长显示毫秒")
     p.add_argument("--zh-file")
+    p.add_argument("--cache", help="按句缓存的译文 json（原文 -> 中文）；只翻缓存里没有的句子，翻完写回")
     p.add_argument("--style", choices=["bzrp", "modern"], default="bzrp",
                    help="bzrp=与 bzrp_v2.ass 相同（默认）；modern=1080p 画布、日文粗体、标题在顶部")
     a = p.parse_args()
@@ -122,7 +123,21 @@ def main():
             zh = [l.strip() for l in f.read().split("\n")]
         zh = (zh + [""] * len(lines))[:len(lines)]
     else:
-        zh = translate_api(lines, a.title)
+        cache = {}
+        if a.cache and os.path.exists(a.cache):
+            cache = json.load(open(a.cache, encoding="utf-8"))
+        todo = sorted({l for l in lines if l and l not in cache}, key=lines.index)
+        if todo:
+            # 只翻新句子，但把整首歌词（去重）作为上下文给模型，保证语气和已有译文一致
+            uniq = sorted({l for l in lines if l}, key=lines.index)
+            ctx = (a.title or "") + "\n整首歌词（仅作上下文，只需翻译下面 JSON 里的行）：\n" + "\n".join(uniq)
+            for k, v in zip(todo, translate_api(todo, ctx)):
+                cache[k] = v
+        print(f"译文缓存: 复用 {len(set(lines)) - len(todo)} 句，新翻 {len(todo)} 句")
+        zh = [cache.get(l, "") for l in lines]
+        if a.cache:
+            with open(a.cache, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=1)
 
     build_ass(subs, zh, a.title, a.title_duration, a.style).save(a.output)
     print(f"写入 {a.output}（{len(lines)} 句，{sum(1 for z in zh if z)} 句含中文）")

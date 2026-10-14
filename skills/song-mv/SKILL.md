@@ -56,7 +56,7 @@ Claude 只做格式层面的检查（时长、重叠、句数、覆盖范围、�
 my_venv/bin/python pipeline/make_mv.py --name X --from split --to translate --title "《歌名》 歌手"
 ```
 - split：超过 40 宽（全角算 2）的句子在空格/标点处拆开，切点对齐 demucs 人声能量最低处（换气）；`--max-width` 可调
-- translate：DeepSeek 翻译（`.env` 里 `LLM_PROVIDER` 可切 aliyun / siliconflow / openai）；或 `--zh-file zh.txt`（每行对应一句）
+- translate：**按句缓存** `work/X/zh_cache.json`（原文→中文），只翻缓存里没有的新句子（整首歌词作上下文），时间轴/拆句重做不会重复翻译；DeepSeek 翻译（`.env` 里 `LLM_PROVIDER` 可切 aliyun / siliconflow / openai）；或 `--zh-file zh.txt`（每行对应一句）
 - 产物 `lyrics/X.ass`，默认样式与 `lyrics/bzrp_v2.ass` 一致（384x288、Arial Rounded 23、描边 1、底边距 50，`原文 \N♪ 中文 ♪`，标题作为首行在底部）；`--sub-style modern` 是 1080p 画布 + 日文粗体 + 标题在顶部
 - 已存在的文件不覆盖，重新生成加 `--force`
 - 歌名的通行中文译名要准确（例：そばにいるね = 在你身边，不是“留在我身边”）

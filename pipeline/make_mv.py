@@ -261,7 +261,8 @@ def stage_translate(a, w):
     title = a.title
     if not title and (w / "meta.json").exists():
         title = json.loads((w / "meta.json").read_text()).get("title")
-    cmd = [sys.executable, ROOT / "pipeline" / "translate_ass.py", src, "-o", out]
+    cmd = [sys.executable, ROOT / "pipeline" / "translate_ass.py", src, "-o", out,
+           "--cache", w / "zh_cache.json"]
     if title:
         cmd += ["--title", title]
     if a.zh_file:
