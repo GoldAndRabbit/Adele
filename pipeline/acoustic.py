@@ -123,7 +123,7 @@ def main():
     p.add_argument("--vocals", required=True)
     p.add_argument("--lang", default="en")
     p.add_argument("--min-ev", type=float, default=None, help="可信门槛（默认按本歌已对齐句子的分数分布自动定）")
-    p.add_argument("--mode", choices=["score", "decode", "hybrid"], default="hybrid",
+    p.add_argument("--mode", choices=["score", "decode", "hybrid", "post"], default="hybrid",
                    help="hybrid（默认）：不可信段落保留原句，重解码找到明显更好的才替换，极低分的才隐藏；"
                         "decode：不可信段落整段换成重解码结果")
     p.add_argument("--replace-margin", type=float, default=0.5, help="hybrid：替换要比原句高出多少")
@@ -167,6 +167,8 @@ def main():
     # 找连续 >=2 句不可信的段落，在前后可信句之间重新解码
     events = [(e.start / 1000, e.end / 1000, e.plaintext, v) for e, v in zip(subs.events, ev)]
     out, i, stretches = [], 0, []
+    if a.mode == "post":  # 结构已由 decode_global 决定，只做补空档/挤压摊开/拖音/收尾
+        out, i = list(events), len(events)
     while i < len(events):
         if not low[i]:
             out.append(events[i])

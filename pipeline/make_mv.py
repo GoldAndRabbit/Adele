@@ -144,6 +144,7 @@ def stage_lyrics(a, w):
     sub = find_official_subs(a, w) if not a.whisper else None
     if sub:
         print(f"使用官方字幕 {sub.name}")
+        (w / "lyrics_source").write_text("official")
         subs = pysubs2.load(str(sub))
         if a.start:  # 截取后时间轴需要平移
             subs.shift(s=-to_seconds(a.start))
@@ -180,6 +181,7 @@ def stage_lyrics(a, w):
                  "--report", w / "align_report.json",
                  "--mode", a.align_mode,
                  "--min-score", a.align_min_score, "--min-cover", a.align_min_cover])
+            (w / "lyrics_source").write_text("reference")
             print(f"\n>>> 已按原始歌词校准: {out}\n>>> 看一下报告里的低置信度句和未匹配段，然后 --from split 继续")
             return
         print("没有原始歌词（ori_lyrics/<name>.txt 或 --ref-lyrics），只能用 whisper 原始结果")
@@ -207,6 +209,10 @@ LANG_CODES = {"english": "en", "japanese": "ja", "spanish": "es", "en": "en", "j
 
 
 def stage_refine(a, w):
+    """时间轴精校，按参考来源分流：
+    - official（官方带时间字幕）：时间轴是人工打的，保留，只做补空档/拖音/收尾（acoustic --mode post）
+    - reference（只有歌词文本）：声学全局解码决定结构（decode_global，whisper 不参与）
+      → 拆长句 → 强制对齐精修（refine_timing）→ 补空档/拖音/收尾 → 再拆长句"""
     srt = ROOT / "ori_lyrics" / f"{a.name}.srt"
     vocals = ROOT / "separated" / "htdemucs" / a.name / "vocals.wav"
     if not vocals.exists():
@@ -214,18 +220,24 @@ def stage_refine(a, w):
              "--two-stems=vocals", "-o", ROOT / "separated", "--jobs=4"])
     shutil.copy(srt, w / "before_refine.srt")
     lang = LANG_CODES.get((a.lang or "en").lower(), "en")
-    run([sys.executable, ROOT / "pipeline" / "refine_timing.py", srt, "--vocals", vocals,
-         "--lang", lang, "--lead", a.lead, "-o", srt, "--report", w / "timing_report.json"])
-    # 声学体检 + 混合重解码：MMS 声学打分找出错位嫌疑段，只在明显更好时替换、极低分才隐藏，句尾收紧
+    source = (w / "lyrics_source").read_text().strip() if (w / "lyrics_source").exists() else "reference"
     ref = Path(a.ref_lyrics) if a.ref_lyrics else ROOT / "ori_lyrics" / f"{a.name}.txt"
-    if not ref.exists():
-        ref = find_official_subs(a, w)
-    if ref:
+    if source == "official" or not ref.exists():
+        ref = ref if ref.exists() else find_official_subs(a, w)
+        print("参考来源: 官方带时间字幕 -> 保留官方时间轴，只做后处理")
         run([sys.executable, ROOT / "pipeline" / "acoustic.py", srt, "--ref", ref, "--vocals", vocals,
-             "--lang", lang, "-o", srt, "--report", w / "acoustic_report.json"])
-        # 重解码可能换进未拆分的长句，再拆一遍
-        run([sys.executable, ROOT / "pipeline" / "split_long.py", srt, "--vocals", vocals,
-             "--max-width", a.max_width])
+             "--lang", lang, "--mode", "post", "-o", srt, "--report", w / "acoustic_report.json"])
+        return
+    print("参考来源: 歌词文本 -> 声学全局解码")
+    py, pl = sys.executable, ROOT / "pipeline"
+    run([py, pl / "decode_global.py", "--ref", ref, "--vocals", vocals, "--lang", lang,
+         "--rate-from", w / "before_refine.srt", "--theta", a.theta, "-o", srt, "--report", w / "decode_report.json"])
+    run([py, pl / "split_long.py", srt, "--vocals", vocals, "--max-width", a.max_width])
+    run([py, pl / "refine_timing.py", srt, "--vocals", vocals, "--lang", lang, "--lead", a.lead,
+         "-o", srt, "--report", w / "timing_report.json"])
+    run([py, pl / "acoustic.py", srt, "--ref", ref, "--vocals", vocals, "--lang", lang, "--mode", "post",
+         "-o", srt, "--report", w / "acoustic_report.json"])
+    run([py, pl / "split_long.py", srt, "--vocals", vocals, "--max-width", a.max_width])
 
 
 def stage_translate(a, w):
@@ -374,6 +386,7 @@ def main():
     p.add_argument("--whisper-model", default="large-v3")
     p.add_argument("--max-width", type=int, default=40,
                    help="单句最大显示宽度（全角算 2），超过就拆")
+    p.add_argument("--theta", type=float, default=-4.0, help="声学全局解码的证据门槛（refine 阶段）")
     p.add_argument("--lead", type=float, default=0.12, help="字幕比开口提前出现的秒数（refine 阶段）")
     p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'")
     p.add_argument("--sub-style", choices=["bzrp", "modern"], default="bzrp",
