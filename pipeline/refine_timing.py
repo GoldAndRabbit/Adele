@@ -146,6 +146,41 @@ def main():
             rows.append((i, old_s, old_e, res[2] if res else 0.0))
             kept.append(i + 1)
 
+    # 时长体检：按字数估算每句该唱多久，太短（<0.45 倍）或太长（>2.2 倍且 >3s）的视为对齐被挤压/拉伸；
+    # 连续的异常句在前后两句可信句之间按字数重新分配，再吸附起音
+    nchar = [max(1, sum(len(w) for w in lines[i])) for i in range(len(rows))]
+    rate = sorted((r[2] - r[1]) / c for r, c in zip(rows, nchar) if r[2] > r[1])
+    rate = rate[len(rate) // 2] if rate else 0.12
+    def bad(k):
+        d, exp = rows[k][2] - rows[k][1], nchar[k] * rate
+        return d < exp * 0.45 or (d > exp * 2.2 and d > 3.0)
+    redistributed = []
+    k = 0
+    while k < len(rows):
+        if not bad(k):
+            k += 1
+            continue
+        j = k
+        while j < len(rows) and bad(j):
+            j += 1
+        # 拉长的句子旁边往往是被挤短的句子（它们的时间被抢走了），一起重新分配
+        squeezed = lambda m: rows[m][2] - rows[m][1] < nchar[m] * rate * 0.75
+        while k > 0 and squeezed(k - 1) and (k - 1) + 1 not in redistributed:
+            k -= 1
+        while j < len(rows) and squeezed(j):
+            j += 1
+        lo = rows[k - 1][2] if k > 0 else rows[k][1]
+        hi = rows[j][1] if j < len(rows) else rows[j - 1][2]
+        if hi - lo > 0.5 * (j - k):
+            tot = sum(nchar[k:j])
+            t = lo
+            for m in range(k, j):
+                d = (hi - lo) * nchar[m] / tot
+                rows[m] = (rows[m][0], snap_onset(t, rise) if m > k or k == 0 else t, t + d, rows[m][3])
+                redistributed.append(m + 1)
+                t += d
+        k = j
+
     out = []
     for k, (i, t0, t1, sc) in enumerate(rows):
         start = max(0.0, t0 - a.lead)
@@ -169,6 +204,7 @@ def main():
         "lines": len(out),
         "realigned": len(out) - len(kept),
         "kept_original_timing": kept,
+        "redistributed": redistributed,
         "start_shift_ms": {"median": int(np.median(d)), "p90": int(np.percentile(d, 90)), "max": int(d.max())},
         "lead_s": a.lead,
     }
@@ -179,6 +215,8 @@ def main():
           f" / 最大 {report['start_shift_ms']['max']}ms（含 {int(a.lead * 1000)}ms 提前量）")
     if kept:
         print(f"保持原时间的句子: {kept}")
+    if redistributed:
+        print(f"时长异常、按字数重新分配的句子: {redistributed}")
     print(f"报告: {rp}")
 
 
