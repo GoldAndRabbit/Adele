@@ -33,3 +33,5 @@ models/realsrgan/
 cookies*.txt
 .env
 *.log
+sep_venv/
+third_party/

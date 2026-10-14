@@ -64,13 +64,12 @@ my_venv/bin/python pipeline/make_mv.py --name X --from split --to translate --ti
 ## 3.5 时间轴精校（refine 阶段，split 和 translate 之间自动跑）
 目标：字幕文字只来自参考；声音时间轴和字幕时间轴高度匹配；拿不准宁可不出也不出错句。**按参考来源分流**（lyrics 阶段写 `work/X/lyrics_source`）：
 
-### A. 只有歌词文本（txt，Genius 等）→ 声学全局解码（V8c）
-whisper 不再决定结构，只在 lyrics 阶段给一个粗时间轴用来估计演唱速率。
-1. `decode_global.py`：MMS CTC 声学打分图——每句 × 每个起点（0.2s 格）× 5 种时长都算证据；全局半马尔可夫 DP 选最优演唱路径：顺着往下唱加分，跳过（删减版）小罚，重复/回跳（改编）较大罚，每多放一句有固定代价，空档免费。
-   - 严格门槛 θ=-4.0 定全曲结构；之后只在“≥2s 有人声却没字幕”的空档里用放宽门槛 -4.6 补句（效果器/念白段落分数天然偏低）
-2. `split_long.py` → `refine_timing.py`（强制对齐精修起止、起音吸附、提前 0.12s、时长体检）
-3. `acoustic.py --mode post`：补空档（声学分数插回被漏的短句/重复句）、挤压句摊开、拖音延长（人声持续就不收字幕）、句尾收紧
-4. 再 `split_long.py`
+### A. 只有歌词文本（txt，Genius 等）→ RoFormer 人声 + Qwen 演唱序列 + 声学全局解码（V13）
+核心思路：**结构（唱了哪些句、什么顺序、大概在哪一块）交给最会“听”歌的 Qwen3-ASR；精确时间交给 MMS 强制对齐**。whisper 只用来估计演唱速率。
+1. `separate_roformer.py`（独立环境 `sep_venv`）：Mel-Band RoFormer（KimberleyJensen vocals 权重，HuggingFace）分离人声，比 demucs 干净；模型代码在 `third_party/mss`（ZFTurbo，git clone），权重 `third_party/models/MelBandRoformer.ckpt`。raw.githubusercontent.com 在本机证书被劫持，audio-separator 下不了模型，所以走 HF + git clone
+2. `qwen_sequence.py`：人声在安静处切 10~20s 块，逐块 `qwen3-asr-flash`（百炼 OpenAI 兼容接口，密钥 `ALIYUN_BAILIAN_API_KEY`，与 Takit 相同）识别，按读音从左到右贪心匹配参考句 → 这一版的演唱序列 `work/X/sung_order.txt` + 每句所在时间块 `sung_order.json`。**不要给 Qwen 传歌词上下文**：它会把上下文原样照抄回来
+3. `decode_global.py --strict-order true --windows sung_order.json --skip-cost 100 --seg-cost 0`：按演唱序列严格顺序、每句只能落在所在块 ±2s 内、每句都必须放，MMS 打分图 + 全局 DP 定位置
+4. `split_long.py` → `refine_timing.py`（强制对齐精修、起音吸附、提前 0.12s、时长体检）→ `acoustic.py --mode post`（补空档、挤压句摊开、拖音延长、句尾收紧）→ `split_long.py`
 
 ### B. 官方带时间字幕（srt）→ 保留官方时间轴，只做 `acoustic.py --mode post`
 官方时间轴是人工打的，实测任何重解码都会变差（青山テルマ：官方 75% 踩点，V8 59%，旧精校 69%）。
@@ -83,6 +82,9 @@ whisper 不再决定结构，只在 lyrics 阶段给一个粗时间轴用来估�
 | 青山テルマ（官方字幕） | 官方 → 官方+后处理 | 75% → 74% | 14 → 13 | 98% → 98% |
 
 ### 演进记录（试过、被替代或弃用的）
+- V8 纯声学全局解码（无 Qwen）：对唱/现场改编段落声学分数低，整段被判“没唱”留空（HKT48 1:06）；副歌重复时乱跳
+- Qwen 8s 滑窗锚点直接加分：窗口太粗，同一句被反复插入（句数暴增、错位变多）
+- 严格模式下“文字相同的下一句也算顺着唱”：重复副歌之间乱跳，已改为只有紧接的下一句算
 - whisper 文字定结构 + 强制对齐 + 混合重解码（V1–V7）：一直在给 whisper 的结构错误打补丁（漏句被当没唱→前后句被挤压/拉长/留空）
 - whisper 用歌词作 initial_prompt 重识别（`prompt_rerun.py`）：几乎无变化
 - 纯声学重解码整段替换：错句清零但误删效果器段落的正确句

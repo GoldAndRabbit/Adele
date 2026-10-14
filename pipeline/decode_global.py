@@ -167,7 +167,7 @@ def section_ids(path, n_lines):
     return ids[:n_lines] + [ids[-1] if ids else 0] * (n_lines - len(ids))
 
 
-def transition_matrix(texts_of_line, b_next=1.5, strict=False, seg_cost=1.0, sections=None):
+def transition_matrix(texts_of_line, b_next=1.5, strict=False, seg_cost=1.0, sections=None, skip_cost=0.3):
     """strict：参考歌词就是这一版的演唱顺序（如官方字幕）——回跳/重复重罚。
     seg_cost：每多放一句的固定代价，防止证据一般的位置被反复插句。"""
     N = len(texts_of_line)
@@ -175,11 +175,13 @@ def transition_matrix(texts_of_line, b_next=1.5, strict=False, seg_cost=1.0, sec
     for i in range(N):
         nxt = texts_of_line[i + 1] if i + 1 < N else None
         for j in range(N):
-            if j == i + 1 or (nxt is not None and texts_of_line[j] == nxt):
+            # 严格模式：参考本身就是演唱序列（含重复副歌的每一遍），只有紧接的下一句算“顺着唱”；
+            # 宽松模式：文字相同的“下一句”也算（参考里副歌只写一遍、实际唱多遍）
+            if j == i + 1 or (not strict and nxt is not None and texts_of_line[j] == nxt):
                 tr[i, j] = b_next                     # 顺着往下（或文字相同的“下一句”）
             elif j > i + 1:
                 if sections is None:
-                    tr[i, j] = -0.3 * min(j - i - 1, 10)
+                    tr[i, j] = -skip_cost * min(j - i - 1, 10)
                 else:
                     # 现场删减一般是整段删：跳过整段便宜，跳过段落中间的句子贵
                     skipped = range(i + 1, j)
@@ -193,7 +195,8 @@ def transition_matrix(texts_of_line, b_next=1.5, strict=False, seg_cost=1.0, sec
     return tr - seg_cost
 
 
-def decode(S, D, line_text_id, tr):
+def decode(S, D, line_text_id, tr, allow=None):
+    """allow: (N, G+1) 布尔矩阵，第 j 句只能从允许的格子起唱（来自 Qwen 分块时间），None 表示不限。"""
     K, U, G1 = S.shape
     G = G1 - 1
     N = len(line_text_id)
@@ -203,7 +206,9 @@ def decode(S, D, line_text_id, tr):
     bp_i = np.full((G + 1, N), -1, dtype=np.int32)  # 上一句；-1 = 开头
     M = np.full((G + 1, N), -1e9, dtype=np.float32)
     Mi = np.full((G + 1, N), -1, dtype=np.int32)
-    Sl = S[:, line_text_id, :]       # (K, N, G+1)
+    Sl = S[:, line_text_id, :].copy()  # (K, N, G+1)
+    if allow is not None:
+        Sl[:, ~allow] = -1e9
     Dl = D[line_text_id, :]          # (N, K)
     ar = np.arange(N)
 
@@ -268,6 +273,10 @@ def main():
     p.add_argument("--anchor-w", type=float, default=1.5, help="锚点加分（每 token）")
     p.add_argument("--anchor-neg", type=float, default=0.6, help="锚点明确否定时扣分（每 token）")
     p.add_argument("--section-skip", action="store_true", help="实验：按 [段落] 整段跳过便宜、段中跳句贵")
+    p.add_argument("--windows", help="qwen_sequence.py 的报告 json（chunks），给每句加时间范围约束")
+    p.add_argument("--window-pad", type=float, default=2.0)
+    p.add_argument("--skip-cost", type=float, default=0.3,
+                   help="每跳过一句的代价；参考是 Qwen 确认过的演唱序列时调高（如 6），强制每句都找位置")
     p.add_argument("--seg-cost", type=float, default=1.0, help="每多放一句的固定代价")
     p.add_argument("--gap-min", type=float, default=2.0, help="多长的有声空档才做第二遍")
     p.add_argument("-o", "--output", required=True)
@@ -298,15 +307,25 @@ def main():
     strict = a.strict_order if a.strict_order is not None else Path(a.ref).suffix.lower() in (".srt", ".ass", ".vtt")
     # 段落感知的跳过罚分：HKT48 上实测让顺序更乱，默认关闭
     sections = section_ids(a.ref, len(lines)) if a.section_skip else None
-    tr = transition_matrix(lines, strict=strict, seg_cost=a.seg_cost, sections=sections)
+    tr = transition_matrix(lines, strict=strict, seg_cost=a.seg_cost, sections=sections, skip_cost=a.skip_cost)
     print(f"顺序约束: {'严格（参考即演唱顺序）' if strict else '宽松（允许跳过/重复/乱序）'}，每句代价 {a.seg_cost}")
-    segs, total = decode(with_theta(S_raw, NT, a.theta), D, line_text_id, tr)
+    allow = None
+    if a.windows:
+        chunks = json.loads(Path(a.windows).read_text())["chunks"]
+        spans = [(c["start"], c["end"]) for c in chunks for _ in c["lines"]]
+        if len(spans) != len(lines):
+            sys.exit(f"--windows 里的句数 {len(spans)} 和参考 {len(lines)} 对不上")
+        allow = np.zeros((len(lines), n_grid + 1), dtype=bool)
+        for j, (t0, t1) in enumerate(spans):
+            allow[j, max(0, int((t0 - a.window_pad) / GRID)):min(n_grid + 1, int((t1 + a.window_pad) / GRID) + 1)] = True
+        print(f"Qwen 分块时间约束: 每句只能在所在块 ±{a.window_pad}s 内")
+    segs, total = decode(with_theta(S_raw, NT, a.theta), D, line_text_id, tr, allow)
     # 第二遍：严格门槛定结构；只在“长时间有人声却没字幕”的空档里，用放宽的门槛补句
     added = 0
     if a.relax_theta is not None:
         gaps = voiced_gaps(sc.y, segs, a.gap_min)
         if gaps:
-            relaxed, _ = decode(with_theta(S_raw, NT, a.relax_theta), D, line_text_id, tr)
+            relaxed, _ = decode(with_theta(S_raw, NT, a.relax_theta), D, line_text_id, tr, allow)
             for s, t, j in relaxed:
                 a0, a1 = s * GRID, t * GRID
                 inside = max((min(a1, g1) - max(a0, g0) for g0, g1 in gaps), default=0)

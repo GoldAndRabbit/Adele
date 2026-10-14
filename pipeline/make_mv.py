@@ -228,16 +228,28 @@ def stage_refine(a, w):
         run([sys.executable, ROOT / "pipeline" / "acoustic.py", srt, "--ref", ref, "--vocals", vocals,
              "--lang", lang, "--mode", "post", "-o", srt, "--report", w / "acoustic_report.json"])
         return
-    print("参考来源: 歌词文本 -> 声学全局解码")
+    print("参考来源: 歌词文本 -> RoFormer 人声 + Qwen 演唱序列 + 声学全局解码")
     py, pl = sys.executable, ROOT / "pipeline"
-    run([py, pl / "decode_global.py", "--ref", ref, "--vocals", vocals, "--lang", lang,
+    # 1) 更干净的人声：Mel-Band RoFormer（独立环境 sep_venv）；没装就退回 demucs
+    rvoc = ROOT / "separated" / "roformer" / a.name / "vocals.wav"
+    sep_py = ROOT / "sep_venv" / "bin" / "python"
+    if not rvoc.exists() and sep_py.exists():
+        run([sep_py, pl / "separate_roformer.py", ROOT / "audios" / f"{a.name}.flac", "-o", rvoc])
+    voc = rvoc if rvoc.exists() else vocals
+    # 2) Qwen3-ASR 分块识别 -> 这一版实际演唱的句子顺序 + 每句所在时间块
+    order, order_rep = w / "sung_order.txt", w / "sung_order.json"
+    run([py, pl / "qwen_sequence.py", "--ref", ref, "--vocals", voc, "--lang", lang,
+         "-o", order, "--report", order_rep])
+    # 3) 按演唱序列严格顺序 + 时间块约束做声学全局解码（每句都必须找到位置），MMS 决定精确时间
+    run([py, pl / "decode_global.py", "--ref", order, "--strict-order", "true", "--windows", order_rep,
+         "--skip-cost", "100", "--seg-cost", "0", "--vocals", voc, "--lang", lang,
          "--rate-from", w / "before_refine.srt", "--theta", a.theta, "-o", srt, "--report", w / "decode_report.json"])
-    run([py, pl / "split_long.py", srt, "--vocals", vocals, "--max-width", a.max_width])
-    run([py, pl / "refine_timing.py", srt, "--vocals", vocals, "--lang", lang, "--lead", a.lead,
+    run([py, pl / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+    run([py, pl / "refine_timing.py", srt, "--vocals", voc, "--lang", lang, "--lead", a.lead,
          "-o", srt, "--report", w / "timing_report.json"])
-    run([py, pl / "acoustic.py", srt, "--ref", ref, "--vocals", vocals, "--lang", lang, "--mode", "post",
+    run([py, pl / "acoustic.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang, "--mode", "post",
          "-o", srt, "--report", w / "acoustic_report.json"])
-    run([py, pl / "split_long.py", srt, "--vocals", vocals, "--max-width", a.max_width])
+    run([py, pl / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
 
 
 def stage_translate(a, w):
