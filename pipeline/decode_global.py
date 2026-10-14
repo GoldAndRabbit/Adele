@@ -115,7 +115,22 @@ def voiced_gaps(y, segs, min_len):
     return out
 
 
-def transition_matrix(texts_of_line, b_next=1.5, strict=False, seg_cost=1.0):
+def section_ids(path, n_lines):
+    """每句所属段落实例的编号（txt 里每个 [段落] 标记开一个新段落）；srt 没有段落信息，各自成段。"""
+    import re
+    if Path(path).suffix.lower() != ".txt":
+        return list(range(n_lines))
+    ids, cur = [], 0
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        if re.match(r"\s*\[", raw):
+            cur += 1
+            continue
+        if re.sub(r"\[.*?\]", "", raw).strip():
+            ids.append(cur)
+    return ids[:n_lines] + [ids[-1] if ids else 0] * (n_lines - len(ids))
+
+
+def transition_matrix(texts_of_line, b_next=1.5, strict=False, seg_cost=1.0, sections=None):
     """strict：参考歌词就是这一版的演唱顺序（如官方字幕）——回跳/重复重罚。
     seg_cost：每多放一句的固定代价，防止证据一般的位置被反复插句。"""
     N = len(texts_of_line)
@@ -126,7 +141,14 @@ def transition_matrix(texts_of_line, b_next=1.5, strict=False, seg_cost=1.0):
             if j == i + 1 or (nxt is not None and texts_of_line[j] == nxt):
                 tr[i, j] = b_next                     # 顺着往下（或文字相同的“下一句”）
             elif j > i + 1:
-                tr[i, j] = -0.3 * min(j - i - 1, 10)  # 跳过若干句（删减版）
+                if sections is None:
+                    tr[i, j] = -0.3 * min(j - i - 1, 10)
+                else:
+                    # 现场删减一般是整段删：跳过整段便宜，跳过段落中间的句子贵
+                    skipped = range(i + 1, j)
+                    mid = sum(1 for m in skipped if sections[m] in (sections[i], sections[j]))
+                    whole = len({sections[m] for m in skipped} - {sections[i], sections[j]})
+                    tr[i, j] = -2.5 * mid - 0.4 * whole
             elif j == i:
                 tr[i, j] = -6.0 if strict else -0.5   # 同一句连唱
             else:
@@ -205,6 +227,7 @@ def main():
                    help="第二遍补空档用的放宽门槛（只作用于严格解码后长时间有人声没字幕的地方）；设为空可关闭")
     p.add_argument("--strict-order", type=lambda v: v.lower() in ("1", "true", "yes"), default=None,
                    help="参考歌词是否就是演唱顺序；默认：官方字幕(srt)=是，歌词 txt=否")
+    p.add_argument("--section-skip", action="store_true", help="实验：按 [段落] 整段跳过便宜、段中跳句贵")
     p.add_argument("--seg-cost", type=float, default=1.0, help="每多放一句的固定代价")
     p.add_argument("--gap-min", type=float, default=2.0, help="多长的有声空档才做第二遍")
     p.add_argument("-o", "--output", required=True)
@@ -229,7 +252,9 @@ def main():
 
     S_raw, D, NT = score_maps(sc, texts, rate, a.theta, n_grid)
     strict = a.strict_order if a.strict_order is not None else Path(a.ref).suffix.lower() in (".srt", ".ass", ".vtt")
-    tr = transition_matrix(lines, strict=strict, seg_cost=a.seg_cost)
+    # 段落感知的跳过罚分：HKT48 上实测让顺序更乱，默认关闭
+    sections = section_ids(a.ref, len(lines)) if a.section_skip else None
+    tr = transition_matrix(lines, strict=strict, seg_cost=a.seg_cost, sections=sections)
     print(f"顺序约束: {'严格（参考即演唱顺序）' if strict else '宽松（允许跳过/重复/乱序）'}，每句代价 {a.seg_cost}")
     segs, total = decode(with_theta(S_raw, NT, a.theta), D, line_text_id, tr)
     # 第二遍：严格门槛定结构；只在“长时间有人声却没字幕”的空档里，用放宽的门槛补句
