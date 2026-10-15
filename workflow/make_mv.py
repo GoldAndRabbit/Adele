@@ -108,11 +108,23 @@ def stage_download(a, w):
 def make_1080(a, w):
     """统一降到 1080p 再插帧（4K 直接插帧太慢、太占盘）；帧率保持原生，后面交给 RIFE。"""
     trim = (["-ss", a.start] if a.start else []) + (["-to", a.end] if a.end else [])
+    tmp = w / "video_1080.partial.mp4"
     run(["ffmpeg", "-y", "-hide_banner", *trim, "-i", w / "source.mp4",
          "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
                 "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1",
-         "-an", "-c:v", "libx264", "-crf", "12", "-preset", "fast", "-pix_fmt", "yuv420p",
-         w / "video_1080.mp4"])
+         "-an", "-c:v", "libx264", "-crf", "12", "-preset", "fast", "-pix_fmt", "yuv420p", tmp])
+    tmp.replace(w / "video_1080.mp4")  # 写完整才改名：中途被停不会留下半截文件
+
+
+def video_1080_ok(a, w):
+    """1080p 中间视频存在且时长和源视频（截取后）一致。"""
+    v = w / "video_1080.mp4"
+    if not v.exists():
+        return False
+    src = probe(w / "source.mp4")["duration"]
+    if a.start or a.end:
+        src = (to_seconds(a.end) if a.end else src) - (to_seconds(a.start) or 0)
+    return abs(probe(v)["duration"] - src) < 1.0
 
 
 def stage_prep(a, w):
@@ -311,7 +323,7 @@ def pick_frame_ext(a, video, info, w):
 
 def stage_interp(a, w):
     video = w / "video_1080.mp4"
-    if not video.exists():  # 中间视频清理掉了就从源视频重建
+    if not video_1080_ok(a, w):  # 被清理掉了、或之前被中断只写了一半，都从源视频重建
         make_1080(a, w)
     info = probe(video)
     fin, fout = w / "frames_in", w / "frames_out"
