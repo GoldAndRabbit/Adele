@@ -241,6 +241,15 @@ def stage_align(a, w):
         return
 
     ref = p["txt"]
+    if a.align_mode == "dense":
+        # 默认：2.5s 窗口逐窗 Qwen 识别定结构（分得清副歌和长得像的段落），逐句局部强制对齐定时间
+        run([py, PIPE / "qwen_dense.py", "--ref", ref, *common, "--cache", w / "reports" / "dense_cache.json",
+             "-o", srt, "--report", w / "reports" / "dense.json"])
+        run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "--no-fill-gaps",
+             "-o", srt, "--report", w / "reports" / "acoustic_report.json"])
+        maybe_split(a, py, srt, voc)
+        print(f"\n>>> 字幕（密集窗口）: {srt}")
+        return
     if a.align_mode == "lyrics":
         # 歌词主导（说唱等 ASR 难识别、但基本按原词唱的歌）：整首歌词按顺序强制对齐，识别只用来复核、不换句
         run([py, PIPE / "lyrics_align.py", "--ref", ref, *common, "-o", srt, "--report", w / "reports" / "lyrics_align.json"])
@@ -309,6 +318,8 @@ def stage_translate(a, w):
     if a.zh_file:
         cmd += ["--zh-file", a.zh_file]
     cmd += ["--style", a.sub_style]
+    if a.retranslate:
+        cmd += ["--retranslate"]
     if speech.exists() and not a.no_speech:
         cmd += ["--speech", speech]
     run(cmd)
@@ -448,14 +459,16 @@ def main():
     p.add_argument("--song-title", help="lyrics 阶段：手动指定歌名（自动识别不准时）")
     p.add_argument("--artist", help="lyrics 阶段：手动指定歌手")
     p.add_argument("--max-width", type=int, default=40, help="单句最大显示宽度（全角算 2），超过就拆")
-    p.add_argument("--align-mode", choices=["qwen", "lyrics"], default="qwen",
-                   help="qwen：Qwen 识别演唱顺序（现场改编/删减多的歌）；lyrics：以歌词顺序为准只对时间（说唱等 ASR 难识别的歌）")
+    p.add_argument("--align-mode", choices=["dense", "qwen", "lyrics"], default="dense",
+                   help="dense（默认）：2.5s 密集窗口 Qwen 识别定结构 + 逐句局部对齐；qwen：10~20s 分块（旧）；"
+                        "lyrics：完全按歌词顺序对齐")
     p.add_argument("--no-speech", action="store_true", help="不识别歌词之外的说话（开场白/谢幕）")
     p.add_argument("--speech-gaps", action="store_true", help="说话识别也处理歌曲中间较长的无字幕人声段")
     p.add_argument("--lead", type=float, default=0.12, help="字幕比开口提前出现的秒数（align 阶段）")
     p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'；不填就从 YouTube 标题自动提取（存 title.txt，可手改）")
     p.add_argument("--sub-style", choices=["bzrp", "modern"], default="bzrp",
                    help="字幕样式：bzrp=与 bzrp_v2.ass 相同（默认）；modern=1080p 画布、日文粗体、标题在顶部")
+    p.add_argument("--retranslate", action="store_true", help="translate 阶段整首重翻（忽略缓存的歌词译文）")
     p.add_argument("--zh-file", help="不调 API，直接用这个文件里的中文翻译（每行对应一句）")
     p.add_argument("--cookies-from-browser", help="yt-dlp 需要登录时: chrome / safari / firefox")
     p.add_argument("--cookies", help="cookies.txt 路径")

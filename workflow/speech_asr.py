@@ -92,6 +92,22 @@ def main():
             text = (transcribe(client, y[int(max(0, s - 0.15) * SR):int(min(dur, e + 0.15) * SR)], a.lang) or "").strip()
             if len(text) >= 2:
                 out.append((s, e, text))
+    # 校准：多句的段落按句号/问号/感叹号拆开，按字数比例分时间，再逐句局部强制对齐收紧起止
+    import re
+    split = []
+    for s0, e0, t in out:
+        parts = [x.strip() for x in re.split(r"(?<=[.!?。！？])\s+", t) if x.strip()]
+        if len(parts) <= 1:
+            split.append([s0, e0, t])
+            continue
+        tot, cur = sum(len(x) for x in parts), s0
+        for x in parts:
+            d = (e0 - s0) * len(x) / tot
+            split.append([cur, cur + d, x])
+            cur += d
+    from qwen_dense import tighten
+    out = tighten(split, y, a.lang or "en", pad=0.4) if split else []
+
     subs = pysubs2.SSAFile()
     for s, e, t in out:
         subs.events.append(pysubs2.SSAEvent(start=int(s * 1000), end=int(e * 1000), text=t))

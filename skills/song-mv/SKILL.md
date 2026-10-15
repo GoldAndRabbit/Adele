@@ -38,8 +38,9 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 - **lyrics**：官方字幕（`--sub-lang`）→ `posts/X/lyrics.srt`；否则 `get_ytb_lyrics_from_link.py` → `posts/X/lyrics.txt`（识别不准时 `--song-title/--artist` 或 `--genius-url`）。现场版歌词可能与录音室版不同，提醒用户过一眼
 - **separate**：Mel-Band RoFormer（KimberleyJensen vocals 权重）分离人声 → `posts/X/vocals.wav`
 - **align**（见第 2 节）→ `posts/X/lyrics.srt`
-- **speech**：歌词之外的说话（开场白、谢幕；`--speech-gaps` 也处理曲中长空档）按停顿切句、逐句 Qwen 识别 → `posts/X/speech.srt`；`--no-speech` 关闭。说话不是歌词，可以直接用识别文字
+- **speech**：单独一条流程，和歌词分开。歌词之外的说话（开场白、谢幕；`--speech-gaps` 也处理曲中长空档）按停顿切句、逐句 Qwen 识别 → `posts/X/speech.srt`；`--no-speech` 关闭。多句段落按句号拆开、逐句局部强制对齐校准；说话不是歌词，用识别文字；字幕用单独的 **Speech 样式（暖黄色）**，中文不加 ♪
 - **translate**：DeepSeek（`.env`，思考 high）翻译 → `posts/X/lyrics.ass`；说话字幕一起翻，中文不加 ♪
+  - **先整首解读再逐句意译**：第一步让模型通读整首写“歌曲解读”（故事线、人物、俚语/双关/隐喻在这首里的真实含义，缓存在 `__brief__`），逐句翻译时带上它；意译优先，读不通的直译（把比喻、黑话按字面硬翻）不要。`--retranslate` 忽略缓存整首重翻
   - **按句缓存** `posts/X/zh_cache.json`，时间轴重做不重复翻译；只翻新句，整首歌词作上下文
   - **语气词不翻译**（oh / yeah / ah…），`strip_interjections` 兜底；片假名按外来语还原，不输出“意义不明”
   - **标题行加中文**（通行译名，如 Linkin Park → 林肯公园、そばにいるね → 在你身边），和歌词里的译名一致
@@ -54,15 +55,12 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 ### A. 官方带时间字幕
 官方时间轴是人工打的，实测任何重解码都会变差 → 只做 `split_long` + `acoustic.py --mode post`（拖音延长、短空档桥接、句尾收紧）。
 
-### B. Genius 歌词文本（现场版常见：改编、删减、重复、对唱、说唱）
-1. **`qwen_sequence.py`**：人声在安静处切 10~20s 块，逐块 `qwen3-asr-flash`（百炼 OpenAI 兼容接口，`ALIYUN_BAILIAN_API_KEY`，与 Takit 相同）识别，按读音匹配参考句 → 这一版实际演唱的句子顺序 `posts/X/reports/sung_order.txt` + 每句所在块 `sung_order.json`。**不要给 Qwen 传歌词上下文**，它会原样照抄
-2. **`chunk_align.py`**：每块的句子序列，在块的时间范围（±0.8s）里用 MMS_FA 按顺序强制对齐
-3. `split_long.py`：超过 40 宽（全角算 2）的句子在停顿处拆开
-4. **先** `infer_insert.py`：Qwen 漏掉的句子（说唱、对唱）——相邻句之间 ≥2s 有人声却没字幕，按参考歌词顺序推断该唱的句子，时长相符就插入；句间重复词修正（前句以 “I” 结尾、后句又以 “I” 开头 → 换成参考里不带的写法）。**必须在拖音/桥接之前**，否则空档被拉长的上一句盖住
-5. `refine_timing.py`：全曲强制对齐精修起止、吸附起音、字幕提前 `--lead 0.12s`、时长体检（被拉长/挤短的句子按字数重新分配）
-6. `acoustic.py --mode post --no-fill-gaps`：拖音延长（语气词句最多 +0.5s）、短空档桥接（<3.5s 且多半有人声 → 前一句保持）、句尾收紧
-7. **`verify_qwen.py`**：每句字幕的人声单独截出（±0.3s）给 Qwen 识别比对：≥65 保留；明显是另一句（≥75 且高出 15）就换；<30 隐藏；其余可疑句保留并列在 `posts/X/reports/verify_report.json`。429 限流自动退避，并发 3
-8. `split_long.py`
+### B. Genius 歌词文本（默认 `--align-mode dense`）
+1. **`qwen_dense.py`**：人声按 **2.5s 窗口、0.5s 步长** 逐窗 qwen3-asr-flash 识别（缓存 `reports/dense_cache.json`），每窗按读音匹配参考里最像的一句，连续同句合并成一段 → 每句大致位置。窗口足够短，能分清副歌和长得像的尾段/改编段（10~20s 大块分不清，Lose Yourself 2:42–3:06、4:17–5:15 因此整段错成副歌）。**不要给 Qwen 传歌词上下文**，它会照抄
+2. 逐句**局部**强制对齐（每句只在自己的位置 ±0.6s 内用 MMS 收紧起止，不跨句）。**不要再跑全曲 refine_timing**：它假设按歌词顺序唱，会把重复段落拉错（实测把错误窗口从 10 推到 62）
+3. `acoustic.py --mode post --no-fill-gaps`：拖音延长、短空档桥接、起点校正、句尾收紧
+4. 日文/中文才 `split_long`；英文、意大利语等一行歌词就是一条字幕，长行自动换行 + 缩小字号
+实测 Lose Yourself 2:30–5:16：错句窗口 78 → 16。旧方法保留为 `--align-mode qwen`（10~20s 分块 + 推理补句 + 逐句复核）和 `lyrics`（完全按歌词顺序）。
 
 用户反馈“某时间点不对”时：先看 `sung_order.json` 那一块 Qwen 认出了哪些句、`verify_report.json` 里有没有可疑，再定位是哪一步出的问题；只汇报句号和时间，不贴歌词。
 
