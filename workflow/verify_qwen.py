@@ -38,6 +38,8 @@ def main():
     p.add_argument("--vocals", required=True)
     p.add_argument("--lang", default=None)
     p.add_argument("--hide-suspect", action="store_true", help="可疑句全部隐藏")
+    p.add_argument("--no-swap", dest="swap", action="store_false",
+                   help="只复核不换句（歌词主导模式用：结构以歌词为准，识别只用来隐藏明确不对的句子）")
     p.add_argument("--hide-below", type=float, default=30,
                    help="可疑句里匹配分低于这个的隐藏（Qwen 明确认为不是这句）；其余可疑句保留并列出")
     p.add_argument("-o", "--output", required=True)
@@ -97,7 +99,7 @@ def main():
             cands = {ordered[k] for k in range(max(0, pos - REACH), min(len(ordered), pos + REACH + 1))}
         cands = {t for t in cands if t != e.plaintext and t not in neigh and len(ref_r[t]) >= 4}
         best = max(((fuzz.partial_ratio(ref_r[t], r), t) for t in cands), default=(0, None))
-        if best[1] and best[0] >= SWAP and best[0] - cur >= MARGIN:
+        if a.swap and best[1] and best[0] >= SWAP and best[0] - cur >= MARGIN:
             swapped.append({"start": round(e.start / 1000, 1), "score_before": round(cur), "score_after": round(best[0])})
             e.text = best[1]
             out.append(e)

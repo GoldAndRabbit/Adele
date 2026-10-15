@@ -209,6 +209,19 @@ def stage_align(a, w):
         return
 
     ref = p["txt"]
+    if a.align_mode == "lyrics":
+        # 歌词主导（说唱等 ASR 难识别、但基本按原词唱的歌）：整首歌词按顺序强制对齐，识别只用来复核、不换句
+        run([py, PIPE / "lyrics_align.py", "--ref", ref, *common, "-o", srt, "--report", w / "reports" / "lyrics_align.json"])
+        run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+        run([py, PIPE / "refine_timing.py", srt, *common, "--lead", a.lead,
+             "-o", srt, "--report", w / "reports" / "timing_report.json"])
+        run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "--no-fill-gaps",
+             "-o", srt, "--report", w / "reports" / "acoustic_report.json"])
+        run([py, PIPE / "verify_qwen.py", srt, "--ref", ref, *common, "--no-swap",
+             "-o", srt, "--report", w / "reports" / "verify_report.json"])
+        run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+        print(f"\n>>> 字幕（歌词主导）: {srt}")
+        return
     order, order_rep = w / "reports" / "sung_order.txt", w / "reports" / "sung_order.json"
     # 1) Qwen3-ASR 分块识别 -> 这一版实际演唱的句子顺序 + 每句所在时间块
     run([py, PIPE / "qwen_sequence.py", "--ref", ref, *common, "-o", order, "--report", order_rep])
@@ -387,6 +400,8 @@ def main():
     p.add_argument("--song-title", help="lyrics 阶段：手动指定歌名（自动识别不准时）")
     p.add_argument("--artist", help="lyrics 阶段：手动指定歌手")
     p.add_argument("--max-width", type=int, default=40, help="单句最大显示宽度（全角算 2），超过就拆")
+    p.add_argument("--align-mode", choices=["qwen", "lyrics"], default="qwen",
+                   help="qwen：Qwen 识别演唱顺序（现场改编/删减多的歌）；lyrics：以歌词顺序为准只对时间（说唱等 ASR 难识别的歌）")
     p.add_argument("--lead", type=float, default=0.12, help="字幕比开口提前出现的秒数（align 阶段）")
     p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'；不填就从 YouTube 标题自动提取（存 title.txt，可手改）")
     p.add_argument("--sub-style", choices=["bzrp", "modern"], default="bzrp",
