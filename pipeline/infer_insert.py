@@ -125,6 +125,31 @@ def neighbor_fix(events, ref, vocals, lang, margin=1.0, reach=2):
     return swapped
 
 
+def fix_boundary_word(events, ref):
+    """前一句以某词结尾（如“..., I”）、后一句又以同一个词开头（“I let you ...”），而参考里有不带这个词的版本
+    （“Let you ...”）——说明选到了另一遍副歌的写法，换成不重复的版本。后一句是拆过的半句时按前缀匹配。"""
+    fixed = []
+    for n in range(len(events) - 1):
+        a_, b_ = events[n].plaintext.strip(), events[n + 1].plaintext.strip()
+        m = re.search(r"[,\s]+(\S+)$", a_)
+        if not m:
+            continue
+        w = m.group(1).lower()
+        parts = b_.split(None, 1)
+        if len(parts) < 2 or parts[0].lower().strip(",") != w:
+            continue
+        rest = parts[1]
+        variants = [l for l in ref if l.lower().startswith(rest.lower()[:12]) and l.lower().startswith(rest[0].lower())]
+        if not variants:
+            continue
+        rl = rest.lower()
+        full_rest = rest if any(l.lower() == rl or l.lower().startswith(rl) for l in ref) else None
+        if full_rest:
+            events[n + 1].text = rest[0].upper() + rest[1:]
+            fixed.append(round(events[n + 1].start / 1000, 1))
+    return fixed
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("srt")
@@ -195,6 +220,9 @@ def main():
 
     new_events = sorted(new_events, key=lambda e: e.start)
     swapped = neighbor_fix(new_events, ref, a.vocals, a.lang) if a.neighbor_fix else []
+    boundary = fix_boundary_word(new_events, ref)
+    if boundary:
+        print(f"句间重复词修正 {len(boundary)} 处：" + ", ".join(f"{t}s" for t in boundary))
     out = pysubs2.SSAFile()
     out.events = new_events
     out.save(a.output)
