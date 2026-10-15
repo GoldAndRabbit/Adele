@@ -71,7 +71,7 @@ my_venv/bin/python pipeline/make_mv.py --name X --from split --to translate --ti
 1. `separate_roformer.py`（独立环境 `sep_venv`）：Mel-Band RoFormer（KimberleyJensen vocals 权重，HuggingFace）分离人声，比 demucs 干净；模型代码在 `third_party/mss`（ZFTurbo，git clone），权重 `third_party/models/MelBandRoformer.ckpt`。raw.githubusercontent.com 在本机证书被劫持，audio-separator 下不了模型，所以走 HF + git clone
 2. `qwen_sequence.py`：人声在安静处切 10~20s 块，逐块 `qwen3-asr-flash`（百炼 OpenAI 兼容接口，密钥 `ALIYUN_BAILIAN_API_KEY`，与 Takit 相同）识别，按读音从左到右贪心匹配参考句 → 这一版的演唱序列 `work/X/sung_order.txt` + 每句所在时间块 `sung_order.json`。**不要给 Qwen 传歌词上下文**：它会把上下文原样照抄回来
 3. **`chunk_align.py`（分块对齐）**：Qwen 给的每块句子序列，直接在该块时间范围（±0.8s）里用 MMS 按顺序强制对齐，得到每句起止。比全局解码（decode_global）准：全局解码 + 邻句推断会把 Qwen 已认对的顺序改乱
-4. `split_long.py` → `acoustic.py --mode post --no-fill-gaps`（拖音延长、短空档桥接、句尾收紧）→ `infer_insert.py --no-neighbor-fix`（空档里按参考顺序推理补句、句间重复词修正）
+4. `split_long.py` → **先** `infer_insert.py --no-neighbor-fix`（空档里按参考顺序推理补句、句间重复词修正）→ `refine_timing.py` → **再** `acoustic.py --mode post --no-fill-gaps`（拖音延长、短空档桥接、句尾收紧）。顺序不能反：先拖音会把上一句拉长盖住空档，推理插入就找不到空档了（HKT48 0:15–0:24 一句挂 9 秒就是这个原因）
 5. **`verify_qwen.py`（逐句 Qwen 复核）**：每句字幕对应的人声单独截出（±0.3s）给 qwen3-asr-flash 识别，和这句比对；匹配 ≥65 保留，明显是参考里另一句（≥75 且高出 15）就换，匹配 <30 的隐藏，其余可疑句保留并列在 `work/X/verify_report.json`。限流（429）自动退避重试，并发 3
 6. `split_long.py`
 

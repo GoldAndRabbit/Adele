@@ -244,11 +244,14 @@ def stage_refine(a, w):
     run([py, pl / "chunk_align.py", "--order", order, "--chunks", order_rep, "--vocals", voc,
          "--lang", lang, "-o", srt])
     run([py, pl / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
-    # 4) 后处理：拖音延长、短空档桥接、句尾收紧；空档里按参考歌词顺序推理补句
-    run([py, pl / "acoustic.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang, "--mode", "post",
-         "--no-fill-gaps", "-o", srt, "--report", w / "acoustic_report.json"])
+    # 4) 先推理补句（空档还在的时候），再做拖音延长/短空档桥接/句尾收紧——顺序反了的话，
+    #    拖音会先把上一句拉长盖住空档，推理插入就找不到空档了
     run([py, pl / "infer_insert.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang, "--no-neighbor-fix",
          "-o", srt, "--report", w / "infer_report.json"])
+    run([py, pl / "refine_timing.py", srt, "--vocals", voc, "--lang", lang, "--lead", a.lead,
+         "-o", srt, "--report", w / "timing_report.json"])
+    run([py, pl / "acoustic.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang, "--mode", "post",
+         "--no-fill-gaps", "-o", srt, "--report", w / "acoustic_report.json"])
     # 5) 逐句 Qwen 复核：每句单独识别比对，明显是别的句子就换，明确不对的隐藏
     run([py, pl / "verify_qwen.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang,
          "-o", srt, "--report", w / "verify_report.json"])
