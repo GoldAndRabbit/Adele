@@ -9,7 +9,7 @@
     2. 重解码：在不可信段落里，从全部候选句中按声学分数 + 顺序先验逐句挑选（允许跳过、重复、乱序），
        找不到够好的就留空（宁缺毋滥）
 
-python pipeline/acoustic.py ori_lyrics/X.srt --ref ori_lyrics/X.txt --vocals separated/htdemucs/X/vocals.wav --lang ja -o out.srt
+python workflow/acoustic.py ori_lyrics/X.srt --ref ori_lyrics/X.txt --vocals separated/htdemucs/X/vocals.wav --lang ja -o out.srt
 """
 
 import argparse

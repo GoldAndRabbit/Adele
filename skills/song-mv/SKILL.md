@@ -9,11 +9,11 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 
 | 入口 | 作用 |
 |---|---|
-| `pipeline/make_mv.py` | 视频总控：`download → prep → lyrics → separate → align → translate → interp → render`，`--from/--to` 断点续跑 |
-| `pipeline/make_cover.py` | 封面：16:9 + 4:3 |
-| `pipeline/make_meta.py` | 投稿元数据 JSON |
-| `pipeline/get_ytb_lyrics_from_link.py` | YouTube 链接 → Genius 歌词 → `ori_lyrics/<name>.txt`（lyrics 阶段自动调用） |
-| `pipeline/eval_subs.py` | 字幕时间轴客观评测，多版本对比 |
+| `workflow/make_mv.py` | 视频总控：`download → prep → lyrics → separate → align → translate → interp → render`，`--from/--to` 断点续跑 |
+| `workflow/make_cover.py` | 封面：16:9 + 4:3 |
+| `workflow/make_meta.py` | 投稿元数据 JSON |
+| `workflow/get_ytb_lyrics_from_link.py` | YouTube 链接 → Genius 歌词 → `ori_lyrics/<name>.txt`（lyrics 阶段自动调用） |
+| `workflow/eval_subs.py` | 字幕时间轴客观评测，多版本对比 |
 
 产物：每个作品一个目录 `post/X/`：`X 4K60FPS Sub-WaterMark.mp4` + `cover/` + `X.json`；中间文件在 `work/X/`。
 
@@ -31,7 +31,7 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 
 ## 1. 一条命令出视频
 ```bash
-.venv/bin/python pipeline/make_mv.py --name X --url "LINK" --lang ja --title "《歌名》 歌手" --keep-frames
+.venv/bin/python workflow/make_mv.py --name X --url "LINK" --lang ja --title "《歌名》 歌手" --keep-frames
 ```
 各阶段：
 - **download / prep**：下载最高 2160p；降到 1080p 供插帧；导出 FLAC 48k/24bit
@@ -69,11 +69,11 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 whisper 定结构 + 强制对齐；纯 MMS 声学全局解码（对唱段整段留空、副歌乱跳）；Qwen 滑窗锚点加分（插句暴增）；全局解码 + 邻句推断（把 Qwen 已认对的顺序改乱）；歌词作 whisper/Qwen 提示（无效 / 照抄）。分块对齐 + 逐句复核在 HKT48 现场上：逐句复核通过 48 → 51+、可疑 11 → 2 处被隐藏。
 
 ### 提前量
-`--lead 0.12` 已含在 align 里。渲染时 `--sub-shift` 再整体提前，精校后一般不需要；用户偏好可试 0.1~0.2。
+`--lead 0.12` 含在 align 里；渲染时 `--sub-shift` 默认再整体提前 **0.2s**（用户在 0 / 0.1 / 0.2 / 0.3 四档对比后选定），标题行不动。
 
 ## 3. 封面（16:9 + 4:3）
 ```bash
-.venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕" --at 65.2 [--inpaint-subs] [--text-y 0.80]
+.venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕" --at 65.2 [--inpaint-subs] [--text-y 0.80]
 ```
 - 优先人物特写（`--at` 指定时间，可从用户截图里的字幕在 srt 里反查时间）；选中的帧 Real-ESRGAN x4 高清化（`--no-sr` 关闭）
 - 统一元素：左上水印 + 4K60 徽章；标题撑满 94% 宽，副标题与标题等宽对齐；副标题基线 `--text-y`（默认 0.66，脸在画面中段时调到 0.75~0.80，不超过 0.84）
@@ -84,7 +84,7 @@ whisper 定结构 + 强制对齐；纯 MMS 声学全局解码（对唱段整段�
 
 ## 4. 投稿元数据 JSON
 ```bash
-.venv/bin/python pipeline/make_meta.py --name X --subtitle-langs "日语,中文" --note "演出名称、日期、场地、场次等"
+.venv/bin/python workflow/make_meta.py --name X --subtitle-langs "日语,中文" --note "演出名称、日期、场地、场次等"
 ```
 - 标题 `[4K60帧/Hi-Res] 中文名《歌名》英文名 关键词`，≤80 字
 - **生成后逐条核对并手改**：模型常把频道口号当演出细节、给罗马字人名乱配汉字、编造材料里没有的事实（吉尼斯纪录、乐队伴奏等）、用“国民级”之类无依据的夸张；不写不确定的成员名字

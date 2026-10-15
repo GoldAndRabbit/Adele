@@ -9,7 +9,7 @@
   coverage   有人声的时间里有字幕的比例 —— 漏字幕
   overshow   没人声的时间里还挂着字幕的比例 —— 字幕拖太久/提前
 
-python pipeline/eval_subs.py --vocals .../vocals.wav --lang ja v1.srt v2.srt ...
+python workflow/eval_subs.py --vocals .../vocals.wav --lang ja v1.srt v2.srt ...
 """
 
 import argparse

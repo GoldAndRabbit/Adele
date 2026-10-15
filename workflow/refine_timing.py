@@ -10,7 +10,7 @@
   3. 提前量：字幕比开口早 --lead 秒出现（默认 0.12s）；不与下一句重叠，最短显示 0.8s
   和原时间差太远（> 2.5s，多半是对齐跑偏）的句子保持原时间，在报告里列出
 
-python pipeline/refine_timing.py ori_lyrics/X.srt --vocals separated/htdemucs/X/vocals.wav --lang en -o ori_lyrics/X.srt
+python workflow/refine_timing.py ori_lyrics/X.srt --vocals separated/htdemucs/X/vocals.wav --lang en -o ori_lyrics/X.srt
 """
 
 import argparse

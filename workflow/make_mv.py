@@ -17,7 +17,7 @@
   render     4K + 烧字幕 + 水印 + FLAC，渲染后检查音轨   -> post/<name>/<name> 4K60FPS Sub-WaterMark.mp4
 
 用法:
-  .venv/bin/python pipeline/make_mv.py --name X --url "https://..." --lang ja --title "《歌名》 歌手"
+  .venv/bin/python workflow/make_mv.py --name X --url "https://..." --lang ja --title "《歌名》 歌手"
 """
 
 import argparse
@@ -31,7 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VENV_BIN = ROOT / ".venv" / "bin"
 SEP_PY = ROOT / ".venv-sep" / "bin" / "python"
-PIPE = ROOT / "pipeline"
+PIPE = ROOT / "workflow"
 STAGES = ["download", "prep", "lyrics", "separate", "align", "translate", "interp", "render"]
 LANG_CODES = {"english": "en", "japanese": "ja", "spanish": "es", "chinese": "zh"}
 TARGET_FPS = 60
@@ -379,8 +379,8 @@ def main():
     p.add_argument("--cookies", help="cookies.txt 路径")
     p.add_argument("--ass", help="render 用的字幕文件，默认 lyrics/<name>.ass")
     p.add_argument("--tag", help="成品文件名后缀，用于对比不同版本，如 bzrpv2style")
-    p.add_argument("--sub-shift", type=float, default=0.0,
-                   help="渲染时字幕整体再提前的秒数（叠加在 --lead 之上），走 align 精校后一般不需要")
+    p.add_argument("--sub-shift", type=float, default=0.2,
+                   help="渲染时字幕整体再提前的秒数（叠加在 --lead 0.12 之上，默认 0.2，实测最舒服）")
     p.add_argument("--logo", default="assets/adele-logo.png")
     p.add_argument("--logo-scale", default="0.10")
     p.add_argument("--crf", type=int, default=18)

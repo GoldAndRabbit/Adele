@@ -8,7 +8,7 @@
   - 不匹配、也认不出是哪句 记为可疑（报告里列时间点；--hide-suspect 时隐藏）
 识别文字只用来比对，字幕文字仍只来自参考歌词。
 
-python pipeline/verify_qwen.py in.srt --ref ori_lyrics/X.txt --vocals .../vocals.wav --lang ja -o out.srt --report r.json
+python workflow/verify_qwen.py in.srt --ref ori_lyrics/X.txt --vocals .../vocals.wav --lang ja -o out.srt --report r.json
 """
 
 import argparse

@@ -4,7 +4,7 @@
 封面候选：从视频里挑清晰的画面，统一打上 朝阳Adele logo + 4K/60FPS 徽章 + 标题 + 副标题（+ 右上角额外 logo），
 输出多张候选封面和一张对比总图。
 
-python pipeline/make_cover.py --name sobaniirune --title "そばにいるね" \
+python workflow/make_cover.py --name sobaniirune --title "そばにいるね" \
     --subtitle "青山テルマ feat. SoulJa · 中日字幕"
 # 已选好时间点:   --at 65.2 --at 130
 # 右上角加队徽:   --extra-logo cover/psg.png

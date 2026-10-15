@@ -6,7 +6,7 @@
 事实依据只用 work/<name>/meta.json 里 yt-dlp 抓到的视频标题 / 简介 / 发布日期，
 模型负责整理成中文，不允许编造简介里没有的信息，也不引用歌词。
 
-python pipeline/make_meta.py --name sobaniirune --cover post/sobaniirune/cover/art/cover_01.jpg
+python workflow/make_meta.py --name sobaniirune --cover post/sobaniirune/cover/art/cover_01.jpg
 产物: post/<name>/<name>.json
 """
 

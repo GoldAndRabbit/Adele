@@ -9,7 +9,7 @@ import sys
 
 import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "workflow"))
 import get_ytb_lyrics_from_link as workflow  # noqa: E402
 
 
