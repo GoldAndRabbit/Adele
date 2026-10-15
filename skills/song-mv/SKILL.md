@@ -56,6 +56,11 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 官方时间轴是人工打的，实测任何重解码都会变差 → 只做 `split_long` + `acoustic.py --mode post`（拖音延长、短空档桥接、句尾收紧）。
 
 ### B. Genius 歌词文本（默认 `--align-mode dense`）
+**有 `lyrics_sections.txt`（lyrics 阶段用 `--keep-sections` 自动多抓一份）时按段落对齐（`qwen_dense --order sections`）**：
+段内严格按歌词顺序、一句不漏（跳句重罚），段与段之间按现场顺序跳转/重复（由密集窗口证据决定）；被识别证实的句子不到 30% 的段落视为没唱（防止开场说话误配）；单句时长上限 8s。
+这是尊重歌词和跟上现场结构的折中：纯按歌词顺序（`--order lyrics`）在现场改顺序时整段错位；纯逐窗匹配（`--order free`）在说唱等识别困难处漏句。
+Lose Yourself 实测：87 句全部输出，段落顺序 Intro→V1→Chorus→V2→Chorus→V3→Chorus→Outro。
+
 1. **`qwen_dense.py`**：人声按 **2.5s 窗口、0.5s 步长** 逐窗 qwen3-asr-flash 识别（缓存 `reports/dense_cache.json`），每窗按读音匹配参考里最像的一句，连续同句合并成一段 → 每句大致位置。窗口足够短，能分清副歌和长得像的尾段/改编段（10~20s 大块分不清，Lose Yourself 2:42–3:06、4:17–5:15 因此整段错成副歌）。**不要给 Qwen 传歌词上下文**，它会照抄
 2. 逐句**局部**强制对齐（每句只在自己的位置 ±0.6s 内用 MMS 收紧起止，不跨句）。**不要再跑全曲 refine_timing**：它假设按歌词顺序唱，会把重复段落拉错（实测把错误窗口从 10 推到 62）
 3. `acoustic.py --mode post --no-fill-gaps`：拖音延长、短空档桥接、起点校正、句尾收紧

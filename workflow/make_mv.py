@@ -192,6 +192,17 @@ def stage_lyrics(a, w):
         if a.cookies:
             cmd += ["--cookies", a.cookies]
         run(cmd)
+    secs = w / "lyrics_sections.txt"
+    if not secs.exists() and (a.url or a.genius_url):
+        # 再抓一份带 [段落] 标记的，align 用来按段落对齐（抓不到不影响主流程）
+        tmp = f"_{a.name}_sections"
+        cmd = [sys.executable, PIPE / "get_ytb_lyrics_from_link.py", a.url or "", "--name", tmp, "--keep-sections", "--overwrite"]
+        for k, v in (("--genius-url", a.genius_url), ("--title", a.song_title), ("--artist", a.artist), ("--cookies", a.cookies)):
+            if v:
+                cmd += [k, v]
+        if subprocess.run([str(c) for c in cmd]).returncode == 0:
+            (ROOT / "posts" / tmp / "lyrics.txt").replace(secs)
+        shutil.rmtree(ROOT / "posts" / tmp, ignore_errors=True)
     print(f"参考歌词: {p['txt']}（建议过一眼：现场版和录音室版的歌词可能不同）")
     p["source"].write_text("reference")
 
@@ -243,7 +254,10 @@ def stage_align(a, w):
     ref = p["txt"]
     if a.align_mode == "dense":
         # 默认：2.5s 窗口逐窗 Qwen 识别定结构（分得清副歌和长得像的段落），逐句局部强制对齐定时间
-        run([py, PIPE / "qwen_dense.py", "--ref", ref, *common, "--cache", w / "reports" / "dense_cache.json",
+        # 有带段落标记的歌词（lyrics 阶段一并抓取）就按段落对齐：段内严格按歌词、段间跟现场顺序；否则逐窗匹配
+        secs = w / "lyrics_sections.txt"
+        order = ["--sections", secs, "--order", "sections"] if secs.exists() else ["--order", "free"]
+        run([py, PIPE / "qwen_dense.py", "--ref", ref, *common, *order, "--cache", w / "reports" / "dense_cache.json",
              "-o", srt, "--report", w / "reports" / "dense.json"])
         run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "--no-fill-gaps",
              "-o", srt, "--report", w / "reports" / "acoustic_report.json"])
