@@ -48,7 +48,7 @@ cp .env.example .env   # 填 DEEPSEEK_API_KEY（翻译/元数据）、ALIYUN_BAI
 ```bash
 # 一条命令跑完视频（Genius 歌词作参考）
 .venv/bin/python workflow/make_mv.py --name X --url "https://www.youtube.com/watch?v=..." \
-    --lang ja --title "《歌名》 歌手" --keep-frames
+    --lang ja --title "《歌名》 歌手"
 
 # 视频自带官方带时间字幕时，用它作参考（时间轴更准）
 .venv/bin/python workflow/make_mv.py --name X --url "..." --lang ja --sub-lang ja --title "..."

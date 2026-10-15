@@ -31,7 +31,7 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 
 ## 1. 一条命令出视频
 ```bash
-.venv/bin/python workflow/make_mv.py --name X --url "LINK" --lang ja --title "《歌名》 歌手" --keep-frames
+.venv/bin/python workflow/make_mv.py --name X --url "LINK" --lang ja --title "《歌名》 歌手"
 ```
 各阶段：
 - **download / prep**：下载最高 2160p；降到 1080p 供插帧；导出 FLAC 48k/24bit
@@ -44,7 +44,7 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
   - **标题行加中文**（通行译名，如 Linkin Park → 林肯公园、そばにいるね → 在你身边），和歌词里的译名一致
   - 样式与 bzrp_v2 一致：384x288 画布、Arial Rounded 23、描边 1、底边距 50，`原文 \N♪ 中文 ♪`（`build_ass_bzrp`）
 - **interp**：原生帧率抽帧，RIFE v4.6 `-n` 一步插到 60fps；按磁盘余量自动选 png/jpg
-- **render**：lanczos 到 4K → 烧字幕 → 水印 → x264 crf18 + FLAC。只改字幕时 `--from translate`（需 `--keep-frames`）；`--tag` 出对比版本
+- **render**：lanczos 到 4K → 烧字幕 → 水印 → x264 crf18 + FLAC。插帧帧序列 `frames_out` 默认保留（换字幕/对齐方案只需 `--from translate` 重新渲染）；`--tag` 出对比版本，**重新渲染前先给旧版改名或用 `--tag`，别直接覆盖**；`frames_in` 插帧后自动删
 - 校验：ffprobe 看 3840x2160 / 60/1 / 帧数 / 时长与源一致 / flac 48000 24bit；抽帧看字幕、水印
 
 ## 2. align：时间轴（核心）
@@ -90,4 +90,4 @@ whisper 定结构 + 强制对齐；纯 MMS 声学全局解码（对唱段整段�
 - **生成后逐条核对并手改**：模型常把频道口号当演出细节、给罗马字人名乱配汉字、编造材料里没有的事实（吉尼斯纪录、乐队伴奏等）、用“国民级”之类无依据的夸张；不写不确定的成员名字
 
 ## 5. 收尾
-用户确认后：成品去掉 `--tag` 后缀（或重命名）、JSON 路径同步；删对比版；字幕不再改就删 `posts/X/frames_in|frames_out`；代码改动提交推送。
+用户确认后：成品去掉 `--tag` 后缀（或重命名）、JSON 路径同步；删对比版；字幕不再改就用 `--clean-frames` 或手动删 `posts/X/frames_out`；代码改动提交推送。

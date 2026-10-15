@@ -349,8 +349,7 @@ def stage_interp(a, w):
     print(f"RIFE: {n_in} 帧 @ {info['fps']:.3f} -> {n_out} 帧 @ {TARGET_FPS} ({ext})")
     run([BIN / "rife-ncnn-vulkan", "-i", fin, "-o", fout,
          "-m", MODELS / "rife-v4.6", "-n", n_out, "-j", "3:6:3", "-f", f"%08d.{ext}"])
-    if not a.keep_frames:
-        shutil.rmtree(fin)
+    shutil.rmtree(fin)  # 插帧前的原始帧只在重新插帧时有用，随时能从源视频重抽；重新渲染只需要 frames_out
 
 
 def check_hires(path):
@@ -406,7 +405,7 @@ def stage_render(a, w):
          out], cwd=w)
     check_hires(out)
     print(f"\n>>> 成品: {out}")
-    if not a.keep_frames:
+    if a.clean_frames:
         shutil.rmtree(w / "frames_out", ignore_errors=True)
 
 
@@ -455,7 +454,9 @@ def main():
     p.add_argument("--fast", action="store_true", help="用 VideoToolbox HEVC 硬编，快很多")
     p.add_argument("--frame-format", choices=["auto", "png", "jpg"], default="auto",
                    help="中间帧格式，auto 会按磁盘余量选择")
-    p.add_argument("--keep-frames", action="store_true", help="保留 PNG 帧（默认渲染后删除，很占盘）")
+    p.add_argument("--keep-frames", action="store_true", help="（已是默认，保留兼容）")
+    p.add_argument("--clean-frames", action="store_true",
+                   help="渲染后删除插帧帧序列（默认保留：换字幕/对齐方案时只需重新渲染，不用重新插帧）")
     p.add_argument("--force", action="store_true", help="覆盖已存在的结果（人声、双语字幕）")
     p.add_argument("--from", dest="from_", choices=STAGES, default=STAGES[0])
     p.add_argument("--to", choices=STAGES, default=STAGES[-1])
