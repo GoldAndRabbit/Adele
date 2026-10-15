@@ -21,6 +21,7 @@ posts/<name>/   一首歌一个目录（不入 git）
     lyrics.txt / official.srt   参考歌词（Genius / 官方带时间字幕）
     lyrics.srt → lyrics.ass     对齐后的原文字幕 → 双语字幕
     source.mp4 video_1080.mp4 audio.flac vocals.wav reports/ frames_*/ zh_cache.json …   中间文件
+    logs/                       每次运行的日志（make_mv 自动写入）
     cover_art.png               （可选）做封面用的外部图片，如专辑图
     post/                       成品：<name> 4K60FPS Sub-WaterMark.mp4、<name>.json、cover/
 ```

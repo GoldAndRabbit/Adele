@@ -398,6 +398,20 @@ def stage_render(a, w):
         shutil.rmtree(w / "frames_out", ignore_errors=True)
 
 
+def start_log(w, stages):
+    """本次运行的全部输出（含子进程）同时写到 posts/<name>/logs/<时间>_<阶段>.log，终端照常显示。"""
+    import time
+    logs = w / "logs"
+    logs.mkdir(exist_ok=True)
+    log = logs / f"{time.strftime('%Y%m%d-%H%M%S')}_{stages[0]}-{stages[-1]}.log"
+    tee = subprocess.Popen(["tee", "-a", str(log)], stdin=subprocess.PIPE)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
+    os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
+    print(f"日志: {log}", flush=True)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--name", required=True, help="歌曲短名，用于所有文件名，如 bzrp")
@@ -437,6 +451,7 @@ def main():
 
     w = Song(a.name).mkdirs().dir
     stages = STAGES[STAGES.index(a.from_): STAGES.index(a.to) + 1]
+    start_log(w, stages)
     if "download" in stages and not a.url:
         p.error("download 阶段需要 --url")
     if "lyrics" in stages and not a.url and not a.genius_url and not paths(a, w)["txt"].exists() and not a.sub_lang:
