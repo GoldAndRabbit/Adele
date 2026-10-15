@@ -133,6 +133,8 @@ def main():
                    help="不补空档（默认：两句之间有明显演唱却没字幕时，按声学分数插入可信的参考句）")
     p.add_argument("--no-hold-sustain", dest="hold_sustain", action="store_false",
                    help="不延长拖音（默认：句末人声还在持续时字幕留到人声停下）")
+    p.add_argument("--no-late-start", dest="late_start", action="store_false",
+                   help="不做起点校正（默认：句子开头一段没人声、后面才开唱时，起点挪到开唱处）")
     p.add_argument("--no-trim-tail", dest="trim_tail", action="store_false",
                    help="不做句尾收紧（默认人声停了 0.8s 以上就让字幕在 0.4s 后消失）")
     p.add_argument("-o", "--output")
@@ -300,6 +302,21 @@ def main():
             br.append((s_, e_, text, v_))
         out = br
 
+    delayed = 0
+    if a.late_start:
+        # 起点校正：这句开头一段几乎没人声（>0.8s），持续开唱在后面 —— 起点挪到真正开唱处前 0.1s
+        loud = db > np.percentile(db, 95) - 12
+        fixed = []
+        for s_, e_, text, v_ in out:
+            i0, i1 = int(s_ * 100), int(min(e_, s_ + 4.0) * 100)
+            seg = loud[i0:i1]
+            k = next((j for j in range(len(seg) - 80) if seg[j:j + 80].mean() > 0.75), None)  # 持续 0.8s 有人声才算开唱，排除上一句的尾音
+            if k is not None and k / 100 > 0.8 and s_ + k / 100 < e_ - 0.6:
+                s_ = s_ + k / 100 - 0.1
+                delayed += 1
+            fixed.append((s_, e_, text, v_))
+        out = fixed
+
     if a.trim_tail:
         # 句尾收紧：这句时间里人声停了超过 0.8s，字幕在停下后 0.4s 消失（最短 0.8s）
         trimmed = []
@@ -319,7 +336,7 @@ def main():
     res.save(a.output)
     rep.update({"stretches": stretches, "hidden": hidden, "out_lines": len(out),
                 "gap_inserted": inserted, "squeezed_spread": spread, "sustain_extended": extended,
-                "bridged": bridged})
+                "bridged": bridged, "late_start_fixed": delayed})
     if a.report:
         Path(a.report).write_text(json.dumps(rep, ensure_ascii=False, indent=2) + "\n")
     print(f"{len(ev)} 句，不可信 {int(low.sum())} 句（门槛 {min_ev:.2f}）；重解码 {len(stretches)} 段 -> 输出 {len(out)} 句，"

@@ -97,8 +97,13 @@ def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None):
         out.events.append(pysubs2.SSAEvent(start=0, end=min(title_duration, first), text=t))
     for e, z in zip(subs.events, zh):
         text = e.plaintext.replace("\n", " ").strip()
+        orig = text
         if z and z != text:
             text += r" \N♪ " + z + " ♪"
+        # 整行歌词不拆：长行由渲染器自动换行，并按长度缩小字号，保证两行以内放得下
+        w = len(orig)
+        if not CJK_RE.search(orig) and w > 40:
+            text = (r"{\fs19}" if w <= 62 else r"{\fs17}") + text
         out.events.append(pysubs2.SSAEvent(start=e.start, end=e.end, text=text))
     return out
 

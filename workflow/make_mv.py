@@ -193,6 +193,16 @@ def stage_separate(a, w):
     run([SEP_PY, PIPE / "separate_roformer.py", Song(a.name).audio, "-o", p["vocals"]])
 
 
+CJK_LANGS = {"ja", "zh", "ko"}
+
+
+def maybe_split(a, py, srt, voc):
+    """歌词一行就显示一行（尊重歌词的分行）。只有日文/中文这类没有空格、渲染时没法自动换行的长句，
+    才在歌词自带的全角空格处拆开；英文/意大利语等长行交给字幕渲染自动换行 + 缩小字号。"""
+    if lang_code(a) in CJK_LANGS:
+        run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+
+
 def stage_align(a, w):
     """时间轴。文字只来自参考歌词（官方字幕 / Genius 文本），识别结果只用来定位和复核。"""
     p = paths(a, w)
@@ -203,7 +213,7 @@ def stage_align(a, w):
     if source == "official":
         # 官方时间轴是人工打的，实测任何重解码都会变差：只拆长句 + 拖音/短空档桥接/句尾收紧
         ref = Song(a.name).official_srt
-        run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+        maybe_split(a, py, srt, voc)
         run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "-o", srt,
              "--report", w / "reports" / "acoustic_report.json"])
         return
@@ -212,14 +222,14 @@ def stage_align(a, w):
     if a.align_mode == "lyrics":
         # 歌词主导（说唱等 ASR 难识别、但基本按原词唱的歌）：整首歌词按顺序强制对齐，识别只用来复核、不换句
         run([py, PIPE / "lyrics_align.py", "--ref", ref, *common, "-o", srt, "--report", w / "reports" / "lyrics_align.json"])
-        run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+        maybe_split(a, py, srt, voc)
         run([py, PIPE / "refine_timing.py", srt, *common, "--lead", a.lead,
              "-o", srt, "--report", w / "reports" / "timing_report.json"])
         run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "--no-fill-gaps",
              "-o", srt, "--report", w / "reports" / "acoustic_report.json"])
         run([py, PIPE / "verify_qwen.py", srt, "--ref", ref, *common, "--no-swap",
              "-o", srt, "--report", w / "reports" / "verify_report.json"])
-        run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+        maybe_split(a, py, srt, voc)
         print(f"\n>>> 字幕（歌词主导）: {srt}")
         return
     order, order_rep = w / "reports" / "sung_order.txt", w / "reports" / "sung_order.json"
@@ -227,7 +237,7 @@ def stage_align(a, w):
     run([py, PIPE / "qwen_sequence.py", "--ref", ref, *common, "-o", order, "--report", order_rep])
     # 2) 分块对齐：每块的句子序列，在块的时间范围里用 MMS 按顺序强制对齐
     run([py, PIPE / "chunk_align.py", "--order", order, "--chunks", order_rep, *common, "-o", srt])
-    run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+    maybe_split(a, py, srt, voc)
     # 3) 先推理补句（空档还在的时候），再精修和后处理——顺序反了，拖音会先把空档盖住
     run([py, PIPE / "infer_insert.py", srt, "--ref", ref, *common, "--no-neighbor-fix",
          "-o", srt, "--report", w / "reports" / "infer_report.json"])
@@ -237,7 +247,7 @@ def stage_align(a, w):
          "-o", srt, "--report", w / "reports" / "acoustic_report.json"])
     # 4) 逐句 Qwen 复核：明显是别的句子就换，明确不对的隐藏
     run([py, PIPE / "verify_qwen.py", srt, "--ref", ref, *common, "-o", srt, "--report", w / "reports" / "verify_report.json"])
-    run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
+    maybe_split(a, py, srt, voc)
     print(f"\n>>> 字幕: {srt}；可疑句见 {w / 'reports' / 'verify_report.json'}")
 
 
