@@ -25,6 +25,8 @@ from qwen_asr import ENDPOINT, SR, transcribe  # noqa: E402
 from textnorm import reading  # noqa: E402
 
 WIN, HOP, MIN_SCORE = 2.5, 0.5, 75
+MIN_COVER = float(os.environ.get("DENSE_MIN_COVER", 0.15))  # 窗口识别文字至少这么多落在匹配的这句上
+MIN_WINDOWS = int(os.environ.get("DENSE_MIN_WINDOWS", 2))  # 一句至少连续命中 2 个窗口才算唱了（孤立命中多半是说话/喊话里的巧合）
 
 
 def tighten(runs, y, lang, pad=0.6):
@@ -111,8 +113,18 @@ def main():
         if len(r) < 6:
             best.append(None)
             continue
-        sc, txt = max((fuzz.partial_ratio(ur[u], r), u) for u in uniq if len(ur[u]) >= 6)
-        best.append(txt if sc >= MIN_SCORE else None)
+        cand = []
+        for u in uniq:
+            if len(ur[u]) < 6:
+                continue
+            al = fuzz.partial_ratio_alignment(ur[u], r)
+            if not al or al.score < MIN_SCORE:
+                continue
+            # 窗口里识别出的文字，大部分要落在这句歌词上：说话里偶然出现几个像歌词的词不算在唱
+            cover = (al.dest_end - al.dest_start) / len(r)
+            if cover >= MIN_COVER:
+                cand.append((al.score, u))
+        best.append(max(cand)[1] if cand else None)
 
     # 连续窗口同一句合并（允许中间断 1 窗）；一句唱的时间 ≈ 第一个命中窗口的开头 ~ 最后一个命中窗口的结尾
     runs, i = [], 0
@@ -125,7 +137,8 @@ def main():
             j += 1
             if best[j] == txt:
                 last = j
-        runs.append([starts[i], starts[last] + WIN, txt])
+        if sum(1 for b in best[i:last + 1] if b == txt) >= MIN_WINDOWS:
+            runs.append([starts[i], starts[last] + WIN, txt])
         i = last + 1
     # 窗口有 2.5s 宽，相邻句的命中范围会重叠：取重叠中点为分界
     for x, z in zip(runs, runs[1:]):
