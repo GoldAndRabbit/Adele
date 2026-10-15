@@ -7,7 +7,7 @@
   3. 拼成全曲演唱序列，写成新的参考歌词 txt（一行一句，按演唱顺序，文字仍来自参考歌词）
 之后 decode_global --strict-order true 用这个序列做声学全局解码，MMS 负责精确时间。
 
-python workflow/qwen_sequence.py --ref ori_lyrics/X.txt --vocals .../vocals.wav --lang ja -o work/X/sung_order.txt
+python workflow/qwen_sequence.py --ref songs/X/lyrics.txt --vocals .../vocals.wav --lang ja -o songs/X/reports/sung_order.txt
 """
 
 import argparse

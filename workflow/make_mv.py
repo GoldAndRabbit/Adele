@@ -4,17 +4,17 @@
 歌曲链接 -> 4K60 + 水印 + 原文/中文双语字幕 + FLAC Hi-Res 的成品视频。
 
 阶段（可用 --from / --to 断点续跑）:
-  download   yt-dlp 下载原视频 + 官方字幕 + 元信息      -> work/<name>/source.mp4, meta.json
-  prep       截取片段、降到 1080p、导出 FLAC 48k/24bit  -> work/<name>/video_1080.mp4, audios/<name>.flac
+  download   yt-dlp 下载原视频 + 官方字幕 + 元信息      -> songs/<name>/source.mp4, meta.json
+  prep       截取片段、降到 1080p、导出 FLAC 48k/24bit  -> songs/<name>/video_1080.mp4, audio.flac
   lyrics     参考歌词：官方带时间字幕优先（--sub-lang），
-             否则 get_ytb_lyrics_from_link.py 从 Genius 取歌词文本 -> ori_lyrics/<name>.srt 或 .txt
-  separate   Mel-Band RoFormer 人声分离（.venv-sep）    -> separated/roformer/<name>/vocals.wav
+             否则 get_ytb_lyrics_from_link.py 从 Genius 取歌词文本 -> songs/<name>/official.srt 或 lyrics.txt
+  separate   Mel-Band RoFormer 人声分离（.venv-sep）    -> songs/<name>/vocals.wav
   align      时间轴：官方字幕只做后处理；歌词文本走
              Qwen 演唱序列 -> 分块对齐 -> 推理补句 -> 强制对齐精修 -> 后处理 -> 逐句 Qwen 复核
-                                                        -> ori_lyrics/<name>.srt
-  translate  DeepSeek 翻译（按句缓存）+ 标题中文行        -> lyrics/<name>.ass
-  interp     原生帧率抽帧 + RIFE 一步插到 60fps          -> work/<name>/frames_out/
-  render     4K + 烧字幕 + 水印 + FLAC，渲染后检查音轨   -> post/<name>/<name> 4K60FPS Sub-WaterMark.mp4
+                                                        -> songs/<name>/lyrics.srt
+  translate  DeepSeek 翻译（按句缓存）+ 标题中文行        -> songs/<name>/lyrics.ass
+  interp     原生帧率抽帧 + RIFE 一步插到 60fps          -> songs/<name>/frames_out/
+  render     4K + 烧字幕 + 水印 + FLAC，渲染后检查音轨   -> songs/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4
 
 用法:
   .venv/bin/python workflow/make_mv.py --name X --url "https://..." --lang ja --title "《歌名》 歌手"
@@ -28,10 +28,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from paths import BIN, MODELS, ROOT, WORKFLOW as PIPE, Song  # noqa: E402
+
 VENV_BIN = ROOT / ".venv" / "bin"
 SEP_PY = ROOT / ".venv-sep" / "bin" / "python"
-PIPE = ROOT / "workflow"
 STAGES = ["download", "prep", "lyrics", "separate", "align", "translate", "interp", "render"]
 LANG_CODES = {"english": "en", "japanese": "ja", "spanish": "es", "chinese": "zh"}
 TARGET_FPS = 60
@@ -122,10 +123,8 @@ def stage_prep(a, w):
          w / "video_1080.mp4"])
 
     # 高质量音频
-    (ROOT / "audios").mkdir(exist_ok=True)
     run(["ffmpeg", "-y", "-hide_banner", *trim, "-i", src,
-         "-vn", "-c:a", "flac", "-ar", "48000", "-sample_fmt", "s32",
-         ROOT / "audios" / f"{a.name}.flac"])
+         "-vn", "-c:a", "flac", "-ar", "48000", "-sample_fmt", "s32", Song(a.name).audio])
 
 
 def find_official_subs(a, w):
@@ -142,12 +141,8 @@ def lang_code(a):
 
 
 def paths(a, w):
-    return {
-        "srt": ROOT / "ori_lyrics" / f"{a.name}.srt",
-        "txt": ROOT / "ori_lyrics" / f"{a.name}.txt",
-        "vocals": ROOT / "separated" / "roformer" / a.name / "vocals.wav",
-        "source": w / "lyrics_source",
-    }
+    S = Song(a.name)
+    return {"srt": S.lyrics_srt, "txt": S.lyrics_txt, "vocals": S.vocals, "source": S.lyrics_source}
 
 
 def stage_lyrics(a, w):
@@ -155,7 +150,6 @@ def stage_lyrics(a, w):
     import pysubs2
 
     p = paths(a, w)
-    p["srt"].parent.mkdir(exist_ok=True)
     sub = find_official_subs(a, w)
     if sub:
         print(f"使用官方字幕 {sub.name}")
@@ -165,7 +159,7 @@ def stage_lyrics(a, w):
             subs.events = [e for e in subs.events if e.end > 0]
             for e in subs.events:
                 e.start = max(e.start, 0)
-        shutil.copy(sub, w / "official.srt")
+        shutil.copy(sub, Song(a.name).official_srt)
         subs.save(str(p["srt"]))
         p["source"].write_text("official")
         return
@@ -191,7 +185,7 @@ def stage_separate(a, w):
         return
     if not SEP_PY.exists():
         sys.exit("缺少人声分离环境 .venv-sep（见 README 安装说明）")
-    run([SEP_PY, PIPE / "separate_roformer.py", ROOT / "audios" / f"{a.name}.flac", "-o", p["vocals"]])
+    run([SEP_PY, PIPE / "separate_roformer.py", Song(a.name).audio, "-o", p["vocals"]])
 
 
 def stage_align(a, w):
@@ -203,14 +197,14 @@ def stage_align(a, w):
 
     if source == "official":
         # 官方时间轴是人工打的，实测任何重解码都会变差：只拆长句 + 拖音/短空档桥接/句尾收紧
-        ref = w / "official.srt"
+        ref = Song(a.name).official_srt
         run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
         run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "-o", srt,
-             "--report", w / "acoustic_report.json"])
+             "--report", w / "reports" / "acoustic_report.json"])
         return
 
     ref = p["txt"]
-    order, order_rep = w / "sung_order.txt", w / "sung_order.json"
+    order, order_rep = w / "reports" / "sung_order.txt", w / "reports" / "sung_order.json"
     # 1) Qwen3-ASR 分块识别 -> 这一版实际演唱的句子顺序 + 每句所在时间块
     run([py, PIPE / "qwen_sequence.py", "--ref", ref, *common, "-o", order, "--report", order_rep])
     # 2) 分块对齐：每块的句子序列，在块的时间范围里用 MMS 按顺序强制对齐
@@ -218,20 +212,19 @@ def stage_align(a, w):
     run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
     # 3) 先推理补句（空档还在的时候），再精修和后处理——顺序反了，拖音会先把空档盖住
     run([py, PIPE / "infer_insert.py", srt, "--ref", ref, *common, "--no-neighbor-fix",
-         "-o", srt, "--report", w / "infer_report.json"])
+         "-o", srt, "--report", w / "reports" / "infer_report.json"])
     run([py, PIPE / "refine_timing.py", srt, *common, "--lead", a.lead,
-         "-o", srt, "--report", w / "timing_report.json"])
+         "-o", srt, "--report", w / "reports" / "timing_report.json"])
     run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "--no-fill-gaps",
-         "-o", srt, "--report", w / "acoustic_report.json"])
+         "-o", srt, "--report", w / "reports" / "acoustic_report.json"])
     # 4) 逐句 Qwen 复核：明显是别的句子就换，明确不对的隐藏
-    run([py, PIPE / "verify_qwen.py", srt, "--ref", ref, *common, "-o", srt, "--report", w / "verify_report.json"])
+    run([py, PIPE / "verify_qwen.py", srt, "--ref", ref, *common, "-o", srt, "--report", w / "reports" / "verify_report.json"])
     run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
-    print(f"\n>>> 字幕: {srt}；可疑句见 {w / 'verify_report.json'}")
+    print(f"\n>>> 字幕: {srt}；可疑句见 {w / 'reports' / 'verify_report.json'}")
 
 
 def stage_translate(a, w):
-    src = ROOT / "ori_lyrics" / f"{a.name}.srt"
-    out = ROOT / "lyrics" / f"{a.name}.ass"
+    src, out = Song(a.name).lyrics_srt, Song(a.name).lyrics_ass
     if out.exists() and not a.force:
         print(f"已存在 {out}（人工校对过的不会被覆盖，--force 可重新生成）")
         return
@@ -292,8 +285,8 @@ def stage_interp(a, w):
 
     # RIFE v4 支持任意时间步，-n 直接指定目标帧数，一步到 60fps
     print(f"RIFE: {n_in} 帧 @ {info['fps']:.3f} -> {n_out} 帧 @ {TARGET_FPS} ({ext})")
-    run([ROOT / "bin" / "rife-ncnn-vulkan", "-i", fin, "-o", fout,
-         "-m", ROOT / "models" / "rife-v4.6", "-n", n_out, "-j", "3:6:3", "-f", f"%08d.{ext}"])
+    run([BIN / "rife-ncnn-vulkan", "-i", fin, "-o", fout,
+         "-m", MODELS / "rife-v4.6", "-n", n_out, "-j", "3:6:3", "-f", f"%08d.{ext}"])
     if not a.keep_frames:
         shutil.rmtree(fin)
 
@@ -311,7 +304,7 @@ def check_hires(path):
 
 
 def stage_render(a, w):
-    ass = Path(a.ass).resolve() if a.ass else ROOT / "lyrics" / f"{a.name}.ass"
+    ass = Path(a.ass).resolve() if a.ass else Song(a.name).lyrics_ass
     if not ass.exists():
         sys.exit(f"缺少字幕 {ass}")
     # ass 滤镜对路径里的空格/冒号转义很麻烦，拷到工作目录用相对路径
@@ -326,10 +319,7 @@ def stage_render(a, w):
                 ev.start, ev.end = max(0, ev.start - ms), max(0, ev.end - ms)
         subs.save(str(w / "subs.ass"))
         print(f"字幕整体提前 {a.sub_shift}s")
-    post = ROOT / "post" / a.name  # 每个作品一个目录：视频、cover/、<name>.json
-    post.mkdir(parents=True, exist_ok=True)
-    tag = f" {a.tag}" if a.tag else ""
-    out = post / f"{a.name} 4K60FPS Sub-WaterMark{tag}.mp4"
+    out = Song(a.name).video(a.tag)
     ext = "jpg" if any((w / "frames_out").glob("*.jpg")) else "png"
 
     if a.fast:
@@ -340,7 +330,7 @@ def stage_render(a, w):
 
     run(["ffmpeg", "-y", "-hide_banner",
          "-framerate", TARGET_FPS, "-i", f"frames_out/%08d.{ext}",
-         "-i", ROOT / "audios" / f"{a.name}.flac",
+         "-i", Song(a.name).audio,
          "-i", ROOT / a.logo,
          "-filter_complex",
          "[0:v]scale=3840:2160:flags=lanczos,ass=subs.ass[sub];"
@@ -377,7 +367,7 @@ def main():
     p.add_argument("--zh-file", help="不调 API，直接用这个文件里的中文翻译（每行对应一句）")
     p.add_argument("--cookies-from-browser", help="yt-dlp 需要登录时: chrome / safari / firefox")
     p.add_argument("--cookies", help="cookies.txt 路径")
-    p.add_argument("--ass", help="render 用的字幕文件，默认 lyrics/<name>.ass")
+    p.add_argument("--ass", help="render 用的字幕文件，默认 songs/<name>/lyrics.ass")
     p.add_argument("--tag", help="成品文件名后缀，用于对比不同版本，如 bzrpv2style")
     p.add_argument("--sub-shift", type=float, default=0.2,
                    help="渲染时字幕整体再提前的秒数（叠加在 --lead 0.12 之上，默认 0.2，实测最舒服）")
@@ -393,13 +383,12 @@ def main():
     p.add_argument("--to", choices=STAGES, default=STAGES[-1])
     a = p.parse_args()
 
-    w = ROOT / "work" / a.name
-    w.mkdir(parents=True, exist_ok=True)
+    w = Song(a.name).mkdirs().dir
     stages = STAGES[STAGES.index(a.from_): STAGES.index(a.to) + 1]
     if "download" in stages and not a.url:
         p.error("download 阶段需要 --url")
     if "lyrics" in stages and not a.url and not a.genius_url and not paths(a, w)["txt"].exists() and not a.sub_lang:
-        p.error("lyrics 阶段需要 --url 或 --genius-url（或事先放好 ori_lyrics/<name>.txt）")
+        p.error("lyrics 阶段需要 --url 或 --genius-url（或事先放好 songs/<name>/lyrics.txt）")
     for s in stages:
         print(f"\n========== [{s}] ==========", flush=True)
         globals()[f"stage_{s}"](a, w)

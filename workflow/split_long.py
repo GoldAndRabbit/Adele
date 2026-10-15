@@ -6,7 +6,7 @@
 断点: 文本里的空格 / 全角空格 / 标点，选左右宽度最均衡的那个
 切点: 先按字数比例估计时刻，再在附近找 demucs 人声能量最低处（换气/停顿）
 
-python workflow/split_long.py ori_lyrics/X.srt --vocals separated/htdemucs/X/vocals.wav [--max-width 40]
+python workflow/split_long.py songs/X/lyrics.srt --vocals songs/X/vocals.wav [--max-width 40]
 """
 
 import argparse

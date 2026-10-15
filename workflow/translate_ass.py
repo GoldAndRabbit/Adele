@@ -10,7 +10,7 @@ srt 原文歌词 -> 双语 ass（原文 \\N ♪ 中文 ♪），时间轴严格�
        TRANSLATE_MODEL  可选，默认按供应商取（deepseek-v4-pro / qwen-max / ...）
   2) --zh-file: 自己准备的中文，每行对应 srt 的一句，空行表示该句不翻译
 
-python workflow/translate_ass.py ori_lyrics/bzrp.srt -o lyrics/bzrp.ass --title "《Song》 Artist"
+python workflow/translate_ass.py songs/X/lyrics.srt -o songs/X/lyrics.ass --title "《Song》 Artist"
 """
 
 import argparse

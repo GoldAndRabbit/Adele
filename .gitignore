@@ -6,21 +6,10 @@ cookies*.txt
 **/__pycache__/
 .DS_Store
 
-# 数据与产物（体积大或含完整歌词，不入库）
-audios/
-separated/
-work/
-post/
-cover/
-ori_lyrics/
-lyrics/
-third_party/
-*.mp4
-*.flac
-*.wav
-*.log
+# 每首歌的数据和成品（体积大，且含完整歌词，不入库）
+songs/
 
-# 大文件 / 可选模型
-bin/realesrgan-ncnn-vulkan
-models/realesrgan-x4plus.*
+# 模型：大文件 / 外部代码，按 README 下载
 models/melband_roformer/
+models/realesrgan/
+bin/realesrgan-ncnn-vulkan
