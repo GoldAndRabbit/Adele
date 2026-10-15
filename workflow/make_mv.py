@@ -105,6 +105,16 @@ def stage_download(a, w):
         (w / "meta.json").write_text(json.dumps(keep, ensure_ascii=False, indent=2))
 
 
+def make_1080(a, w):
+    """统一降到 1080p 再插帧（4K 直接插帧太慢、太占盘）；帧率保持原生，后面交给 RIFE。"""
+    trim = (["-ss", a.start] if a.start else []) + (["-to", a.end] if a.end else [])
+    run(["ffmpeg", "-y", "-hide_banner", *trim, "-i", w / "source.mp4",
+         "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
+                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1",
+         "-an", "-c:v", "libx264", "-crf", "12", "-preset", "fast", "-pix_fmt", "yuv420p",
+         w / "video_1080.mp4"])
+
+
 def stage_prep(a, w):
     src = w / "source.mp4"
     info = probe(src)
@@ -115,12 +125,7 @@ def stage_prep(a, w):
     if a.end:
         trim += ["-to", a.end]
 
-    # 统一降到 1080p 再插帧（4K 直接插帧太慢、太占盘）；帧率保持原生，后面交给 RIFE
-    run(["ffmpeg", "-y", "-hide_banner", *trim, "-i", src,
-         "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1",
-         "-an", "-c:v", "libx264", "-crf", "12", "-preset", "fast", "-pix_fmt", "yuv420p",
-         w / "video_1080.mp4"])
+    make_1080(a, w)
 
     # 高质量音频
     run(["ffmpeg", "-y", "-hide_banner", *trim, "-i", src,
@@ -223,14 +228,34 @@ def stage_align(a, w):
     print(f"\n>>> 字幕: {srt}；可疑句见 {w / 'reports' / 'verify_report.json'}")
 
 
+TITLE_PROMPT = """从 YouTube 视频标题里提取演唱的歌名和歌手，输出 JSON {"title": "《歌名》 歌手"}。
+- 只用标题和简介里明确写出的信息，不要猜；歌名、歌手保持原文写法
+- 多首歌（串烧）用 " / " 分隔，按标题里的顺序：《歌1 / 歌2》 歌手
+- 去掉节目名、日期、频道名、Official Video / Live / 4K / Lyrics 等标签；合作歌手用 " & " 连接"""
+
+
+def auto_title(w):
+    """字幕首行标题：默认从 YouTube 视频标题提取（LLM 整理成《歌名》 歌手），结果存 title.txt 可手改。"""
+    cached = w / "title.txt"
+    if cached.exists():
+        return cached.read_text(encoding="utf-8").strip()
+    meta = json.loads((w / "meta.json").read_text()) if (w / "meta.json").exists() else {}
+    if not meta.get("title"):
+        return None
+    from llm import chat_json
+    src = f"标题: {meta['title']}\n频道: {meta.get('channel', '')}\n简介开头: {(meta.get('description') or '')[:300]}"
+    title = chat_json(TITLE_PROMPT, src, temperature=0, label="标题提取").get("title", "").strip() or meta["title"]
+    cached.write_text(title + "\n", encoding="utf-8")
+    print(f"字幕标题（来自 YouTube 标题，可改 {cached}）: {title}")
+    return title
+
+
 def stage_translate(a, w):
     src, out = Song(a.name).lyrics_srt, Song(a.name).lyrics_ass
     if out.exists() and not a.force:
         print(f"已存在 {out}（人工校对过的不会被覆盖，--force 可重新生成）")
         return
-    title = a.title
-    if not title and (w / "meta.json").exists():
-        title = json.loads((w / "meta.json").read_text()).get("title")
+    title = a.title or auto_title(w)
     cmd = [sys.executable, PIPE / "translate_ass.py", src, "-o", out,
            "--cache", w / "zh_cache.json"]
     if title:
@@ -263,6 +288,8 @@ def pick_frame_ext(a, video, info, w):
 
 def stage_interp(a, w):
     video = w / "video_1080.mp4"
+    if not video.exists():  # 中间视频清理掉了就从源视频重建
+        make_1080(a, w)
     info = probe(video)
     fin, fout = w / "frames_in", w / "frames_out"
     for d in (fin, fout):
@@ -361,7 +388,7 @@ def main():
     p.add_argument("--artist", help="lyrics 阶段：手动指定歌手")
     p.add_argument("--max-width", type=int, default=40, help="单句最大显示宽度（全角算 2），超过就拆")
     p.add_argument("--lead", type=float, default=0.12, help="字幕比开口提前出现的秒数（align 阶段）")
-    p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'")
+    p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'；不填就从 YouTube 标题自动提取（存 title.txt，可手改）")
     p.add_argument("--sub-style", choices=["bzrp", "modern"], default="bzrp",
                    help="字幕样式：bzrp=与 bzrp_v2.ass 相同（默认）；modern=1080p 画布、日文粗体、标题在顶部")
     p.add_argument("--zh-file", help="不调 API，直接用这个文件里的中文翻译（每行对应一句）")

@@ -28,6 +28,7 @@ from infer_insert import is_filler  # noqa: E402
 from qwen_asr import ENDPOINT, SR, transcribe  # noqa: E402
 
 OK, SWAP, MARGIN = 65, 75, 15
+REACH = 3  # 换句只在参考歌词里前后 3 句之内找
 
 
 def main():
@@ -51,8 +52,15 @@ def main():
     client = OpenAI(base_url=ENDPOINT, api_key=os.environ["ALIYUN_BAILIAN_API_KEY"])
     y, _ = librosa.load(a.vocals, sr=SR, mono=True)
     subs = pysubs2.load(a.srt)
-    refs = sorted({t for t, _ in acoustic.section_lines(a.ref)}, key=lambda t: t)
-    ref_r = {t: reading(t) for t in refs}
+    ordered = [t for t, _ in acoustic.section_lines(a.ref)]
+    ref_r = {t: reading(t) for t in set(ordered)}
+
+    def ref_pos(text, prev):
+        """这句在参考歌词里的位置（多处出现时取离上一句位置最近的；拆过的半句按包含关系找）。"""
+        hits = [i for i, l in enumerate(ordered) if l == text] or [i for i, l in enumerate(ordered) if text and text in l]
+        if not hits:
+            return None
+        return min(hits, key=lambda i: abs(i - (prev + 1))) if prev is not None else hits[0]
 
     def job(e):
         if is_filler(e.plaintext) or e.end - e.start < 600:
@@ -64,8 +72,12 @@ def main():
         asr = list(ex.map(job, subs.events))
 
     kept, swapped, suspect, out = 0, [], [], []
-    failed = 0
-    for e, text in zip(subs.events, asr):
+    failed, prev = 0, None
+    events = list(subs.events)
+    for n, (e, text) in enumerate(zip(events, asr)):
+        pos = ref_pos(e.plaintext, prev)
+        if pos is not None:
+            prev = pos
         if text is None:
             if not is_filler(e.plaintext) and e.end - e.start >= 600:
                 failed += 1  # 识别失败（限流等）不算通过
@@ -77,7 +89,14 @@ def main():
             kept += 1
             out.append(e)
             continue
-        best = max(((fuzz.partial_ratio(rr, r), t) for t, rr in ref_r.items() if len(rr) >= 4), default=(0, None))
+        # 只允许换成参考歌词里前后 REACH 句之内的句子，且不能和前后字幕重复：
+        # 说唱等短片段识别不稳，全曲范围找“最像的句子”会把别处的句子换进来
+        neigh = {o.plaintext for o in events[max(0, n - 1):n + 2] if o is not e}
+        cands = set()
+        if pos is not None:
+            cands = {ordered[k] for k in range(max(0, pos - REACH), min(len(ordered), pos + REACH + 1))}
+        cands = {t for t in cands if t != e.plaintext and t not in neigh and len(ref_r[t]) >= 4}
+        best = max(((fuzz.partial_ratio(ref_r[t], r), t) for t in cands), default=(0, None))
         if best[1] and best[0] >= SWAP and best[0] - cur >= MARGIN:
             swapped.append({"start": round(e.start / 1000, 1), "score_before": round(cur), "score_after": round(best[0])})
             e.text = best[1]
@@ -88,7 +107,18 @@ def main():
             suspect[-1]["hidden"] = hide
             if not hide:
                 out.append(e)
-    subs.events = out
+    # 收尾：按时间排序，同句重叠的去掉，不同句重叠的截断前一句，过短的丢掉
+    out.sort(key=lambda e: e.start)
+    clean = []
+    for e in out:
+        if clean and e.start < clean[-1].end:
+            if e.plaintext == clean[-1].plaintext:
+                clean[-1].end = max(clean[-1].end, e.end)
+                continue
+            clean[-1].end = max(clean[-1].start + 200, e.start - 30)
+        if e.end - e.start >= 200:
+            clean.append(e)
+    subs.events = clean
     subs.save(a.output)
     if a.report:
         Path(a.report).write_text(json.dumps({"kept": kept, "swapped": swapped, "suspect": suspect},
