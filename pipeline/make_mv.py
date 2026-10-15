@@ -240,21 +240,18 @@ def stage_refine(a, w):
     order, order_rep = w / "sung_order.txt", w / "sung_order.json"
     run([py, pl / "qwen_sequence.py", "--ref", ref, "--vocals", voc, "--lang", lang,
          "-o", order, "--report", order_rep])
-    # 3) 按演唱序列严格顺序 + 时间块约束做声学全局解码（每句都必须找到位置），MMS 决定精确时间
-    run([py, pl / "decode_global.py", "--ref", order, "--strict-order", "true", "--windows", order_rep,
-         "--skip-cost", "100", "--seg-cost", "0", "--vocals", voc, "--lang", lang,
-         "--rate-from", w / "before_refine.srt", "--theta", a.theta, "-o", srt, "--report", w / "decode_report.json"])
+    # 3) 分块对齐：Qwen 给的每块句子序列，直接在块的时间范围里用 MMS 按顺序强制对齐
+    run([py, pl / "chunk_align.py", "--order", order, "--chunks", order_rep, "--vocals", voc,
+         "--lang", lang, "-o", srt])
     run([py, pl / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
-    # 4) 推理插入 + 邻句校验：ASR 认不出的段落（说唱/对唱）按参考歌词顺序补句；同句连续两次换成上一句
-    run([py, pl / "infer_insert.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang,
-         "-o", srt, "--report", w / "infer_report.json"])
-    run([py, pl / "refine_timing.py", srt, "--vocals", voc, "--lang", lang, "--lead", a.lead,
-         "-o", srt, "--report", w / "timing_report.json"])
-    # 5) 后处理：拖音延长、短空档桥接、句尾收紧（结构已定，不做声学补空档）
+    # 4) 后处理：拖音延长、短空档桥接、句尾收紧；空档里按参考歌词顺序推理补句
     run([py, pl / "acoustic.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang, "--mode", "post",
          "--no-fill-gaps", "-o", srt, "--report", w / "acoustic_report.json"])
-    run([py, pl / "infer_insert.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang, "--min-gap", "1.2",
-         "-o", srt, "--report", w / "infer_report2.json"])
+    run([py, pl / "infer_insert.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang, "--no-neighbor-fix",
+         "-o", srt, "--report", w / "infer_report.json"])
+    # 5) 逐句 Qwen 复核：每句单独识别比对，明显是别的句子就换，明确不对的隐藏
+    run([py, pl / "verify_qwen.py", srt, "--ref", ref, "--vocals", voc, "--lang", lang,
+         "-o", srt, "--report", w / "verify_report.json"])
     run([py, pl / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
 
 

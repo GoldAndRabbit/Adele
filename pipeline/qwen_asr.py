@@ -43,7 +43,8 @@ def transcribe(client, y, lang):
     opts = {"enable_itn": False}
     if lang:
         opts["language"] = lang
-    for attempt in range(3):
+    import time
+    for attempt in range(8):
         try:
             r = client.chat.completions.create(
                 model=MODEL,
@@ -52,9 +53,12 @@ def transcribe(client, y, lang):
                 extra_body={"asr_options": opts}, timeout=60)
             return r.choices[0].message.content or ""
         except Exception as e:  # noqa: BLE001
-            if attempt == 2:
-                print(f"  识别失败: {e}")
-                return ""
+            # 429 限流：指数退避重试；其他错误重试 3 次
+            limited = "429" in str(e) or "limit" in str(e).lower()
+            if attempt == 7 or (not limited and attempt >= 2):
+                print(f"  识别失败: {str(e)[:80]}")
+                return None
+            time.sleep(min(30, 2 ** attempt) if limited else 1)
 
 
 def main():
@@ -83,7 +87,7 @@ def main():
     def job(s):
         if rms(s) < loud * 0.05:  # 基本没人声的窗口跳过
             return {"start": round(s, 2), "end": round(min(dur, s + a.win), 2), "text": ""}
-        text = transcribe(client, y[int(s * SR):int((s + a.win) * SR)], a.lang)
+        text = transcribe(client, y[int(s * SR):int((s + a.win) * SR)], a.lang) or ""
         return {"start": round(s, 2), "end": round(min(dur, s + a.win), 2), "text": text}
 
     with ThreadPoolExecutor(a.workers) as ex:

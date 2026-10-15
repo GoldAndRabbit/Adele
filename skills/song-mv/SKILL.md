@@ -70,13 +70,12 @@ my_venv/bin/python pipeline/make_mv.py --name X --from split --to translate --ti
 核心思路：**结构（唱了哪些句、什么顺序、大概在哪一块）交给最会“听”歌的 Qwen3-ASR；精确时间交给 MMS 强制对齐**。whisper 只用来估计演唱速率。
 1. `separate_roformer.py`（独立环境 `sep_venv`）：Mel-Band RoFormer（KimberleyJensen vocals 权重，HuggingFace）分离人声，比 demucs 干净；模型代码在 `third_party/mss`（ZFTurbo，git clone），权重 `third_party/models/MelBandRoformer.ckpt`。raw.githubusercontent.com 在本机证书被劫持，audio-separator 下不了模型，所以走 HF + git clone
 2. `qwen_sequence.py`：人声在安静处切 10~20s 块，逐块 `qwen3-asr-flash`（百炼 OpenAI 兼容接口，密钥 `ALIYUN_BAILIAN_API_KEY`，与 Takit 相同）识别，按读音从左到右贪心匹配参考句 → 这一版的演唱序列 `work/X/sung_order.txt` + 每句所在时间块 `sung_order.json`。**不要给 Qwen 传歌词上下文**：它会把上下文原样照抄回来
-3. `decode_global.py --strict-order true --windows sung_order.json --skip-cost 100 --seg-cost 0`：按演唱序列严格顺序、每句只能落在所在块 ±2s 内、每句都必须放，MMS 打分图 + 全局 DP 定位置
-4. `split_long.py` → **`infer_insert.py`（推理插入 + 邻句校验）** → `refine_timing.py`（强制对齐精修、起音吸附、提前 0.12s、时长体检）→ `acoustic.py --mode post --no-fill-gaps`（拖音延长、短空档桥接、句尾收紧）→ `infer_insert.py --min-gap 1.2` → `split_long.py`
-   - **推理插入**：相邻锚点句 A、B 之间 ≥2s 有人声却没字幕（说唱、对唱这类 ASR 认不出的段落）→ 在参考歌词里找 A 之后最近的 B，中间的句子就是该唱的，时长相符才插入；只差语气词的变体（“…home” / “…home, yeah”）算同一句
-   - **邻句校验**：每句和参考里前后 2 句比声学证据，邻句明显更像（+1.0）就换；同一句连续出现两次、而参考里从不紧挨着重复 → 前一个换成参考里的上一句（ASR 漏句的典型症状）
-   - 参考里 4 句之内反复出现的句子（桥段/叠句）不做以上推断，实际演唱次数本来不固定
-   - **短空档桥接**：两句之间 <3.5s、60% 以上有人声（拖音/即兴，参考里没有对应句）→ 前一句保持到下一句前，避免唱着却没字幕
-   - Yeah/Oh 这类短语气词句拖音最多延长 0.5s
+3. **`chunk_align.py`（分块对齐）**：Qwen 给的每块句子序列，直接在该块时间范围（±0.8s）里用 MMS 按顺序强制对齐，得到每句起止。比全局解码（decode_global）准：全局解码 + 邻句推断会把 Qwen 已认对的顺序改乱
+4. `split_long.py` → `acoustic.py --mode post --no-fill-gaps`（拖音延长、短空档桥接、句尾收紧）→ `infer_insert.py --no-neighbor-fix`（空档里按参考顺序推理补句、句间重复词修正）
+5. **`verify_qwen.py`（逐句 Qwen 复核）**：每句字幕对应的人声单独截出（±0.3s）给 qwen3-asr-flash 识别，和这句比对；匹配 ≥65 保留，明显是参考里另一句（≥75 且高出 15）就换，匹配 <30 的隐藏，其余可疑句保留并列在 `work/X/verify_report.json`。限流（429）自动退避重试，并发 3
+6. `split_long.py`
+
+HKT48 实测（逐句 Qwen 复核口径）：全局解码链 通过 48 / 可疑 11 → 分块对齐链 通过 53 / 可疑 3（其中 2 句明确不对已隐藏）。
 
 ### B. 官方带时间字幕（srt）→ 保留官方时间轴，只做 `acoustic.py --mode post`
 官方时间轴是人工打的，实测任何重解码都会变差（青山テルマ：官方 75% 踩点，V8 59%，旧精校 69%）。

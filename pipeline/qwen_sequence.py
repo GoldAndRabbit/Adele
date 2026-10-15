@@ -92,7 +92,7 @@ def main():
     refs = [reading(t) for t in uniq]
 
     with ThreadPoolExecutor(6) as ex:
-        texts = list(ex.map(lambda c: transcribe(client, y[int(c[0] * SR):int(c[1] * SR)], a.lang), chunks))
+        texts = [t or "" for t in ex.map(lambda c: transcribe(client, y[int(c[0] * SR):int(c[1] * SR)], a.lang), chunks)]
 
     order, per_chunk = [], []
     for (t0, t1), text in zip(chunks, texts):
