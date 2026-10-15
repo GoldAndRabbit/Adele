@@ -2,9 +2,9 @@
 
 给一个 YouTube 歌曲链接，产出 B 站投稿用的整套素材：
 
-- `songs/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4`：3840×2160、60 帧（RIFE 插帧）、左上角水印、原文 + 中文双语字幕、FLAC 48kHz/24bit 音轨（B 站 Hi-Res 无损标）
-- `songs/<name>/post/cover/cover_01.jpg`（16:9）、`cover_01_4x3.jpg`（4:3）
-- `songs/<name>/post/<name>.json`：投稿标题、歌曲介绍、演出介绍、标签
+- `posts/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4`：3840×2160、60 帧（RIFE 插帧）、左上角水印、原文 + 中文双语字幕、FLAC 48kHz/24bit 音轨（B 站 Hi-Res 无损标）
+- `posts/<name>/post/cover/cover_01.jpg`（16:9）、`cover_01_4x3.jpg`（4:3）
+- `posts/<name>/post/<name>.json`：投稿标题、歌曲介绍、演出介绍、标签
 
 详细规则和注意事项见 [skills/song-mv/SKILL.md](skills/song-mv/SKILL.md)。
 
@@ -17,7 +17,7 @@ assets/     水印 adele-logo.png、4K60 徽章
 bin/        rife-ncnn-vulkan、realesrgan-ncnn-vulkan
 models/     所有模型：rife-v4.6（插帧）、realesrgan/（封面高清化）、melband_roformer/（人声分离：权重 + mss 模型代码）
 tests/
-songs/<name>/   一首歌一个目录（不入 git）
+posts/<name>/   一首歌一个目录（不入 git）
     lyrics.txt / official.srt   参考歌词（Genius / 官方带时间字幕）
     lyrics.srt → lyrics.ass     对齐后的原文字幕 → 双语字幕
     source.mp4 video_1080.mp4 audio.flac vocals.wav reports/ frames_*/ zh_cache.json …   中间文件
@@ -66,7 +66,7 @@ cp .env.example .env   # 填 DEEPSEEK_API_KEY（翻译/元数据）、ALIYUN_BAI
 .venv/bin/python workflow/get_ytb_lyrics_from_link.py "YOUTUBE_URL" --genius-url "https://genius.com/..." --name X
 ```
 
-自动识别歌名、歌手，在 Genius 找原版歌词，保存到 `songs/X/lyrics.txt`（默认去掉 `[Verse]` 等标签，`--keep-sections` 保留）。识别不准时用 `--title` / `--artist` 或 `--genius-url` 指定；已有文件默认不覆盖（`--overwrite`）。设置 `GENIUS_ACCESS_TOKEN` 可改用官方 API 搜索。
+自动识别歌名、歌手，在 Genius 找原版歌词，保存到 `posts/X/lyrics.txt`（默认去掉 `[Verse]` 等标签，`--keep-sections` 保留）。识别不准时用 `--title` / `--artist` 或 `--genius-url` 指定；已有文件默认不覆盖（`--overwrite`）。设置 `GENIUS_ACCESS_TOKEN` 可改用官方 API 搜索。
 
 ## 测试
 

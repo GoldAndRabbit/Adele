@@ -10,7 +10,7 @@
   3. 提前量：字幕比开口早 --lead 秒出现（默认 0.12s）；不与下一句重叠，最短显示 0.8s
   和原时间差太远（> 2.5s，多半是对齐跑偏）的句子保持原时间，在报告里列出
 
-python workflow/refine_timing.py songs/X/lyrics.srt --vocals songs/X/vocals.wav --lang en -o songs/X/lyrics.srt
+python workflow/refine_timing.py posts/X/lyrics.srt --vocals posts/X/vocals.wav --lang en -o posts/X/lyrics.srt
 """
 
 import argparse
@@ -35,7 +35,10 @@ def romanize(text, lang):
     if lang == "ja":
         import pykakasi
         text = " ".join(item["hepburn"] for item in pykakasi.kakasi().convert(text))
-    text = text.lower().replace("’", "'")
+    import unicodedata
+    # 去掉音标但保留字母（à→a、è→e、ñ→n），否则意大利语/西语的重音字母会被整个删掉
+    text = unicodedata.normalize("NFKD", text.lower().replace("’", "'"))
+    text = "".join(c for c in text if not unicodedata.combining(c))
     words = [re.sub(r"[^a-z']", "", w) for w in re.split(r"[\s\-]+", text)]
     return [w for w in words if w.strip("'")]
 

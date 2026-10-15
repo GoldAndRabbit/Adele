@@ -10,7 +10,7 @@
     原来夹在 A、B 之间的语气词句一并替换
 之后交给 refine_timing（强制对齐）定精确时间。文字只来自参考歌词。
 
-python workflow/infer_insert.py in.srt --ref songs/X/lyrics.txt --vocals .../vocals.wav --lang ja -o out.srt
+python workflow/infer_insert.py in.srt --ref posts/X/lyrics.txt --vocals .../vocals.wav --lang ja -o out.srt
 """
 
 import argparse

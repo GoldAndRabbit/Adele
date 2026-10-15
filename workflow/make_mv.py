@@ -4,17 +4,17 @@
 歌曲链接 -> 4K60 + 水印 + 原文/中文双语字幕 + FLAC Hi-Res 的成品视频。
 
 阶段（可用 --from / --to 断点续跑）:
-  download   yt-dlp 下载原视频 + 官方字幕 + 元信息      -> songs/<name>/source.mp4, meta.json
-  prep       截取片段、降到 1080p、导出 FLAC 48k/24bit  -> songs/<name>/video_1080.mp4, audio.flac
+  download   yt-dlp 下载原视频 + 官方字幕 + 元信息      -> posts/<name>/source.mp4, meta.json
+  prep       截取片段、降到 1080p、导出 FLAC 48k/24bit  -> posts/<name>/video_1080.mp4, audio.flac
   lyrics     参考歌词：官方带时间字幕优先（--sub-lang），
-             否则 get_ytb_lyrics_from_link.py 从 Genius 取歌词文本 -> songs/<name>/official.srt 或 lyrics.txt
-  separate   Mel-Band RoFormer 人声分离（.venv-sep）    -> songs/<name>/vocals.wav
+             否则 get_ytb_lyrics_from_link.py 从 Genius 取歌词文本 -> posts/<name>/official.srt 或 lyrics.txt
+  separate   Mel-Band RoFormer 人声分离（.venv-sep）    -> posts/<name>/vocals.wav
   align      时间轴：官方字幕只做后处理；歌词文本走
              Qwen 演唱序列 -> 分块对齐 -> 推理补句 -> 强制对齐精修 -> 后处理 -> 逐句 Qwen 复核
-                                                        -> songs/<name>/lyrics.srt
-  translate  DeepSeek 翻译（按句缓存）+ 标题中文行        -> songs/<name>/lyrics.ass
-  interp     原生帧率抽帧 + RIFE 一步插到 60fps          -> songs/<name>/frames_out/
-  render     4K + 烧字幕 + 水印 + FLAC，渲染后检查音轨   -> songs/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4
+                                                        -> posts/<name>/lyrics.srt
+  translate  DeepSeek 翻译（按句缓存）+ 标题中文行        -> posts/<name>/lyrics.ass
+  interp     原生帧率抽帧 + RIFE 一步插到 60fps          -> posts/<name>/frames_out/
+  render     4K + 烧字幕 + 水印 + FLAC，渲染后检查音轨   -> posts/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4
 
 用法:
   .venv/bin/python workflow/make_mv.py --name X --url "https://..." --lang ja --title "《歌名》 歌手"
@@ -34,7 +34,7 @@ from paths import BIN, MODELS, ROOT, WORKFLOW as PIPE, Song  # noqa: E402
 VENV_BIN = ROOT / ".venv" / "bin"
 SEP_PY = ROOT / ".venv-sep" / "bin" / "python"
 STAGES = ["download", "prep", "lyrics", "separate", "align", "translate", "interp", "render"]
-LANG_CODES = {"english": "en", "japanese": "ja", "spanish": "es", "chinese": "zh"}
+LANG_CODES = {"english": "en", "japanese": "ja", "spanish": "es", "chinese": "zh", "italian": "it"}
 TARGET_FPS = 60
 
 
@@ -367,7 +367,7 @@ def main():
     p.add_argument("--zh-file", help="不调 API，直接用这个文件里的中文翻译（每行对应一句）")
     p.add_argument("--cookies-from-browser", help="yt-dlp 需要登录时: chrome / safari / firefox")
     p.add_argument("--cookies", help="cookies.txt 路径")
-    p.add_argument("--ass", help="render 用的字幕文件，默认 songs/<name>/lyrics.ass")
+    p.add_argument("--ass", help="render 用的字幕文件，默认 posts/<name>/lyrics.ass")
     p.add_argument("--tag", help="成品文件名后缀，用于对比不同版本，如 bzrpv2style")
     p.add_argument("--sub-shift", type=float, default=0.2,
                    help="渲染时字幕整体再提前的秒数（叠加在 --lead 0.12 之上，默认 0.2，实测最舒服）")
@@ -388,7 +388,7 @@ def main():
     if "download" in stages and not a.url:
         p.error("download 阶段需要 --url")
     if "lyrics" in stages and not a.url and not a.genius_url and not paths(a, w)["txt"].exists() and not a.sub_lang:
-        p.error("lyrics 阶段需要 --url 或 --genius-url（或事先放好 songs/<name>/lyrics.txt）")
+        p.error("lyrics 阶段需要 --url 或 --genius-url（或事先放好 posts/<name>/lyrics.txt）")
     for s in stages:
         print(f"\n========== [{s}] ==========", flush=True)
         globals()[f"stage_{s}"](a, w)

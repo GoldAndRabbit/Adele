@@ -8,7 +8,7 @@ python workflow/make_cover.py --name sobaniirune --title "そばにいるね" \
     --subtitle "青山テルマ feat. SoulJa · 中日字幕"
 # 已选好时间点:   --at 65.2 --at 130
 # 右上角加队徽:   --extra-logo cover/psg.png
-产物: songs/<name>/post/cover/cover_XX.jpg（16:9，1920x1080）、cover_XX_4x3.jpg（4:3，1440x1080）、
+产物: posts/<name>/post/cover/cover_XX.jpg（16:9，1920x1080）、cover_XX_4x3.jpg（4:3，1440x1080）、
       candidates.jpg / candidates_4x3.jpg（编号总图）
 """
 
@@ -475,13 +475,13 @@ def main():
     p.add_argument("--name", required=True)
     p.add_argument("--title", required=True, help="大标题，一般是歌名")
     p.add_argument("--subtitle", help="副标题，如 'Lorde · 中英字幕'")
-    p.add_argument("--video", help="取帧的视频，默认 songs/<name>/source.mp4（原始 4K）")
+    p.add_argument("--video", help="取帧的视频，默认 posts/<name>/source.mp4（原始 4K）")
     p.add_argument("--n", type=int, default=6, help="候选数量")
     p.add_argument("--at", type=float, action="append", help="指定取帧时间（秒），可多次")
     p.add_argument("--image", action="append", help="用外部图片（专辑封面等）代替视频帧，可多次")
     p.add_argument("--fill", action="append", choices=["extend", "blur", "crop"],
                    help="非 16:9 图片的补齐方式，可多次（每种出一张），默认 extend + blur")
-    p.add_argument("--out-dir", help="输出目录，默认 songs/<name>/post/cover")
+    p.add_argument("--out-dir", help="输出目录，默认 posts/<name>/post/cover")
     p.add_argument("--text-y", type=float, default=TEXT_Y,
                    help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
     p.add_argument("--no-sr", dest="sr", action="store_false",
@@ -502,12 +502,12 @@ def main():
     p.add_argument("--badge", default="assets/4K60-logo.jpg", help="4K60 徽章图，不存在时用代码画的徽章")
     a = p.parse_args()
 
-    video = Path(a.video) if a.video else ROOT / "songs" / a.name / "source.mp4"
+    video = Path(a.video) if a.video else ROOT / "posts" / a.name / "source.mp4"
     a.fill = a.fill or ["extend", "blur"]
     globals()["CROP_BOTTOM"] = a.crop_bottom
     globals()["MASK_BOTTOM"] = a.mask_bottom
     globals()["INPAINT_SUBS"] = a.inpaint_subs
-    out = Path(a.out_dir) if a.out_dir else ROOT / "songs" / a.name / "post" / "cover"
+    out = Path(a.out_dir) if a.out_dir else ROOT / "posts" / a.name / "post" / "cover"
     out.mkdir(parents=True, exist_ok=True)
 
     if a.image:

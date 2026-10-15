@@ -6,7 +6,7 @@
 依赖独立环境 .venv-sep（torch + einops + rotary_embedding_torch ...），模型代码来自
 models/melband_roformer/mss（ZFTurbo/Music-Source-Separation-Training），权重 models/melband_roformer/MelBandRoformer.ckpt（HuggingFace）。
 
-.venv-sep/bin/python workflow/separate_roformer.py songs/X/audio.flac -o songs/X/vocals.wav
+.venv-sep/bin/python workflow/separate_roformer.py posts/X/audio.flac -o posts/X/vocals.wav
 """
 
 import argparse

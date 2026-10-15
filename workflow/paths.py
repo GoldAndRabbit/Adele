@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""项目路径约定：一首歌的所有文件都在 songs/<name>/ 下，模型都在 models/ 下。"""
+"""项目路径约定：一首歌的所有文件都在 posts/<name>/ 下，模型都在 models/ 下。"""
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / "workflow"
-SONGS = ROOT / "songs"
+POSTS = ROOT / "posts"
 MODELS = ROOT / "models"
 ASSETS = ROOT / "assets"
 BIN = ROOT / "bin"
 
 
 class Song:
-    """songs/<name>/
+    """posts/<name>/
          lyrics.txt          参考歌词（Genius）          lyrics.srt   对齐后的原文字幕
          official.srt        官方带时间字幕（可选）      lyrics.ass   双语字幕
          source.mp4 source.*.srt meta.json               下载
@@ -23,7 +23,7 @@ class Song:
 
     def __init__(self, name):
         self.name = name
-        self.dir = SONGS / name
+        self.dir = POSTS / name
         self.reports = self.dir / "reports"
         self.post = self.dir / "post"
         self.cover = self.post / "cover"

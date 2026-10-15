@@ -4,8 +4,8 @@
 分块对齐：Qwen3-ASR 已经给出每个时间块唱了哪几句、什么顺序（qwen_sequence.py 的 sung_order.txt/json），
 直接在每块的时间范围里用 MMS 把这几句按顺序强制对齐，得到每句起止。不做全局解码、不做换句推断。
 
-python workflow/chunk_align.py --order songs/X/reports/sung_order.txt --chunks songs/X/reports/sung_order.json \
-    --vocals songs/X/vocals.wav --lang ja -o out.srt
+python workflow/chunk_align.py --order posts/X/reports/sung_order.txt --chunks posts/X/reports/sung_order.json \
+    --vocals posts/X/vocals.wav --lang ja -o out.srt
 """
 
 import argparse

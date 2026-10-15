@@ -12,10 +12,10 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 | `workflow/make_mv.py` | 视频总控：`download → prep → lyrics → separate → align → translate → interp → render`，`--from/--to` 断点续跑 |
 | `workflow/make_cover.py` | 封面：16:9 + 4:3 |
 | `workflow/make_meta.py` | 投稿元数据 JSON |
-| `workflow/get_ytb_lyrics_from_link.py` | YouTube 链接 → Genius 歌词 → `songs/<name>/lyrics.txt`（lyrics 阶段自动调用） |
+| `workflow/get_ytb_lyrics_from_link.py` | YouTube 链接 → Genius 歌词 → `posts/<name>/lyrics.txt`（lyrics 阶段自动调用） |
 | `workflow/eval_subs.py` | 字幕时间轴客观评测，多版本对比 |
 
-产物：每个作品一个目录 `songs/X/` 一首歌一个目录：参考歌词 `lyrics.txt`/`official.srt` → 对齐字幕 `lyrics.srt` → 双语 `lyrics.ass`；中间文件（source.mp4、audio.flac、vocals.wav、reports/、frames_*）；成品在 `songs/X/post/`（视频 + `cover/` + `X.json`）。路径约定见 `workflow/paths.py`。
+产物：每个作品一个目录 `posts/X/` 一首歌一个目录：参考歌词 `lyrics.txt`/`official.srt` → 对齐字幕 `lyrics.srt` → 双语 `lyrics.ass`；中间文件（source.mp4、audio.flac、vocals.wav、reports/、frames_*）；成品在 `posts/X/post/`（视频 + `cover/` + `X.json`）。路径约定见 `workflow/paths.py`。
 
 ## 硬性要求
 - **音轨必须是 FLAC 48kHz/24bit**（B 站 “Hi-Res无损” 标）。render 用 `-c:a copy`，渲染后自动检查，不符直接报错
@@ -35,11 +35,11 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 ```
 各阶段：
 - **download / prep**：下载最高 2160p；降到 1080p 供插帧；导出 FLAC 48k/24bit
-- **lyrics**：官方字幕（`--sub-lang`）→ `songs/X/lyrics.srt`；否则 `get_ytb_lyrics_from_link.py` → `songs/X/lyrics.txt`（识别不准时 `--song-title/--artist` 或 `--genius-url`）。现场版歌词可能与录音室版不同，提醒用户过一眼
-- **separate**：Mel-Band RoFormer（KimberleyJensen vocals 权重）分离人声 → `songs/X/vocals.wav`
-- **align**（见第 2 节）→ `songs/X/lyrics.srt`
-- **translate**：DeepSeek（`.env`，思考 high）翻译 → `songs/X/lyrics.ass`
-  - **按句缓存** `songs/X/zh_cache.json`，时间轴重做不重复翻译；只翻新句，整首歌词作上下文
+- **lyrics**：官方字幕（`--sub-lang`）→ `posts/X/lyrics.srt`；否则 `get_ytb_lyrics_from_link.py` → `posts/X/lyrics.txt`（识别不准时 `--song-title/--artist` 或 `--genius-url`）。现场版歌词可能与录音室版不同，提醒用户过一眼
+- **separate**：Mel-Band RoFormer（KimberleyJensen vocals 权重）分离人声 → `posts/X/vocals.wav`
+- **align**（见第 2 节）→ `posts/X/lyrics.srt`
+- **translate**：DeepSeek（`.env`，思考 high）翻译 → `posts/X/lyrics.ass`
+  - **按句缓存** `posts/X/zh_cache.json`，时间轴重做不重复翻译；只翻新句，整首歌词作上下文
   - **语气词不翻译**（oh / yeah / ah…），`strip_interjections` 兜底；片假名按外来语还原，不输出“意义不明”
   - **标题行加中文**（通行译名，如 Linkin Park → 林肯公园、そばにいるね → 在你身边），和歌词里的译名一致
   - 样式与 bzrp_v2 一致：384x288 画布、Arial Rounded 23、描边 1、底边距 50，`原文 \N♪ 中文 ♪`（`build_ass_bzrp`）
@@ -54,13 +54,13 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 官方时间轴是人工打的，实测任何重解码都会变差 → 只做 `split_long` + `acoustic.py --mode post`（拖音延长、短空档桥接、句尾收紧）。
 
 ### B. Genius 歌词文本（现场版常见：改编、删减、重复、对唱、说唱）
-1. **`qwen_sequence.py`**：人声在安静处切 10~20s 块，逐块 `qwen3-asr-flash`（百炼 OpenAI 兼容接口，`ALIYUN_BAILIAN_API_KEY`，与 Takit 相同）识别，按读音匹配参考句 → 这一版实际演唱的句子顺序 `songs/X/reports/sung_order.txt` + 每句所在块 `sung_order.json`。**不要给 Qwen 传歌词上下文**，它会原样照抄
+1. **`qwen_sequence.py`**：人声在安静处切 10~20s 块，逐块 `qwen3-asr-flash`（百炼 OpenAI 兼容接口，`ALIYUN_BAILIAN_API_KEY`，与 Takit 相同）识别，按读音匹配参考句 → 这一版实际演唱的句子顺序 `posts/X/reports/sung_order.txt` + 每句所在块 `sung_order.json`。**不要给 Qwen 传歌词上下文**，它会原样照抄
 2. **`chunk_align.py`**：每块的句子序列，在块的时间范围（±0.8s）里用 MMS_FA 按顺序强制对齐
 3. `split_long.py`：超过 40 宽（全角算 2）的句子在停顿处拆开
 4. **先** `infer_insert.py`：Qwen 漏掉的句子（说唱、对唱）——相邻句之间 ≥2s 有人声却没字幕，按参考歌词顺序推断该唱的句子，时长相符就插入；句间重复词修正（前句以 “I” 结尾、后句又以 “I” 开头 → 换成参考里不带的写法）。**必须在拖音/桥接之前**，否则空档被拉长的上一句盖住
 5. `refine_timing.py`：全曲强制对齐精修起止、吸附起音、字幕提前 `--lead 0.12s`、时长体检（被拉长/挤短的句子按字数重新分配）
 6. `acoustic.py --mode post --no-fill-gaps`：拖音延长（语气词句最多 +0.5s）、短空档桥接（<3.5s 且多半有人声 → 前一句保持）、句尾收紧
-7. **`verify_qwen.py`**：每句字幕的人声单独截出（±0.3s）给 Qwen 识别比对：≥65 保留；明显是另一句（≥75 且高出 15）就换；<30 隐藏；其余可疑句保留并列在 `songs/X/reports/verify_report.json`。429 限流自动退避，并发 3
+7. **`verify_qwen.py`**：每句字幕的人声单独截出（±0.3s）给 Qwen 识别比对：≥65 保留；明显是另一句（≥75 且高出 15）就换；<30 隐藏；其余可疑句保留并列在 `posts/X/reports/verify_report.json`。429 限流自动退避，并发 3
 8. `split_long.py`
 
 用户反馈“某时间点不对”时：先看 `sung_order.json` 那一块 Qwen 认出了哪些句、`verify_report.json` 里有没有可疑，再定位是哪一步出的问题；只汇报句号和时间，不贴歌词。
@@ -79,8 +79,8 @@ whisper 定结构 + 强制对齐；纯 MMS 声学全局解码（对唱段整段�
 - 统一元素：左上水印 + 4K60 徽章；标题撑满 94% 宽，副标题与标题等宽对齐；副标题基线 `--text-y`（默认 0.66，脸在画面中段时调到 0.75~0.80，不超过 0.84）
 - 每张同时出 16:9 `cover_XX.jpg` 和 4:3 `cover_XX_4x3.jpg`（4:3 裁切窗口自动对准人脸）
 - 画面烧了字幕：`--inpaint-subs`（按白字定位字幕框，用周围画面修补）
-- 专辑图等外部图：`--image songs/X/cover_art.png --fill extend`（去边条、放大、两侧只延伸背景色）
-- 选定后 `songs/X/post/cover/` 只留 `cover_01.jpg` 和 `cover_01_4x3.jpg`
+- 专辑图等外部图：`--image posts/X/cover_art.png --fill extend`（去边条、放大、两侧只延伸背景色）
+- 选定后 `posts/X/post/cover/` 只留 `cover_01.jpg` 和 `cover_01_4x3.jpg`
 
 ## 4. 投稿元数据 JSON
 ```bash
@@ -90,4 +90,4 @@ whisper 定结构 + 强制对齐；纯 MMS 声学全局解码（对唱段整段�
 - **生成后逐条核对并手改**：模型常把频道口号当演出细节、给罗马字人名乱配汉字、编造材料里没有的事实（吉尼斯纪录、乐队伴奏等）、用“国民级”之类无依据的夸张；不写不确定的成员名字
 
 ## 5. 收尾
-用户确认后：成品去掉 `--tag` 后缀（或重命名）、JSON 路径同步；删对比版；字幕不再改就删 `songs/X/frames_in|frames_out`；代码改动提交推送。
+用户确认后：成品去掉 `--tag` 后缀（或重命名）、JSON 路径同步；删对比版；字幕不再改就删 `posts/X/frames_in|frames_out`；代码改动提交推送。

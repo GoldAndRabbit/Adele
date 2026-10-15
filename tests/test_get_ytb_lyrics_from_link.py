@@ -74,7 +74,7 @@ class LyricsWorkflowTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             args = ["https://youtu.be/test", "--name", "sample"]
             self.assertEqual(workflow.main(args), 0)
-            dest = Path(directory) / "songs/sample/lyrics.txt"
+            dest = Path(directory) / "posts/sample/lyrics.txt"
             expected = "原创测试\n第二行\n"
             self.assertEqual(dest.read_text(encoding="utf-8"), expected)
             self.assertEqual(workflow.main(args), 1)
@@ -82,9 +82,9 @@ class LyricsWorkflowTests(unittest.TestCase):
             self.assertEqual(workflow.main(args + ["--overwrite"]), 1)
             self.assertEqual(dest.read_text(encoding="utf-8"), expected)
 
-    def test_output_filename_stays_inside_songs(self):
+    def test_output_filename_stays_inside_posts(self):
         dest = workflow.output_path("../../escape")
-        self.assertEqual(dest.parent.parent, workflow.ROOT / "songs")
+        self.assertEqual(dest.parent.parent, workflow.ROOT / "posts")
         self.assertEqual(dest.name, "lyrics.txt")
         with self.assertRaises(ValueError):
             workflow.validate_url("https://youtube.com.evil.example/watch?v=123")

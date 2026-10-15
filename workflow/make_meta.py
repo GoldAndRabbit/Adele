@@ -3,11 +3,11 @@
 """
 投稿元数据 JSON：标题（固定格式）、歌曲介绍、演出介绍、标签、文件路径。
 
-事实依据只用 songs/<name>/meta.json 里 yt-dlp 抓到的视频标题 / 简介 / 发布日期，
+事实依据只用 posts/<name>/meta.json 里 yt-dlp 抓到的视频标题 / 简介 / 发布日期，
 模型负责整理成中文，不允许编造简介里没有的信息，也不引用歌词。
 
-python workflow/make_meta.py --name sobaniirune --cover songs/sobaniirune/post/cover/cover_01.jpg
-产物: songs/<name>/post/<name>.json
+python workflow/make_meta.py --name sobaniirune --cover posts/sobaniirune/post/cover/cover_01.jpg
+产物: posts/<name>/post/<name>.json
 """
 
 import argparse
@@ -67,7 +67,7 @@ def main():
     p.add_argument("--note", help="补充给模型的信息（如演唱会名称、你想强调的点）")
     a = p.parse_args()
 
-    meta_path = ROOT / "songs" / a.name / "meta.json"
+    meta_path = ROOT / "posts" / a.name / "meta.json"
     if not meta_path.exists():
         sys.exit(f"缺少 {meta_path}（download 阶段生成）")
     meta = json.loads(meta_path.read_text())
@@ -87,10 +87,10 @@ def main():
     if len(title) > TITLE_MAX:
         print(f"警告：标题 {len(title)} 字，超过 {TITLE_MAX}，请手动缩短")
 
-    video = Path(a.video) if a.video else ROOT / "songs" / a.name / "post" / f"{a.name} 4K60FPS Sub-WaterMark.mp4"
+    video = Path(a.video) if a.video else ROOT / "posts" / a.name / "post" / f"{a.name} 4K60FPS Sub-WaterMark.mp4"
     # 16:9 和 4:3 两种封面（make_cover.py 同时生成 cover_XX.jpg 和 cover_XX_4x3.jpg）
-    cover = a.cover or (f"songs/{a.name}/post/cover/cover_01.jpg"
-                        if (ROOT / "songs" / a.name / "post" / "cover" / "cover_01.jpg").exists() else None)
+    cover = a.cover or (f"posts/{a.name}/post/cover/cover_01.jpg"
+                        if (ROOT / "posts" / a.name / "post" / "cover" / "cover_01.jpg").exists() else None)
     cover_43 = cover[:-4] + "_4x3.jpg" if cover else None
     out = {
         "name": a.name,
@@ -116,7 +116,7 @@ def main():
             "video": str(video.relative_to(ROOT)) if video.is_relative_to(ROOT) else str(video),
             "cover": cover,
             "cover_4x3": cover_43 if cover_43 and (ROOT / cover_43).exists() else None,
-            "subtitle": f"songs/{a.name}/lyrics.ass",
+            "subtitle": f"posts/{a.name}/lyrics.ass",
         },
         "source": {
             "url": meta.get("webpage_url"),
@@ -124,7 +124,7 @@ def main():
             "channel": meta.get("channel"),
         },
     }
-    dst = ROOT / "songs" / a.name / "post" / f"{a.name}.json"
+    dst = ROOT / "posts" / a.name / "post" / f"{a.name}.json"
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n")
     print(f"写入 {dst}")

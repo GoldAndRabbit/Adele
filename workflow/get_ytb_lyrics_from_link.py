@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""YouTube 音乐视频 → Genius 歌词 → songs/<name>/lyrics.txt。"""
+"""YouTube 音乐视频 → Genius 歌词 → posts/<name>/lyrics.txt。"""
 
 import argparse
 from difflib import SequenceMatcher
@@ -155,7 +155,7 @@ def output_path(name):
         raise ValueError("输出文件名不能为空")
     # 限制 UTF-8 文件名的字节长度。
     stem = stem.encode("utf-8")[:200].decode("utf-8", errors="ignore")
-    return ROOT / "songs" / stem / "lyrics.txt"
+    return ROOT / "posts" / stem / "lyrics.txt"
 
 
 def main(argv=None):
