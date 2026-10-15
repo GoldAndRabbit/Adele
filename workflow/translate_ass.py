@@ -147,6 +147,7 @@ def main():
     p.add_argument("--title", help="首行标题，如 '《Song》 Artist'")
     p.add_argument("--title-duration", type=int, default=4000, help="标题最长显示毫秒")
     p.add_argument("--zh-file")
+    p.add_argument("--speech", help="歌词之外的说话字幕 srt（speech_asr.py 产出），一起翻译，中文不加 ♪")
     p.add_argument("--cache", help="按句缓存的译文 json（原文 -> 中文）；只翻缓存里没有的句子，翻完写回")
     p.add_argument("--style", choices=["bzrp", "modern"], default="bzrp",
                    help="bzrp=与 bzrp_v2.ass 相同（默认）；modern=1080p 画布、日文粗体、标题在顶部")
@@ -195,7 +196,27 @@ def main():
         if a.cache:
             with open(a.cache, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=1)
-    build_ass(subs, zh, a.title, a.title_duration, a.style, title_zh).save(a.output)
+    ass = build_ass(subs, zh, a.title, a.title_duration, a.style, title_zh)
+    if a.speech and os.path.exists(a.speech) and not a.zh_file:
+        sp = pysubs2.load(a.speech).events
+        sl = [re.sub(r"\s+", " ", e.plaintext).strip() for e in sp]
+        todo = sorted({l for l in sl if l and l not in cache}, key=sl.index)
+        for i in range(0, len(todo), 25):
+            batch = todo[i:i + 25]
+            for k, v in zip(batch, translate_api(batch, (a.title or "") + "\n（以下是歌手在演唱前后对观众说的话，不是歌词）")):
+                cache[k] = v
+        for e, l in zip(sp, sl):
+            z = strip_interjections(l, cache.get(l, ""))
+            text = l + (r" \N" + z if z and z != l else "")
+            if a.style == "bzrp" and not CJK_RE.search(l) and len(l) > 40:
+                text = (r"{\fs19}" if len(l) <= 62 else r"{\fs17}") + text
+            ass.events.append(pysubs2.SSAEvent(start=e.start, end=e.end, text=text))
+        ass.events.sort(key=lambda x: x.start)
+        if a.cache:
+            with open(a.cache, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=1)
+        print(f"说话字幕 {len(sp)} 句（新翻 {len(todo)} 句）")
+    ass.save(a.output)
     print(f"写入 {a.output}（{len(lines)} 句，{sum(1 for z in zh if z)} 句含中文）")
 
 

@@ -12,6 +12,7 @@
   align      时间轴：官方字幕只做后处理；歌词文本走
              Qwen 演唱序列 -> 分块对齐 -> 推理补句 -> 强制对齐精修 -> 后处理 -> 逐句 Qwen 复核
                                                         -> posts/<name>/lyrics.srt
+  speech     歌词之外的说话（开场白/谢幕）Qwen 识别     -> posts/<name>/speech.srt
   translate  DeepSeek 翻译（按句缓存）+ 标题中文行        -> posts/<name>/lyrics.ass
   interp     原生帧率抽帧 + RIFE 一步插到 60fps          -> posts/<name>/frames_out/
   render     4K + 烧字幕 + 水印 + FLAC，渲染后检查音轨   -> posts/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4
@@ -33,7 +34,7 @@ from paths import BIN, MODELS, ROOT, WORKFLOW as PIPE, Song  # noqa: E402
 
 VENV_BIN = ROOT / ".venv" / "bin"
 SEP_PY = ROOT / ".venv-sep" / "bin" / "python"
-STAGES = ["download", "prep", "lyrics", "separate", "align", "translate", "interp", "render"]
+STAGES = ["download", "prep", "lyrics", "separate", "align", "speech", "translate", "interp", "render"]
 LANG_CODES = {"english": "en", "japanese": "ja", "spanish": "es", "chinese": "zh", "italian": "it"}
 TARGET_FPS = 60
 
@@ -215,6 +216,15 @@ def maybe_split(a, py, srt, voc):
         run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
 
 
+def stage_speech(a, w):
+    """歌词之外的说话（开场白、谢幕、互动）→ speech.srt，translate 时一起翻译。"""
+    if a.no_speech:
+        return
+    p = paths(a, w)
+    run([sys.executable, PIPE / "speech_asr.py", p["srt"], "--vocals", p["vocals"], "--lang", lang_code(a),
+         "-o", w / "speech.srt"] + (["--gaps"] if a.speech_gaps else []))
+
+
 def stage_align(a, w):
     """时间轴。文字只来自参考歌词（官方字幕 / Genius 文本），识别结果只用来定位和复核。"""
     p = paths(a, w)
@@ -291,6 +301,7 @@ def stage_translate(a, w):
         print(f"已存在 {out}（人工校对过的不会被覆盖，--force 可重新生成）")
         return
     title = a.title or auto_title(w)
+    speech = w / "speech.srt"
     cmd = [sys.executable, PIPE / "translate_ass.py", src, "-o", out,
            "--cache", w / "zh_cache.json"]
     if title:
@@ -298,6 +309,8 @@ def stage_translate(a, w):
     if a.zh_file:
         cmd += ["--zh-file", a.zh_file]
     cmd += ["--style", a.sub_style]
+    if speech.exists() and not a.no_speech:
+        cmd += ["--speech", speech]
     run(cmd)
     print(f"\n>>> 双语字幕已生成: {out}，建议过一遍再 --from interp")
 
@@ -437,6 +450,8 @@ def main():
     p.add_argument("--max-width", type=int, default=40, help="单句最大显示宽度（全角算 2），超过就拆")
     p.add_argument("--align-mode", choices=["qwen", "lyrics"], default="qwen",
                    help="qwen：Qwen 识别演唱顺序（现场改编/删减多的歌）；lyrics：以歌词顺序为准只对时间（说唱等 ASR 难识别的歌）")
+    p.add_argument("--no-speech", action="store_true", help="不识别歌词之外的说话（开场白/谢幕）")
+    p.add_argument("--speech-gaps", action="store_true", help="说话识别也处理歌曲中间较长的无字幕人声段")
     p.add_argument("--lead", type=float, default=0.12, help="字幕比开口提前出现的秒数（align 阶段）")
     p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'；不填就从 YouTube 标题自动提取（存 title.txt，可手改）")
     p.add_argument("--sub-style", choices=["bzrp", "modern"], default="bzrp",

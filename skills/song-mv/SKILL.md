@@ -38,7 +38,8 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 - **lyrics**：官方字幕（`--sub-lang`）→ `posts/X/lyrics.srt`；否则 `get_ytb_lyrics_from_link.py` → `posts/X/lyrics.txt`（识别不准时 `--song-title/--artist` 或 `--genius-url`）。现场版歌词可能与录音室版不同，提醒用户过一眼
 - **separate**：Mel-Band RoFormer（KimberleyJensen vocals 权重）分离人声 → `posts/X/vocals.wav`
 - **align**（见第 2 节）→ `posts/X/lyrics.srt`
-- **translate**：DeepSeek（`.env`，思考 high）翻译 → `posts/X/lyrics.ass`
+- **speech**：歌词之外的说话（开场白、谢幕；`--speech-gaps` 也处理曲中长空档）按停顿切句、逐句 Qwen 识别 → `posts/X/speech.srt`；`--no-speech` 关闭。说话不是歌词，可以直接用识别文字
+- **translate**：DeepSeek（`.env`，思考 high）翻译 → `posts/X/lyrics.ass`；说话字幕一起翻，中文不加 ♪
   - **按句缓存** `posts/X/zh_cache.json`，时间轴重做不重复翻译；只翻新句，整首歌词作上下文
   - **语气词不翻译**（oh / yeah / ah…），`strip_interjections` 兜底；片假名按外来语还原，不输出“意义不明”
   - **标题行加中文**（通行译名，如 Linkin Park → 林肯公园、そばにいるね → 在你身边），和歌词里的译名一致
