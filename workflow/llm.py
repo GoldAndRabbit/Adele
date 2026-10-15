@@ -48,11 +48,23 @@ def chat_json(system, user, temperature=0.3, label="LLM", effort=None):
         else:
             extra = {"thinking": {"type": "disabled"}}
     print(f"{label}: {provider} / {model}" + (f" / 思考 {effort}" if effort else ""))
-    resp = client.chat.completions.create(
-        model=model,
-        **kw,
-        response_format={"type": "json_object"},
-        extra_body=extra,
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-    )
-    return json.loads(resp.choices[0].message.content)
+    import time
+    last = None
+    for attempt in range(3):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                **kw,
+                response_format={"type": "json_object"},
+                extra_body=extra,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            )
+            # 偶发返回空 choices / 空内容（输出被截断、服务端异常），重试
+            if resp.choices and resp.choices[0].message and resp.choices[0].message.content:
+                return json.loads(resp.choices[0].message.content)
+            last = f"空响应 finish_reason={resp.choices[0].finish_reason if resp.choices else None}"
+        except (json.JSONDecodeError, Exception) as e:  # noqa: BLE001
+            last = str(e)[:120]
+        print(f"  {label} 第 {attempt + 1} 次失败（{last}），重试")
+        time.sleep(3 * (attempt + 1))
+    raise RuntimeError(f"{label} 连续失败: {last}")

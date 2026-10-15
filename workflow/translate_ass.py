@@ -167,8 +167,14 @@ def main():
             # 只翻新句子，但把整首歌词（去重）作为上下文给模型，保证语气和已有译文一致
             uniq = sorted({l for l in lines if l}, key=lines.index)
             ctx = (a.title or "") + "\n整首歌词（仅作上下文，只需翻译下面 JSON 里的行）：\n" + "\n".join(uniq)
-            for k, v in zip(todo, translate_api(todo, ctx)):
-                cache[k] = v
+            # 分批翻译（每批 25 句），长歌一次全发容易输出被截断；整首歌词始终作为上下文
+            for i in range(0, len(todo), 25):
+                batch = todo[i:i + 25]
+                for k, v in zip(batch, translate_api(batch, ctx)):
+                    cache[k] = v
+                if a.cache:  # 每批写一次缓存，中途失败也不丢已翻好的
+                    with open(a.cache, "w", encoding="utf-8") as f:
+                        json.dump(cache, f, ensure_ascii=False, indent=1)
         print(f"译文缓存: 复用 {len(set(lines)) - len(todo)} 句，新翻 {len(todo)} 句")
         zh = [strip_interjections(l, cache.get(l, "")) for l in lines]
         for l, z in zip(lines, zh):
