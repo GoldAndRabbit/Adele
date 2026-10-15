@@ -1,37 +1,25 @@
-# 环境
-my_venv/
+# 环境 / 密钥
+.venv/
+.venv-sep/
+.env
+cookies*.txt
 **/__pycache__/
 .DS_Store
-.ipynb_checkpoints/
 
-# 媒体产物（体积大，不入库）
-*.mp4
-*.mkv
-*.webm
-*.flac
-*.wav
-*.m4a
-*.part
-*.ytdl
+# 数据与产物（体积大或含完整歌词，不入库）
 audios/
 separated/
-videos_debug/
-post/
 work/
-input_frames/
-output_frames/
+post/
 cover/
-
-# 大图 / 可选模型
-image_ir.png
-v3_ir.png
-realesrgan-ncnn-vulkan
-models/realesrgan-x4plus.*
-models/realsrgan/
-
-# cookies 等敏感文件
-cookies*.txt
-.env
-*.log
-sep_venv/
+ori_lyrics/
+lyrics/
 third_party/
+*.mp4
+*.flac
+*.wav
+*.log
+
+# 大文件 / 可选模型
+bin/realesrgan-ncnn-vulkan
+models/realesrgan-x4plus.*

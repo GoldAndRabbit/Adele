@@ -23,7 +23,7 @@ import pysubs2
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import acoustic  # noqa: E402
 import llm  # noqa: E402
-from align_lyrics import reading  # noqa: E402
+from textnorm import reading  # noqa: E402
 from infer_insert import is_filler  # noqa: E402
 from qwen_asr import ENDPOINT, SR, transcribe  # noqa: E402
 

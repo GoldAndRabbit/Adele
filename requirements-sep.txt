@@ -1,0 +1,11 @@
+# 人声分离环境 .venv-sep（python3.12），模型代码 third_party/mss
+torch
+einops
+rotary_embedding_torch
+beartype
+pyyaml
+ml_collections
+omegaconf
+soundfile
+librosa
+tqdm

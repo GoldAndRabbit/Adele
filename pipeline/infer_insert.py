@@ -24,7 +24,7 @@ import pysubs2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import acoustic  # noqa: E402
-from align_lyrics import reading  # noqa: E402
+from textnorm import reading  # noqa: E402
 
 MIN_GAP = 2.0  # 可用 --min-gap 改
 FILLER = re.compile(r"^(yeah|oh+|ah+|uh+|hey|woah|whoa|na|la|ooh|baby|yo|i'm here|\W)+$", re.I)
@@ -158,6 +158,8 @@ def main():
     p.add_argument("--lang", default="en")
     p.add_argument("--max-span", type=int, default=12, help="A、B 在参考里最多隔多少句")
     p.add_argument("--min-gap", type=float, default=MIN_GAP, help="多长的有声空档才推理插入")
+    p.add_argument("--min-ev", type=float, default=-4.5,
+                   help="候选句在空档里的声学证据门槛，低于它不插入（多半是拖音/和声/即兴）")
     p.add_argument("--no-neighbor-fix", dest="neighbor_fix", action="store_false", help="不做邻句声学校验")
     p.add_argument("-o", "--output", required=True)
     p.add_argument("--report")
@@ -176,6 +178,7 @@ def main():
     rate = float(np.median(rates)) if rates else 0.12
 
     anchors = [i for i, e in enumerate(ev) if not is_filler(e.plaintext) and ref_index(e.plaintext, ref)]
+    scorer, skipped = [None], []
     new_events, inserted, used_until = [], [], -1
     for ai, bi in zip(anchors, anchors[1:]):
         A, B = ev[ai], ev[bi]
@@ -207,6 +210,13 @@ def main():
             continue
         idx = np.where(v)[0]
         s0, s1 = t0 + idx[0] / 100, t0 + (idx[-1] + 1) / 100
+        # 声学确认：空档里的声音确实像在唱这些句子，才插入（拖音、和声、即兴不插）
+        if scorer[0] is None:
+            scorer[0] = acoustic.Scorer(a.vocals, a.lang)
+        cand_ev = scorer[0].evidence(" ".join(cand), s0, s1)
+        if cand_ev < a.min_ev:
+            skipped.append({"start": round(s0, 1), "evidence": round(cand_ev, 2)})
+            continue
         tot = sum(chars(t) for t in cand)
         t = s0
         for text in cand:
@@ -230,6 +240,8 @@ def main():
         Path(a.report).write_text(json.dumps({"inserted": inserted, "swapped": swapped, "rate": rate},
                                              ensure_ascii=False, indent=1))
     print(f"推理插入 {len(inserted)} 句：" + ", ".join(f"L{x['ref_line']}@{x['start']}s" for x in inserted))
+    if skipped:
+        print(f"声学不匹配未插入 {len(skipped)} 处：" + ", ".join(f"{x['start']}s({x['evidence']})" for x in skipped))
     print(f"邻句声学校验换句 {len(swapped)} 处：" + ", ".join(f"L{x['from_line']}→L{x['to_line']}@{x['start']}s(+{x['gain']})" for x in swapped))
 
 

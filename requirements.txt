@@ -1,20 +1,15 @@
+# 主环境 .venv（python3.12）
+yt-dlp[default]
 requests
-yt-dlp
+beautifulsoup4
+numpy<2.3
+torch==2.7.1
+torchaudio==2.7.1
 librosa
-demucs
-ipykernel
-huggingface_hub
-openai-whisper
+soundfile
+pysubs2
 openai
-numpy==1.26.4
-torch
-torchvision
-torchaudio
-huggingface_hub
-Cython
-transformers
-# nemo_toolkit[all]
-opencc-python-reimplemented==0.1.6
-jupyter
-ipywidgets
-ipython
+pykakasi
+rapidfuzz
+pillow
+opencv-python-headless==4.11.0.86

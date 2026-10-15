@@ -1,14 +1,70 @@
+# Adele：歌曲视频 → 4K60 双语字幕成品
 
-## 安装环境
+给一个 YouTube 歌曲链接，产出 B 站投稿用的整套素材：
 
-``` bash
-yt-dlp -o "videos/%(title)s.%(ext)s" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4" "https://www.youtube.com/watch?v=Av6Zfj7h5ZY&ab_channel=smelly_p"
-yt-dlp -o "videos/%(title)s.%(ext)s" -x --audio-format mp3 https://www.youtube.com/watch?v=Av6Zfj7h5ZY&ab_channel=smelly_p
-yt-dlp --write-sub --sub-lang en https://www.youtube.com/watch?v=xxxxxxx
+- `post/<name>/<name> 4K60FPS Sub-WaterMark.mp4`：3840×2160、60 帧（RIFE 插帧）、左上角水印、原文 + 中文双语字幕、FLAC 48kHz/24bit 音轨（B 站 Hi-Res 无损标）
+- `post/<name>/cover/cover_01.jpg`（16:9）、`cover_01_4x3.jpg`（4:3）
+- `post/<name>/<name>.json`：投稿标题、歌曲介绍、演出介绍、标签
+
+详细规则和注意事项见 [skills/song-mv/SKILL.md](skills/song-mv/SKILL.md)。
+
+## 目录
+
+```
+pipeline/   所有脚本（入口 make_mv.py / make_cover.py / make_meta.py）
+skills/     Claude Code skill（.claude/skills/song-mv 是它的软链接）
+assets/     水印 adele-logo.png、4K60 徽章
+bin/        rife-ncnn-vulkan、realesrgan-ncnn-vulkan
+models/     rife-v4.6、realesrgan-x4plus
+tests/
+数据（不入 git）：audios/ separated/ work/ post/ cover/ ori_lyrics/ lyrics/ third_party/
 ```
 
-Files: Exclude 增加  **/__pycache__
+## 安装
 
-## 
-sota  music source separation model 是什么
+```bash
+brew install ffmpeg
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
+# 人声分离（Mel-Band RoFormer）单独一个环境
+python3.12 -m venv .venv-sep && .venv-sep/bin/pip install -r requirements-sep.txt
+git clone --depth 1 https://github.com/ZFTurbo/Music-Source-Separation-Training.git third_party/mss
+mkdir -p third_party/models && curl -L -o third_party/models/MelBandRoformer.ckpt \
+  https://huggingface.co/KimberleyJSN/melbandroformer/resolve/main/MelBandRoformer.ckpt
+
+cp .env.example .env   # 填 DEEPSEEK_API_KEY（翻译/元数据）、ALIYUN_BAILIAN_API_KEY（Qwen3-ASR）
+```
+
+`bin/realesrgan-ncnn-vulkan` 和 `models/realesrgan-x4plus.*`（封面高清化）不入库，需要自行放入；缺失时封面跳过高清化。
+
+## 用法
+
+```bash
+# 一条命令跑完视频（Genius 歌词作参考）
+.venv/bin/python pipeline/make_mv.py --name X --url "https://www.youtube.com/watch?v=..." \
+    --lang ja --title "《歌名》 歌手" --keep-frames
+
+# 视频自带官方带时间字幕时，用它作参考（时间轴更准）
+.venv/bin/python pipeline/make_mv.py --name X --url "..." --lang ja --sub-lang ja --title "..."
+
+# 封面、投稿信息
+.venv/bin/python pipeline/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕" --at 65.2
+.venv/bin/python pipeline/make_meta.py --name X --subtitle-langs "日语,中文" --note "演出名称、日期、场地"
+```
+
+阶段：`download → prep → lyrics → separate → align → translate → interp → render`，可用 `--from` / `--to` 断点续跑。
+
+### 单独取歌词
+
+```bash
+.venv/bin/python pipeline/get_ytb_lyrics_from_link.py "YOUTUBE_URL" --name X
+.venv/bin/python pipeline/get_ytb_lyrics_from_link.py "YOUTUBE_URL" --genius-url "https://genius.com/..." --name X
+```
+
+自动识别歌名、歌手，在 Genius 找原版歌词，保存到 `ori_lyrics/X.txt`（默认去掉 `[Verse]` 等标签，`--keep-sections` 保留）。识别不准时用 `--title` / `--artist` 或 `--genius-url` 指定；已有文件默认不覆盖（`--overwrite`）。设置 `GENIUS_ACCESS_TOKEN` 可改用官方 API 搜索。
+
+## 测试
+
+```bash
+.venv/bin/python -m unittest discover -s tests
+```

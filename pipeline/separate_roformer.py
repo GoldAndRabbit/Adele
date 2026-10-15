@@ -3,10 +3,10 @@
 """
 人声分离（Mel-Band RoFormer，KimberleyJensen 的 vocals 权重），比 demucs htdemucs 干净，现场录音尤其明显。
 
-依赖独立环境 sep_venv（torch + einops + rotary_embedding_torch ...），模型代码来自
+依赖独立环境 .venv-sep（torch + einops + rotary_embedding_torch ...），模型代码来自
 third_party/mss（ZFTurbo/Music-Source-Separation-Training），权重 third_party/models/MelBandRoformer.ckpt（HuggingFace）。
 
-sep_venv/bin/python pipeline/separate_roformer.py audios/X.flac -o separated/roformer/X/vocals.wav
+.venv-sep/bin/python pipeline/separate_roformer.py audios/X.flac -o separated/roformer/X/vocals.wav
 """
 
 import argparse

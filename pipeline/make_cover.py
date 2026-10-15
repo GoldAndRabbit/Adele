@@ -29,7 +29,7 @@ FONTS = {
     "sans": ("/System/Library/Fonts/Avenir Next.ttc", 8),                    # Avenir Next Heavy
     "gill": ("/System/Library/Fonts/Supplemental/GillSans.ttc", 1),          # Gill Sans Bold（Bzrp 那种）
     "serif": ("/System/Library/Fonts/Supplemental/Georgia Bold.ttf", 0),     # 衬线（Man of the Year 那种）
-    "cjk": ("/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc", 0),            # 日文/中文标题
+    "cjk": ("/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc", 0),            # 默认标题字体（中日英通用）
     "sub": ("/System/Library/Fonts/Supplemental/Songti.ttc", 0),             # 宋体 Black，副标题
     "badge": ("/System/Library/Fonts/Avenir Next.ttc", 8),
 }
@@ -204,7 +204,7 @@ def trim_bars(img, tol=25):
 
 def upscale(img, work, force=False):
     """分辨率不够时用 Real-ESRGAN x4 放大，比直接拉伸清楚。"""
-    exe, models = ROOT / "realesrgan-ncnn-vulkan", ROOT / "models"
+    exe, models = ROOT / "bin" / "realesrgan-ncnn-vulkan", ROOT / "models"
     if (img.height >= H and not force) or not exe.exists() or not (models / "realesrgan-x4plus.bin").exists():
         if force:
             print("  未找到 realesrgan-ncnn-vulkan / models/realesrgan-x4plus，跳过高清化")
@@ -435,7 +435,7 @@ def compose(frame, a):
         x -= 20
 
     # 标题 + 副标题，整体底边在安全线以上
-    title_key = a.title_font or ("cjk" if CJK_RE.search(a.title) else "sans")
+    title_key = a.title_font or "cjk"  # 中日英标题统一用冬青黑体 W8，和之前的封面一致
     # 标题撑满到接近左右边缘（默认 94% 画布宽），字号再受高度上限约束
     tf = fit_width(a.title, title_key, int(cw * a.title_width), int(ch * 0.30))
     title_w = ink_width(a.title, tf)
@@ -444,7 +444,7 @@ def compose(frame, a):
         # “A · B · C” 里的空格在宋体里很宽，白白占掉宽度、字就放不大；去掉分隔符两边的空格
         a.subtitle = re.sub(r"\s*[·・]\s*", "·", a.subtitle)
         # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
-        sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.6))
+        sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.68))
         gaps = max(1, len(a.subtitle) - 1)
         tracking = max(0.0, (title_w - ink_width(a.subtitle, sf)) / gaps)
         title_y = sub_y - int(sf.size * 1.12)
@@ -498,8 +498,8 @@ def main():
                    help="标题撑满的画布宽度比例（默认 0.94，接近左右边缘）；副标题与标题等宽对齐")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
     p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png），可多次")
-    p.add_argument("--logo", default="adele-logo.png")
-    p.add_argument("--badge", default="4K60-logo.jpg", help="4K60 徽章图，不存在时用代码画的徽章")
+    p.add_argument("--logo", default="assets/adele-logo.png")
+    p.add_argument("--badge", default="assets/4K60-logo.jpg", help="4K60 徽章图，不存在时用代码画的徽章")
     a = p.parse_args()
 
     video = Path(a.video) if a.video else ROOT / "work" / a.name / "source.mp4"
