@@ -75,8 +75,10 @@ def no_period(t):
     return t
 
 
-def build_ass(subs, zh, title, title_duration, style="bzrp", title_zh=None):
-    return (build_ass_bzrp if style == "bzrp" else build_ass_modern)(subs, zh, title, title_duration, title_zh)
+def build_ass(subs, zh, title, title_duration, style="bzrp", title_zh=None, speech_start=None):
+    if style == "bzrp":
+        return build_ass_bzrp(subs, zh, title, title_duration, title_zh, speech_start)
+    return build_ass_modern(subs, zh, title, title_duration, title_zh)
 
 
 INTERJ_SRC = re.compile(r"\b(oh+|ooh+|yeah|ah+|uh+|woah|whoa|hey|na|la)\b", re.I)
@@ -107,7 +109,7 @@ def translate_title(title, cache):
     return cache[key]
 
 
-def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None):
+def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None, speech_start=None):
     """默认样式，与 lyrics/bzrp_v2.ass 完全一致：384x288 画布、Arial Rounded 23、描边 1、无阴影、底边距 50；
     标题也作为普通一行放在底部；格式 “原文 \\N♪ 中文 ♪”，不加任何行内标签。"""
     out = pysubs2.SSAFile()
@@ -120,6 +122,8 @@ def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None):
         marginl=10, marginr=10, marginv=50)
     if title:
         first = subs.events[0].start if subs.events else title_duration
+        if speech_start is not None and speech_start >= 1000:  # 标题不和开场说话叠在一起
+            first = min(first, speech_start)
         t = title + (r" \N" + title_zh if title_zh and title_zh != title else "")
         out.events.append(pysubs2.SSAEvent(start=0, end=min(title_duration, first), text=t))
     for e, z in zip(subs.events, zh):
@@ -216,6 +220,16 @@ def main():
                     with open(a.cache, "w", encoding="utf-8") as f:
                         json.dump(cache, f, ensure_ascii=False, indent=1)
         print(f"译文缓存: 复用 {len(set(lines)) - len(todo)} 句，新翻 {len(todo)} 句")
+        # 有实际内容（读音 >= 8 字）却译成空的句子：单独再翻一次，明确要求必须翻译
+        from textnorm import reading
+        missing = sorted({l for l in lines if l and not cache.get(l) and len(reading(l)) >= 8}, key=lines.index)
+        if missing:
+            brief = cache.get("__brief__", "")
+            ctx = (a.title or "") + "\n歌曲解读：\n" + brief + "\n\n这些行都有实际内容，每一行都必须翻译，不能输出空字符串"
+            for k, v in zip(missing, translate_api(missing, ctx)):
+                if v:
+                    cache[k] = v
+            print(f"补翻空译文 {len(missing)} 句")
         zh = [strip_interjections(l, cache.get(l, "")) for l in lines]
         for l, z in zip(lines, zh):
             if l in cache:
@@ -230,7 +244,11 @@ def main():
         if a.cache:
             with open(a.cache, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=1)
-    ass = build_ass(subs, zh, a.title, a.title_duration, a.style, title_zh)
+    sp_start = None
+    if a.speech and os.path.exists(a.speech):
+        _sp = pysubs2.load(a.speech).events
+        sp_start = _sp[0].start if _sp else None
+    ass = build_ass(subs, zh, a.title, a.title_duration, a.style, title_zh, sp_start)
     if a.speech and os.path.exists(a.speech) and not a.zh_file:
         sp = pysubs2.load(a.speech).events
         sl = [re.sub(r"\s+", " ", e.plaintext).strip() for e in sp]

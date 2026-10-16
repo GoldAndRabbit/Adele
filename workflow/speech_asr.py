@@ -106,7 +106,25 @@ def main():
             split.append([cur, cur + d, x])
             cur += d
     from qwen_dense import tighten
-    out = tighten(split, y, a.lang or "en", pad=0.4) if split else []
+    # 说话段边界常被观众声撑大：允许在整段范围内重新定位（pad = 段长），再按词数限制时长（约 0.45s/词 + 0.8s）
+    from rapidfuzz import fuzz
+    from textnorm import reading
+    out = []
+    for s0, e0, t in split:
+        cap = 0.8 + 0.45 * max(1, len(t.split()))
+        if e0 - s0 > cap + 1.0:
+            # 段落被观众声撑大：1.5s 小窗口逐段识别，找最早出现这些词的位置
+            rt, found = reading(t), None
+            for w0 in np.arange(s0, max(s0 + 0.01, e0 - 0.5), 0.5):
+                x = transcribe(client, y[int(w0 * SR):int(min(dur, w0 + 1.5) * SR)], a.lang) or ""
+                if rt and fuzz.partial_ratio(rt, reading(x)) >= 70:
+                    found = w0
+                    break
+            if found is not None:
+                s0, e0 = found, min(e0, found + cap + 0.5)
+        r = tighten([[s0, e0, t]], y, a.lang or "en", pad=0.4)[0]
+        r[1] = min(r[1], r[0] + cap)
+        out.append(r)
 
     subs = pysubs2.SSAFile()
     for s, e, t in out:

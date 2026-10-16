@@ -488,8 +488,8 @@ def main():
     p.add_argument("--cookies", help="cookies.txt 路径")
     p.add_argument("--ass", help="render 用的字幕文件，默认 posts/<name>/lyrics.ass")
     p.add_argument("--tag", help="成品文件名后缀，用于对比不同版本，如 bzrpv2style")
-    p.add_argument("--sub-shift", type=float, default=0.2,
-                   help="渲染时字幕整体再提前的秒数（叠加在 --lead 0.12 之上，默认 0.2，实测最舒服）")
+    p.add_argument("--sub-shift", type=float, default=0.0,
+                   help="渲染时字幕整体再提前的秒数（默认 0：按段落/密集窗口对齐的起点已是开口时刻，对比后选定不提前）")
     p.add_argument("--logo", default="assets/adele-logo.png")
     p.add_argument("--logo-scale", default="0.10")
     p.add_argument("--crf", type=int, default=18)
