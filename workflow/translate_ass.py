@@ -67,6 +67,14 @@ def translate_api(lines, context):
     raise SystemExit("翻译行数始终对不上，请改用 --zh-file")
 
 
+def no_period(t):
+    """字幕句末不加句号：去掉末尾单个 “.” / “。”（保留 ? ! … 和省略号 ...）。"""
+    t = t.rstrip()
+    if t.endswith("。") or (t.endswith(".") and not t.endswith("..")):
+        t = t[:-1].rstrip()
+    return t
+
+
 def build_ass(subs, zh, title, title_duration, style="bzrp", title_zh=None):
     return (build_ass_bzrp if style == "bzrp" else build_ass_modern)(subs, zh, title, title_duration, title_zh)
 
@@ -115,7 +123,8 @@ def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None):
         t = title + (r" \N" + title_zh if title_zh and title_zh != title else "")
         out.events.append(pysubs2.SSAEvent(start=0, end=min(title_duration, first), text=t))
     for e, z in zip(subs.events, zh):
-        text = e.plaintext.replace("\n", " ").strip()
+        text = no_period(e.plaintext.replace("\n", " ").strip())
+        z = no_period(z) if z else z
         orig = text
         if z and z != text:
             text += r" \N♪ " + z + " ♪"
@@ -149,7 +158,8 @@ def build_ass_modern(subs, zh, title, title_duration, title_zh=None):
             t += r"\N{\fn" + CJK_FONT + r"\b1\fs56}" + title_zh
         out.events.append(pysubs2.SSAEvent(start=0, end=title_duration, text=t, style="Title"))
     for e, z in zip(subs.events, zh):
-        text = e.plaintext.replace("\n", " ").strip()
+        text = no_period(e.plaintext.replace("\n", " ").strip())
+        z = no_period(z) if z else z
         orig = text
         if CJK_RE.search(text):
             text = r"{\fn" + JA_FONT + "}" + text
@@ -234,7 +244,8 @@ def main():
         sty.primarycolor = pysubs2.Color(255, 214, 102)
         ass.styles["Speech"] = sty
         for e, l in zip(sp, sl):
-            z = strip_interjections(l, cache.get(l, ""))
+            z = no_period(strip_interjections(l, cache.get(l, "")))
+            l = no_period(l)
             text = l + (r" \N" + z if z and z != l else "")
             if a.style == "bzrp" and not CJK_RE.search(l) and len(l) > 40:
                 text = (r"{\fs19}" if len(l) <= 62 else r"{\fs17}") + text
