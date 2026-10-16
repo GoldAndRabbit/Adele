@@ -256,7 +256,15 @@ def stage_align(a, w):
         # 默认：2.5s 窗口逐窗 Qwen 识别定结构（分得清副歌和长得像的段落），逐句局部强制对齐定时间
         # 有带段落标记的歌词（lyrics 阶段一并抓取）就按段落对齐：段内严格按歌词、段间跟现场顺序；否则逐窗匹配
         secs = w / "lyrics_sections.txt"
-        order = ["--sections", secs, "--order", "sections"] if secs.exists() else ["--order", "free"]
+        use_secs = False
+        if secs.exists():
+            import acoustic
+            n_sec, n_ref = len(acoustic.section_lines(secs)), len(acoustic.section_lines(ref))
+            # 段落版明显比参考歌词少（抓取失败/只抓到一部分），不用它，避免整段歌词被当成没唱
+            use_secs = n_sec >= 0.9 * n_ref
+            if not use_secs:
+                print(f"警告：{secs.name} 只有 {n_sec} 句，参考歌词 {n_ref} 句，段落版不完整，改用逐窗匹配")
+        order = ["--sections", secs, "--order", "sections"] if use_secs else ["--order", "free"]
         run([py, PIPE / "qwen_dense.py", "--ref", ref, *common, *order, "--cache", w / "reports" / "dense_cache.json",
              "-o", srt, "--report", w / "reports" / "dense.json"])
         run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "--no-fill-gaps",
