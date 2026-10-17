@@ -159,6 +159,123 @@ def grab_hd(video, t, work):
     return mask_bottom(img.crop((x, y, x + W, y + H)), MASK_BOTTOM)
 
 
+# ---------------------------------------------------------------- 按正脸挑帧
+
+YUNET = ROOT / "models" / "yunet" / "face_detection_yunet_2023mar.onnx"
+SHOTS = [  # (类别, 中文名, 脸高/画面高 下限, 上限, 标题高度)
+    ("closeup", "正脸特写", 0.22, 1.00, 0.82),
+    ("half", "正脸半身", 0.09, 0.22, 0.74),
+    ("full", "正脸全身", 0.035, 0.09, 0.66),
+]
+
+
+SFACE = ROOT / "models" / "yunet" / "face_recognition_sface_2021dec.onnx"
+
+
+def frontal_faces(det, img):
+    """YuNet 检测，按五点关键点筛正脸：两眼高度差小、鼻子在两眼中间。返回 (正脸行列表, 检测到的人脸总数)。"""
+    a = np.asarray(img.convert("RGB"))[:, :, ::-1].copy()
+    det.setInputSize((a.shape[1], a.shape[0]))
+    _, faces = det.detect(a)
+    faces = faces if faces is not None else []
+    out = []
+    for f in faces:
+        rex, rey, lex, ley, nx, ny = f[4:10]
+        eye_d = abs(lex - rex)
+        if f[14] < 0.8 or eye_d < 1:
+            continue
+        if abs(ley - rey) / eye_d < 0.15 and 0.3 < (nx - min(rex, lex)) / eye_d < 0.7:
+            out.append(f)
+    return out, len(faces), a
+
+
+def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4):
+    """1) 每 step 秒取一帧，YuNet 找正脸，SFace 提取人脸特征；
+    2) 按特征聚类：出现得多、脸又大的那几个人是演唱者（观众一般只闪过一两次），可以有多个（组合/合唱）；
+    3) 只保留演唱者的正脸、且画面里人脸不超过 max_faces 张（排除观众大全景）的帧，
+       按脸高/画面高分成 特写 / 半身 / 全身，每类挑 per 张（打分 = 置信度 × 脸部清晰度 × 居中，时间间隔 >= gap）。"""
+    import cv2
+    det = cv2.FaceDetectorYN.create(str(YUNET), "", (960, 540), 0.8, 0.3, 50)
+    rec = cv2.FaceRecognizerSF.create(str(SFACE), "")
+    d = duration(video)
+    faces_all = []  # (t, ratio, conf, sharp, center, feature, n_faces)
+    for t in np.arange(1.0, d - 1.0, step):
+        img = grab(video, float(t)).resize((960, 540))
+        fr, n, bgr = frontal_faces(det, img)
+        g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        for f in fr:
+            x, y, w, h = [float(v) for v in f[:4]]
+            y0, y1, x0, x1 = int(max(0, y)), int(min(540, y + h)), int(max(0, x)), int(min(960, x + w))
+            roi = g[y0:y1, x0:x1]
+            if roi.size < 100:
+                continue
+            if float(roi.mean()) < 45:  # 脸部太暗（观众席、背光），不当封面
+                continue
+            sharp = float(cv2.Laplacian(roi, cv2.CV_32F).var())
+            feat = rec.feature(rec.alignCrop(bgr, f)).flatten()
+            feat = feat / (np.linalg.norm(feat) + 1e-9)
+            faces_all.append((float(t), h / 540, float(f[14]), sharp, 1 - abs((x + w / 2) / 960 - 0.5), feat, n,
+                              (y + h / 2) / 540))
+    if not faces_all:
+        return {k: [] for k, *_ in SHOTS}
+
+    # 聚类（贪心，余弦 >= 0.4 算同一个人），权重 = 出现次数 × 平均脸大小
+    clusters = []
+    for i, fa in enumerate(faces_all):
+        for c in clusters:
+            if float(fa[5] @ c["center"]) >= 0.4:
+                c["idx"].append(i)
+                c["center"] = c["center"] + (fa[5] - c["center"]) / len(c["idx"])
+                c["center"] /= np.linalg.norm(c["center"]) + 1e-9
+                break
+        else:
+            clusters.append({"idx": [i], "center": fa[5].copy()})
+    for c in clusters:
+        c["w"] = len(c["idx"]) * float(np.mean([faces_all[i][1] for i in c["idx"]]))
+    clusters.sort(key=lambda c: -c["w"])
+    top = clusters[0]["w"]
+    performers = [c for c in clusters if c["w"] >= 0.3 * top and len(c["idx"]) >= 3]
+    keep = {i for c in performers for i in c["idx"]}
+    print(f"  正脸 {len(faces_all)} 个，聚成 {len(clusters)} 人，判定演唱者 {len(performers)} 人"
+          f"（出现 {[len(c['idx']) for c in performers]} 次）")
+
+    cands = {k: [] for k, *_ in SHOTS}
+    for i, (t, ratio, conf, sharp, center, _, n, cy) in enumerate(faces_all):
+        for k, _, lo, hi, _ in SHOTS:
+            if not lo <= ratio < hi:
+                continue
+            if k == "full":
+                # 全身镜头脸太小，人脸识别不可靠：要求脸在画面上半部分（舞台）、画面里人脸不超过 3 张
+                if cy > 0.55 or n > 3:
+                    continue
+            elif i not in keep or n > max_faces:  # 特写/半身：必须是识别出的演唱者
+                continue
+            cands[k].append((conf * np.log1p(sharp) * center, t))
+    # 某一类识别确认的帧不够 per 张：放宽补位（脸在上半部分、人脸不超过 3 张、和某位演唱者有一定相似度，挡掉观众）
+    centers = [c["center"] for c in performers]
+    for k, _, lo, hi, _ in SHOTS:
+        if k == "full" or len({t for _, t in cands[k]}) >= per:
+            continue
+        have = {t for _, t in cands[k]}
+        for i, (t, ratio, conf, sharp, center, feat, n, cy) in enumerate(faces_all):
+            like = max((float(feat @ c) for c in centers), default=0.0)
+            if lo <= ratio < hi and t not in have and cy <= 0.6 and n <= 3 and like >= 0.3:
+                cands[k].append((0.5 * conf * np.log1p(sharp) * center, t))  # 补位的分数打折，排在确认帧后面
+    picked = {}
+    for k, *_ in SHOTS:
+        chosen = []
+        for sc, t in sorted(cands[k], reverse=True):
+            if all(abs(t - c) >= gap for c in chosen):
+                chosen.append(t)
+            if len(chosen) == per:
+                break
+        picked[k] = sorted(chosen)
+        print(f"  {k}: 候选 {len(cands[k])} 帧，选 {len(chosen)} 张 {[round(x, 1) for x in picked[k]]}")
+        if len(chosen) < per:
+            print(f"  ⚠ {k} 只找到 {len(chosen)} 张可靠的演唱者画面（宁缺毋滥），需要的话用 --at 手动补")
+    return picked
+
+
 def score(img):
     """清晰度（拉普拉斯方差）为主，太暗/太亮扣分。"""
     g = np.asarray(img.convert("L").resize((480, 270)), dtype=np.float32)
@@ -476,7 +593,10 @@ def main():
     p.add_argument("--title", required=True, help="大标题，一般是歌名")
     p.add_argument("--subtitle", help="副标题，如 'Lorde · 中英字幕'")
     p.add_argument("--video", help="取帧的视频，默认 posts/<name>/source.mp4（原始 4K）")
-    p.add_argument("--n", type=int, default=6, help="候选数量")
+    p.add_argument("--select", choices=["faces", "sharp"], default="faces",
+                   help="faces（默认）：正脸特写/半身/全身各 --per 张；sharp：按清晰度挑 --n 张（旧）")
+    p.add_argument("--per", type=int, default=4, help="faces 模式每个景别几张")
+    p.add_argument("--n", type=int, default=6, help="sharp 模式候选数量")
     p.add_argument("--at", type=float, action="append", help="指定取帧时间（秒），可多次")
     p.add_argument("--image", action="append", help="用外部图片（专辑封面等）代替视频帧，可多次")
     p.add_argument("--fill", action="append", choices=["extend", "blur", "crop"],
@@ -509,6 +629,29 @@ def main():
     globals()["INPAINT_SUBS"] = a.inpaint_subs
     out = Path(a.out_dir) if a.out_dir else ROOT / "posts" / a.name / "post" / "cover"
     out.mkdir(parents=True, exist_ok=True)
+
+    if not a.image and not a.at and a.select == "faces":
+        # 默认：正脸特写 / 正脸半身 / 正脸全身 各 per 张，每类单独一张候选总图，标题高度按景别调整
+        picked = pick_faces(video, a.per)
+        sheets, sheets43 = [], []
+        for k, label, _, _, ty in SHOTS:
+            a.text_y = ty
+            row, row43 = [], []
+            for i, t in enumerate(picked[k], 1):
+                t2 = clean_time(video, t) if a.avoid_subs else t
+                img = grab_hd(video, t2, out) if a.sr else grab(video, t2)
+                c, c43 = compose(img, a), compose(crop_ratio(img, 4 / 3), a)
+                c.save(out / f"{k}_{i:02d}.jpg", quality=95)
+                c43.save(out / f"{k}_{i:02d}_4x3.jpg", quality=95)
+                img.save(out / f"frame_{k}_{i:02d}_{t2:.1f}s.jpg", quality=95)
+                row.append(c)
+                row43.append(c43)
+                print(f"{k}_{i:02d}.jpg + 4x3  <- {t2:.1f}s（{label}）")
+            if row:
+                contact_sheet(row, cols=4).save(out / f"candidates_{k}.jpg", quality=92)
+                contact_sheet(row43, cols=4).save(out / f"candidates_{k}_4x3.jpg", quality=92)
+        print(f"候选总图: {out}/candidates_closeup|half|full(.jpg / _4x3.jpg)")
+        return
 
     if a.image:
         frames = [(f"{Path(pth).stem}_{m}", load_image(pth, m, out)) for pth in a.image for m in a.fill]

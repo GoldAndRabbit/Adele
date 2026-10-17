@@ -15,7 +15,7 @@ workflow/   所有脚本（入口 make_mv.py / make_cover.py / make_meta.py / ge
 skills/     Claude Code skill（.claude/skills/song-mv 是它的软链接）
 assets/     水印 adele-logo.png、4K60 徽章
 bin/        rife-ncnn-vulkan、realesrgan-ncnn-vulkan
-models/     所有模型：rife-v4.6（插帧）、realesrgan/（封面高清化）、melband_roformer/（人声分离：权重 + mss 模型代码）
+models/     所有模型：rife-v4.6（插帧）、realesrgan/（封面高清化）、melband_roformer/（人声分离：权重 + mss 模型代码）、yunet/（封面选帧：人脸检测 + 识别）
 tests/
 posts/<name>/   一首歌一个目录（不入 git）
     lyrics.txt / official.srt   参考歌词（Genius / 官方带时间字幕）
@@ -38,6 +38,13 @@ git clone --depth 1 https://github.com/ZFTurbo/Music-Source-Separation-Training.
 mkdir -p models/melband_roformer && curl -L -o models/melband_roformer/MelBandRoformer.ckpt \
   https://huggingface.co/KimberleyJSN/melbandroformer/resolve/main/MelBandRoformer.ckpt
 
+# 封面选帧的人脸检测 / 识别（OpenCV YuNet + SFace）
+mkdir -p models/yunet
+curl -L -o models/yunet/face_detection_yunet_2023mar.onnx \
+  https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx
+curl -L -o models/yunet/face_recognition_sface_2021dec.onnx \
+  https://huggingface.co/opencv/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx
+
 cp .env.example .env   # 填 DEEPSEEK_API_KEY（翻译/元数据）、ALIYUN_BAILIAN_API_KEY（Qwen3-ASR）
 ```
 
@@ -54,7 +61,7 @@ cp .env.example .env   # 填 DEEPSEEK_API_KEY（翻译/元数据）、ALIYUN_BAI
 .venv/bin/python workflow/make_mv.py --name X --url "..." --lang ja --sub-lang ja --title "..."
 
 # 封面、投稿信息
-.venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕" --at 65.2
+.venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕"   # 正脸特写/半身/全身各 4 张候选
 .venv/bin/python workflow/make_meta.py --name X --subtitle-langs "日语,中文" --note "演出名称、日期、场地"
 ```
 

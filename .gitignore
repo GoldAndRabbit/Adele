@@ -13,3 +13,4 @@ posts/
 models/melband_roformer/
 models/realesrgan/
 bin/realesrgan-ncnn-vulkan
+models/yunet/

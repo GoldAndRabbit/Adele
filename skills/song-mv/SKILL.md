@@ -77,14 +77,18 @@ whisper 定结构 + 强制对齐；纯 MMS 声学全局解码（对唱段整段�
 
 ## 3. 封面（16:9 + 4:3）
 ```bash
-.venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕" --at 65.2 [--inpaint-subs] [--text-y 0.80]
+.venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕" [--inpaint-subs]
+.venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "..." --at 65.2 [--text-y 0.80]   # 指定帧
 ```
-- 优先人物特写（`--at` 指定时间，可从用户截图里的字幕在 srt 里反查时间）；选中的帧 Real-ESRGAN x4 高清化（`--no-sr` 关闭）
+- 默认 `--select faces`：每秒取帧，YuNet 找正脸、SFace 按长相聚类，出现多、脸大的判定为演唱者（可多人），排除观众；
+  按脸高占画面比例分 **正脸特写 `closeup_XX` / 正脸半身 `half_XX` / 正脸全身 `full_XX` 各 4 张**（`--per`），
+  总览图 `candidates_closeup|half|full.jpg`，给用户挑。找不到足够可靠的演唱者画面时宁缺毋滥（会提示），用 `--at` 补
+- `--at` 指定时间（可从用户截图里的字幕在 srt 里反查时间）；选中的帧 Real-ESRGAN x4 高清化（`--no-sr` 关闭）
 - 统一元素：左上水印 + 4K60 徽章；标题撑满 94% 宽，副标题与标题等宽对齐；副标题基线 `--text-y`（默认 0.66，脸在画面中段时调到 0.75~0.80，不超过 0.84）
 - 每张同时出 16:9 `cover_XX.jpg` 和 4:3 `cover_XX_4x3.jpg`（4:3 裁切窗口自动对准人脸）
 - 画面烧了字幕：`--inpaint-subs`（按白字定位字幕框，用周围画面修补）
 - 专辑图等外部图：`--image posts/X/cover_art.png --fill extend`（去边条、放大、两侧只延伸背景色）
-- 选定后 `posts/X/post/cover/` 只留 `cover_01.jpg` 和 `cover_01_4x3.jpg`
+- 用户选定后改名为 `cover_01.jpg` / `cover_01_4x3.jpg`，`posts/X/post/cover/` 只留这两张
 
 ## 4. 投稿元数据 JSON
 ```bash
