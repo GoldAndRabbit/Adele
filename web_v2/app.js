@@ -325,8 +325,11 @@ async function videoPane(c, s, at) {
 // 实验（v1 / v2）的逐句表格；每行时间怎么定的（几个来源投票）在「判定」的鼠标悬停说明里
 const VERDICT = { ok: ["✓", "ok"], warn: ["黄", "warn"], bad: ["红", "bad"], miss: ["漏", "bad"], title: ["", ""],
   unconfirmed: ["未确认", "bad"], patch: ["补", "warn"] };
-const LANG = { en: "英", es: "西", it: "意", pt: "葡", fr: "法", ja: "日", zh: "中", ko: "韩" };
-const langTd = (r) => h("td", { class: "lang", title: r.lang || "" }, LANG[r.lang] || r.lang || "");
+// 语言用国旗显示（鼠标停上去看语言名）
+const LANG = { en: ["🇬🇧", "英语"], es: ["🇪🇸", "西班牙语"], it: ["🇮🇹", "意大利语"], pt: ["🇵🇹", "葡萄牙语"], fr: ["🇫🇷", "法语"],
+  ja: ["🇯🇵", "日语"], zh: ["🇨🇳", "中文"], ko: ["🇰🇷", "韩语"] };
+const flag = (l) => (LANG[l] ? LANG[l][0] : l || "");
+const langTd = (r) => h("td", { class: "lang", title: LANG[r.lang] ? LANG[r.lang][1] : r.lang || "" }, flag(r.lang));
 function expTable(s, x, ver, video, offset) {
   const data = x.rows;
   const M = x.models || { asr: "qwen-audio-3.1-asr-flash" };
@@ -343,7 +346,7 @@ function expTable(s, x, ver, video, offset) {
     r.speech && r.verdict !== "title" ? "讲话" : (VERDICT[r.verdict] || [""])[0]),
   h("td", { class: "zh" }, r.zh || "")));
   const wrap = h("div", { class: "table-wrap" }, h("table", { class: "lines-table exp-table" },
-    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", {}, "语言"), h("th", {}, "Genius 原句"), h("th", {}, M.asr),
+    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", { class: "lang" }, "语言"), h("th", {}, "Genius 原句"), h("th", {}, M.asr),
       h("th", {}, "校准字幕"), h("th", {}, "判定"), h("th", {}, "中文"))),
     h("tbody", {}, ...rows)));
   if (video) {
@@ -364,7 +367,7 @@ function expTable(s, x, ver, video, offset) {
   const n = (v) => data.filter((r) => r.verdict === v).length;
   const p = x.profile;
   const bits = [`${data.filter((r) => !r.removed && r.verdict !== "title").length} 行`,
-    p ? `语言 ${(p.langs || [p.main]).map((l) => LANG[l] || l).join(" / ")}${p.mismatch ? `（识别出来是${LANG[p.heard_main] || p.heard_main}）` : ""}` : "",
+    p ? `语言 ${(p.langs || [p.main]).map(flag).join(" ")}${p.mismatch ? `（识别出来是 ${flag(p.heard_main)}）` : ""}` : "",
     n("warn") && `黄 ${n("warn")}`, n("bad") && `红 ${n("bad")}`, n("patch") && `补 ${n("patch")}`,
     data.filter((r) => r.speech).length && `讲话 ${data.filter((r) => r.speech).length}`,
     n("miss") && `漏 ${n("miss")}`, n("unconfirmed") && `未确认 ${n("unconfirmed")}`].filter(Boolean);
@@ -395,7 +398,7 @@ function linesTable(s, video, offset) {
   h("td", { class: "st" }, r.strategy || ""),
   h("td", { class: "zh" }, r.zh || "")));
   const wrap = h("div", { class: "table-wrap" }, h("table", { class: "lines-table" },
-    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", {}, "语言"), h("th", {}, "Genius 原句"), h("th", {}, "Qwen 复核听到"),
+    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", { class: "lang" }, "语言"), h("th", {}, "Genius 原句"), h("th", {}, "Qwen 复核听到"),
       h("th", {}, "校准字幕"), h("th", {}, "校准策略"), h("th", {}, "中文"))),
     h("tbody", {}, ...rows)));
   if (video) {

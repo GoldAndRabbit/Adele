@@ -289,7 +289,8 @@ td.src { white-space: nowrap; }
 .exp-table td.vd.warn { color: var(--warn); }
 .exp-table td.vd.bad { color: var(--bad); }
 .exp-table tr.v-warn td.o { box-shadow: inset 3px 0 0 var(--warn); }
-.lines-table td.lang { width: 1%; white-space: nowrap; font-size: 12px; color: var(--muted); text-align: center; }
+.lines-table td.lang { width: 1%; white-space: nowrap; font-size: 18px; line-height: 1; text-align: center; cursor: help; }
+.lines-table th.lang { white-space: nowrap; }
 .lines-table tr.speech td.o { color: #ffd666; }
 
 .concert-pick { margin-right: 12px; background: var(--panel); color: var(--fg); border: 1px solid var(--line);
