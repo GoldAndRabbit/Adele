@@ -172,36 +172,46 @@ SHOTS = [  # (类别, 中文名, 脸高/画面高 下限, 上限, 标题高度)
 SFACE = ROOT / "models" / "yunet" / "face_recognition_sface_2021dec.onnx"
 
 
-def frontal_faces(det, img):
-    """YuNet 检测，按五点关键点筛正脸：两眼高度差小、鼻子在两眼中间。返回 (正脸行列表, 检测到的人脸总数)。"""
+def frontality(f):
+    """按五点关键点判断朝向：2 = 正脸（两眼基本水平、鼻子在两眼中间），1 = 接近正脸（3/4 侧脸），0 = 侧脸/歪头。"""
+    rex, rey, lex, ley, nx, ny = f[4:10]
+    eye_d = abs(lex - rex)
+    if eye_d < 1:
+        return 0
+    tilt, mid = abs(ley - rey) / eye_d, (nx - min(rex, lex)) / eye_d
+    if tilt < 0.15 and 0.3 < mid < 0.7:
+        return 2
+    return 1 if tilt < 0.3 and -0.8 < mid < 1.8 else 0
+
+
+def frontal_faces(det, img, level=2):
+    """YuNet 检测，留下朝向 >= level 的脸（见 frontality）。返回 (脸列表, 检测到的人脸总数, BGR 图)。"""
     a = np.asarray(img.convert("RGB"))[:, :, ::-1].copy()
     det.setInputSize((a.shape[1], a.shape[0]))
     _, faces = det.detect(a)
     faces = faces if faces is not None else []
     out = []
     for f in faces:
-        rex, rey, lex, ley, nx, ny = f[4:10]
-        eye_d = abs(lex - rex)
-        if f[14] < 0.8 or eye_d < 1:
-            continue
-        if abs(ley - rey) / eye_d < 0.15 and 0.3 < (nx - min(rex, lex)) / eye_d < 0.7:
+        if f[14] >= 0.8 and frontality(f) >= level:
             out.append(f)
     return out, len(faces), a
 
 
-def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4):
+def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
+    want = per if isinstance(per, dict) else {k: per for k, *_ in SHOTS}   # 每个景别各几张
     """1) 每 step 秒取一帧，YuNet 找正脸，SFace 提取人脸特征；
     2) 按特征聚类：出现得多、脸又大的那几个人是演唱者（观众一般只闪过一两次），可以有多个（组合/合唱）；
     3) 只保留演唱者的正脸、且画面里人脸不超过 max_faces 张（排除观众大全景）的帧，
-       按脸高/画面高分成 特写 / 半身 / 全身，每类挑 per 张（打分 = 置信度 × 脸部清晰度 × 居中，时间间隔 >= gap）。"""
+       按脸高/画面高分成 特写 / 半身 / 全身，每类挑 per 张（打分 = 置信度 × 脸部清晰度 × 居中，时间间隔 >= gap）；
+    4) 正脸不够时依次用 接近正脸（3/4 侧脸）的演唱者帧、和演唱者相似的结构候选补位（老电视节目常常几乎没有纯正脸）。"""
     import cv2
     det = cv2.FaceDetectorYN.create(str(YUNET), "", (960, 540), 0.8, 0.3, 50)
     rec = cv2.FaceRecognizerSF.create(str(SFACE), "")
     d = duration(video)
     faces_all = []  # (t, ratio, conf, sharp, center, feature, n_faces)
-    for t in np.arange(1.0, d - 1.0, step):
+    for t in np.arange(t0 if t0 is not None else 1.0, (t1 if t1 is not None else d) - 1.0, step):
         img = grab(video, float(t)).resize((960, 540))
-        fr, n, bgr = frontal_faces(det, img)
+        fr, n, bgr = frontal_faces(det, img, level=1)
         g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
         for f in fr:
             x, y, w, h = [float(v) for v in f[:4]]
@@ -215,7 +225,7 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4):
             feat = rec.feature(rec.alignCrop(bgr, f)).flatten()
             feat = feat / (np.linalg.norm(feat) + 1e-9)
             faces_all.append((float(t), h / 540, float(f[14]), sharp, 1 - abs((x + w / 2) / 960 - 0.5), feat, n,
-                              (y + h / 2) / 540))
+                              (y + h / 2) / 540, frontality(f)))
     if not faces_all:
         return {k: [] for k, *_ in SHOTS}
 
@@ -236,11 +246,12 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4):
     top = clusters[0]["w"]
     performers = [c for c in clusters if c["w"] >= 0.3 * top and len(c["idx"]) >= 3]
     keep = {i for c in performers for i in c["idx"]}
-    print(f"  正脸 {len(faces_all)} 个，聚成 {len(clusters)} 人，判定演唱者 {len(performers)} 人"
+    print(f"  正脸 {sum(fa[8] == 2 for fa in faces_all)} 个 + 接近正脸 {sum(fa[8] == 1 for fa in faces_all)} 个，聚成 {len(clusters)} 人，判定演唱者 {len(performers)} 人"
           f"（出现 {[len(c['idx']) for c in performers]} 次）")
 
+    # 候选 (档位, 分数, 时间)：档位 3 = 正脸，2 = 接近正脸，1 = 结构补位；先按档位再按分数挑
     cands = {k: [] for k, *_ in SHOTS}
-    for i, (t, ratio, conf, sharp, center, _, n, cy) in enumerate(faces_all):
+    for i, (t, ratio, conf, sharp, center, _, n, cy, fl) in enumerate(faces_all):
         for k, _, lo, hi, _ in SHOTS:
             if not lo <= ratio < hi:
                 continue
@@ -250,28 +261,31 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4):
                     continue
             elif i not in keep or n > max_faces:  # 特写/半身：必须是识别出的演唱者
                 continue
-            cands[k].append((conf * np.log1p(sharp) * center, t))
+            cands[k].append((fl + 1, conf * np.log1p(sharp) * center, t))
     # 某一类识别确认的帧不够 per 张：放宽补位（脸在上半部分、人脸不超过 3 张、和某位演唱者有一定相似度，挡掉观众）
-    centers = [c["center"] for c in performers]
+    # 和演唱者每一张确认过的大正脸逐张比（比聚类中心稳：中心会被侧脸带偏；全身镜头的小脸特征不可靠，不当参照）
+    refs = np.array([faces_all[i][5] for i in keep if faces_all[i][8] == 2 and faces_all[i][1] >= 0.09]).reshape(-1, 128)
     for k, _, lo, hi, _ in SHOTS:
-        if k == "full" or len({t for _, t in cands[k]}) >= per:
+        if k == "full" or len({c[2] for c in cands[k]}) >= want[k]:
             continue
-        have = {t for _, t in cands[k]}
-        for i, (t, ratio, conf, sharp, center, feat, n, cy) in enumerate(faces_all):
-            like = max((float(feat @ c) for c in centers), default=0.0)
-            if lo <= ratio < hi and t not in have and cy <= 0.6 and n <= 3 and like >= 0.3:
-                cands[k].append((0.5 * conf * np.log1p(sharp) * center, t))  # 补位的分数打折，排在确认帧后面
+        have = {c[2] for c in cands[k]}
+        for i, (t, ratio, conf, sharp, center, feat, n, cy, fl) in enumerate(faces_all):
+            like = float((refs @ feat).max()) if len(refs) else 0.0
+            if lo <= ratio < hi and t not in have and cy <= 0.6 and n <= 3 and like >= 0.35:
+                cands[k].append((1, conf * np.log1p(sharp) * center, t))
     picked = {}
     for k, *_ in SHOTS:
         chosen = []
-        for sc, t in sorted(cands[k], reverse=True):
+        for _, _, t in sorted(cands[k], reverse=True):
             if all(abs(t - c) >= gap for c in chosen):
                 chosen.append(t)
-            if len(chosen) == per:
+            if len(chosen) == want[k]:
                 break
         picked[k] = sorted(chosen)
-        print(f"  {k}: 候选 {len(cands[k])} 帧，选 {len(chosen)} 张 {[round(x, 1) for x in picked[k]]}")
-        if len(chosen) < per:
+        tier = {t: max(c[0] for c in cands[k] if c[2] == t) for t in chosen}
+        print(f"  {k}: 候选 {len(cands[k])} 帧，选 {len(chosen)} 张 "
+              + str([f"{x:.0f}s{'' if tier[x] == 3 else '(近正脸)' if tier[x] == 2 else '(补位)'}" for x in picked[k]]))
+        if len(chosen) < want[k]:
             print(f"  ⚠ {k} 只找到 {len(chosen)} 张可靠的演唱者画面（宁缺毋滥），需要的话用 --at 手动补")
     return picked
 
@@ -286,9 +300,10 @@ def score(img):
     return sharp * penalty
 
 
-def pick_frames(video, n, samples=48):
-    d = duration(video)
-    times = np.linspace(d * 0.08, d * 0.95, samples)
+def pick_frames(video, n, samples=48, t0=None, t1=None):
+    lo, hi = t0 or 0.0, t1 or duration(video)
+    d = hi - lo
+    times = np.linspace(lo + d * 0.08, lo + d * 0.95, samples)
     scored = []
     for t in times:
         img = grab(video, t)
@@ -556,8 +571,16 @@ def compose(frame, a):
     # 标题撑满到接近左右边缘（默认 94% 画布宽），字号再受高度上限约束
     tf = fit_width(a.title, title_key, int(cw * a.title_width), int(ch * 0.30))
     title_w = ink_width(a.title, tf)
-    sub_y = int(ch * a.text_y)
-    if a.subtitle:
+    sub_y = int(ch * (a.text_y - a.text_lift))
+    if a.subtitle and a.sub_fit == "natural":
+        # 正常字距、居中：字号最大到标题的 0.72（至少画布高的 11.5%，但不超过标题的 0.85——长标题字小，
+        # 副标题不能比标题还大），宽度最多到标题宽的 88% / 画布宽的 85%，不拉宽到和标题等宽
+        sf = fit_width(a.subtitle, "sub", max(int(title_w * 0.88), int(cw * 0.85)),
+                       int(min(tf.size * 0.85, max(ch * 0.115, tf.size * 0.72))))
+        title_y = sub_y - int(sf.size * 1.12)
+        draw_text(canvas, (cw / 2, title_y), a.title, tf)
+        draw_text(canvas, (cw / 2, sub_y), a.subtitle, sf, stroke=0.08)
+    elif a.subtitle:
         # “A · B · C” 里的空格在宋体里很宽，白白占掉宽度、字就放不大；去掉分隔符两边的空格
         a.subtitle = re.sub(r"\s*[·・]\s*", "·", a.subtitle)
         # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
@@ -596,12 +619,19 @@ def main():
     p.add_argument("--select", choices=["faces", "sharp"], default="faces",
                    help="faces（默认）：正脸特写/半身/全身各 --per 张；sharp：按清晰度挑 --n 张（旧）")
     p.add_argument("--per", type=int, default=4, help="faces 模式每个景别几张")
+    p.add_argument("--closeup-min", type=float, default=0.22,
+                   help="特写的脸高下限（占画面高），默认 0.22；演唱会转播大特写少，可降到 0.14（半身的上限跟着变）")
+    p.add_argument("--per-shot", help="faces 模式按景别指定张数，如 closeup=6,half=3,full=3（覆盖 --per）")
     p.add_argument("--n", type=int, default=6, help="sharp 模式候选数量")
     p.add_argument("--at", type=float, action="append", help="指定取帧时间（秒），可多次")
     p.add_argument("--image", action="append", help="用外部图片（专辑封面等）代替视频帧，可多次")
+    p.add_argument("--start", type=float, help="只在视频的这一段里挑帧（秒），整场演唱会按单曲取封面用")
+    p.add_argument("--end", type=float)
     p.add_argument("--fill", action="append", choices=["extend", "blur", "crop"],
                    help="非 16:9 图片的补齐方式，可多次（每种出一张），默认 extend + blur")
     p.add_argument("--out-dir", help="输出目录，默认 posts/<name>/post/cover")
+    p.add_argument("--text-lift", type=float, default=0.0,
+                   help="文字整体上移（占画面高度），各景别的默认高度都减去它；底部有遮挡 / 压暗条时用")
     p.add_argument("--text-y", type=float, default=TEXT_Y,
                    help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
     p.add_argument("--no-sr", dest="sr", action="store_false",
@@ -617,6 +647,10 @@ def main():
     p.add_argument("--title-width", type=float, default=0.94,
                    help="标题撑满的画布宽度比例（默认 0.94，接近左右边缘）；副标题与标题等宽对齐")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
+    p.add_argument("--sub-fit", choices=["stretch", "natural"], default="stretch",
+                   help="副标题：stretch（默认）拉开字距和标题等宽；natural 正常字距、不刻意拉宽")
+    p.add_argument("--recompose", action="store_true",
+                   help="只重排文字：用 out-dir 里已有的高清帧（frame_*.jpg）重新生成封面，不重新挑帧、不重新高清化")
     p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png），可多次")
     p.add_argument("--logo", default="assets/adele-logo.png")
     p.add_argument("--badge", default="assets/4K60-logo.jpg", help="4K60 徽章图，不存在时用代码画的徽章")
@@ -630,9 +664,34 @@ def main():
     out = Path(a.out_dir) if a.out_dir else ROOT / "posts" / a.name / "post" / "cover"
     out.mkdir(parents=True, exist_ok=True)
 
+    if a.recompose:
+        ty, base = {k: y for k, _, _, _, y in SHOTS}, a.text_y
+        for f in sorted(out.glob("frame_*.jpg")):
+            m = re.match(r"frame_(?:(closeup|half|full)_)?(\d\d)_", f.name)
+            if not m:
+                continue
+            k = m[1] or "cover"
+            a.text_y = ty.get(k, base)   # 按清晰度补的（cover_XX）用默认高度
+            img = Image.open(f).convert("RGB")
+            compose(img, a).save(out / f"{k}_{m[2]}.jpg", quality=95)
+            compose(crop_ratio(img, 4 / 3), a).save(out / f"{k}_{m[2]}_4x3.jpg", quality=95)
+            print(f"{k}_{m[2]}.jpg + 4x3  <- {f.name}")
+        return
+
     if not a.image and not a.at and a.select == "faces":
         # 默认：正脸特写 / 正脸半身 / 正脸全身 各 per 张，每类单独一张候选总图，标题高度按景别调整
-        picked = pick_faces(video, a.per)
+        if a.closeup_min != 0.22:   # 特写 / 半身的分界
+            SHOTS[0] = (SHOTS[0][0], SHOTS[0][1], a.closeup_min, *SHOTS[0][3:])
+            SHOTS[1] = (*SHOTS[1][:3], a.closeup_min, SHOTS[1][4])
+        per = {k: a.per for k, *_ in SHOTS}
+        for kv in (a.per_shot or "").split(","):
+            if "=" in kv:
+                k, v = kv.split("=")
+                per[k.strip()] = int(v)
+        picked = pick_faces(video, per, t0=a.start, t1=a.end)
+        for k, *_ in SHOTS:  # 清掉上一轮的同类产物，免得张数变少时残留旧图
+            for f in [*out.glob(f"{k}_*.jpg"), *out.glob(f"frame_{k}_*.jpg")]:
+                f.unlink()
         sheets, sheets43 = [], []
         for k, label, _, _, ty in SHOTS:
             a.text_y = ty
@@ -656,7 +715,7 @@ def main():
     if a.image:
         frames = [(f"{Path(pth).stem}_{m}", load_image(pth, m, out)) for pth in a.image for m in a.fill]
     else:
-        times = a.at if a.at else [t for t, _ in pick_frames(video, a.n)]
+        times = a.at if a.at else [t for t, _ in pick_frames(video, a.n, t0=a.start, t1=a.end)]
         if a.avoid_subs:
             times = [clean_time(video, t) for t in times]
         if a.sr:

@@ -17,6 +17,8 @@ assets/     水印 adele-logo.png、4K60 徽章
 bin/        rife-ncnn-vulkan、realesrgan-ncnn-vulkan
 models/     所有模型：rife-v4.6（插帧）、realesrgan/（封面高清化）、melband_roformer/（人声分离：权重 + mss 模型代码）、yunet/（封面选帧：人脸检测 + 识别）
 tests/
+workflow_v2/  v2：整场演唱会流程（见下文「v2：整场演唱会」）    server_v2/ web_v2/  v2 审核网页
+docs/design/  方案文档
 posts/<name>/   一首歌一个目录（不入 git）
     lyrics.txt / official.srt   参考歌词（Genius / 官方带时间字幕）
     lyrics.srt → lyrics.ass     对齐后的原文字幕 → 双语字幕
@@ -75,6 +77,26 @@ cp .env.example .env   # 填 DEEPSEEK_API_KEY（翻译/元数据）、ALIYUN_BAI
 ```
 
 自动识别歌名、歌手，在 Genius 找原版歌词，保存到 `posts/X/lyrics.txt`（默认去掉 `[Verse]` 等标签，`--keep-sections` 保留）。识别不准时用 `--title` / `--artist` 或 `--genius-url` 指定；已有文件默认不覆盖（`--overwrite`）。设置 `GENIUS_ACCESS_TOKEN` 可改用官方 API 搜索。
+
+## v2：整场演唱会
+
+整场演唱会 → 按歌单拆成单曲 → 每首出双语字幕、候选封面、介绍 → 网页人工审核 → 只对通过的歌做 4K60。和上面的单曲流程（v1）分开，数据在 `concerts/<场次>/`（不入 git）。方案见 [docs/design/v2_concert_pipeline.md](docs/design/v2_concert_pipeline.md)。
+
+```bash
+# 建场次（title-box：转播画面上歌名字幕的位置，有就填，定位最准）
+.venv/bin/python -m workflow_v2 new shakira_madrid_2026 --source "~/Downloads/xxx.mkv" --artist Shakira \
+    --date 2026-10-03 --city Madrid --venue "Estadio Shakira" --title-box 40,976,660,56 --cover-mask-bottom 0.12
+# 歌单：.env 里有 SETLISTFM_API_KEY 时加 --setlist-url 自动拉取；否则手写 concerts/<场次>/setlist.txt
+# 审核前的全部阶段（ingest setlist lyrics separate segment refine preview package），不切视频成品、不抽帧
+# refine = v1 对齐（--dense-order free）+ v1 逐句 Qwen 复核 + 讲话 + 翻译；preview = 每首切 720p 审核预览
+.venv/bin/python -m workflow_v2 run shakira_madrid_2026
+.venv/bin/python -m workflow_v2 run shakira_madrid_2026 --from refine --songs 8,9   # 只重跑某几首
+# 审核网页 http://127.0.0.1:8160
+.venv/bin/python -m workflow_v2 serve
+# 审核通过后：唯一会切视频 / 插帧 / 加水印的命令，只处理通过且之后没改过的歌
+.venv/bin/python -m workflow_v2 hd shakira_madrid_2026 --dry-run
+.venv/bin/python -m workflow_v2 hd shakira_madrid_2026
+```
 
 ## 测试
 

@@ -295,13 +295,19 @@ def main():
         i0, i1 = int(t / HOP), int((t + WIN) / HOP)
         if db[i0:i1].size == 0 or db[i0:i1].max() < loud - 25:  # 基本没人声
             return ""
-        return transcribe(client, y[int(t * SR):int(min(dur, t + WIN) * SR)], a.lang) or ""
+        r = transcribe(client, y[int(t * SR):int(min(dur, t + WIN) * SR)], a.lang)
+        return None if r is None else r  # None = 请求失败（如 429 限流），和「识别结果为空」区分开
 
     with ThreadPoolExecutor(3) as ex:
         texts = list(ex.map(job, starts))
+    failed = sum(x is None for x in texts)
+    if failed:
+        print(f"  警告：{failed}/{len(texts)} 个窗口识别失败（不写缓存，重跑会再请求）")
     if a.cache:
-        cache.update({f"{t:.2f}": x for t, x in zip(starts, texts)})
+        # 失败的窗口不进缓存：否则重跑会一直复用空结果，这段歌词永远没有证据
+        cache.update({f"{t:.2f}": x for t, x in zip(starts, texts) if x is not None})
         json.dump(cache, open(a.cache, "w"), ensure_ascii=False)
+    texts = [x or "" for x in texts]
 
     lines = [t for t, _ in acoustic.section_lines(a.ref)]
     uniq = sorted(set(lines), key=lines.index)

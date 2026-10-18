@@ -8,6 +8,7 @@ cookies*.txt
 
 # 每首歌的数据和成品（体积大，且含完整歌词，不入库）
 posts/
+concerts/
 
 # 模型：大文件 / 外部代码，按 README 下载
 models/melband_roformer/

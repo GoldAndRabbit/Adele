@@ -36,10 +36,48 @@ def wav_bytes(y):
     return buf.getvalue()
 
 
+_CACHE, _CACHE_LOCK = {}, __import__("threading").Lock()
+
+
+def _cache():
+    """环境变量 QWEN_CACHE=<json 路径> 时启用识别缓存（v2 精校用）：同一段音频 + 同一语言只识别一次，
+    重跑结果不再每次不一样。没设置时（v1 默认）照旧每次都调接口。"""
+    path = os.environ.get("QWEN_CACHE")
+    if not path:
+        return None, None
+    if path not in _CACHE:
+        f = Path(path)
+        _CACHE[path] = json.loads(f.read_text()) if f.exists() else {}
+    return path, _CACHE[path]
+
+
 def transcribe(client, y, lang):
-    b64 = base64.b64encode(wav_bytes(y)).decode()
+    data = wav_bytes(y)
+    path, cache = _cache()
+    if cache is not None:
+        import hashlib
+        key = hashlib.sha1(data + (lang or "").encode()).hexdigest()
+        if key in cache:
+            return cache[key]
+        text = _transcribe(client, data, lang)
+        if text is not None:   # 失败不缓存
+            with _CACHE_LOCK:
+                cache[key] = text
+                f = Path(path)
+                if f.exists():   # 别的进程（v2 精校里的 verify 子进程）写进去的条目合并进来，不覆盖
+                    for k, v in json.loads(f.read_text()).items():
+                        cache.setdefault(k, v)
+                tmp = f.with_suffix(f".{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(cache, ensure_ascii=False))
+                tmp.replace(path)
+        return text
+    return _transcribe(client, data, lang)
+
+
+def _transcribe(client, data, lang):
+    b64 = base64.b64encode(data).decode()
     opts = {"enable_itn": False}
-    if lang:
+    if lang and lang != "auto":  # auto = 不指定语言，让模型自己判断（中英 / 英西混唱的串烧）
         opts["language"] = lang
     import time
     for attempt in range(8):

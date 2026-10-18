@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """项目路径约定：一首歌的所有文件都在 posts/<name>/ 下，模型都在 models/ 下。"""
 
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / "workflow"
-POSTS = ROOT / "posts"
+POSTS = Path(os.environ.get("ADELE_POSTS") or ROOT / "posts")  # v2 把每首歌的目录放在 concerts/<场次>/songs/ 下
 MODELS = ROOT / "models"
 ASSETS = ROOT / "assets"
 BIN = ROOT / "bin"

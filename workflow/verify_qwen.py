@@ -74,6 +74,8 @@ def main():
         asr = list(ex.map(job, subs.events))
 
     kept, swapped, suspect, out = 0, [], [], []
+    heard = [{"start": round(e.start / 1000, 2), "end": round(e.end / 1000, 2), "text": e.plaintext, "heard": t}
+             for e, t in zip(subs.events, asr)]  # 每句截出来识别到的文字（审核页并列显示用）
     failed, prev = 0, None
     events = list(subs.events)
     for n, (e, text) in enumerate(zip(events, asr)):
@@ -123,7 +125,7 @@ def main():
     subs.events = clean
     subs.save(a.output)
     if a.report:
-        Path(a.report).write_text(json.dumps({"kept": kept, "swapped": swapped, "suspect": suspect},
+        Path(a.report).write_text(json.dumps({"kept": kept, "swapped": swapped, "suspect": suspect, "lines": heard},
                                              ensure_ascii=False, indent=1))
     print(f"逐句 Qwen 复核：通过 {kept} 句，换句 {len(swapped)} 处，可疑 {len(suspect)} 处，识别失败 {failed} 句")
     for x in swapped:

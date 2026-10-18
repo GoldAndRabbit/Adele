@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from paths import BIN, MODELS, ROOT, WORKFLOW as PIPE, Song  # noqa: E402
+from paths import BIN, MODELS, POSTS, ROOT, WORKFLOW as PIPE, Song  # noqa: E402
 
 VENV_BIN = ROOT / ".venv" / "bin"
 SEP_PY = ROOT / ".venv-sep" / "bin" / "python"
@@ -201,8 +201,8 @@ def stage_lyrics(a, w):
             if v:
                 cmd += [k, v]
         if subprocess.run([str(c) for c in cmd]).returncode == 0:
-            (ROOT / "posts" / tmp / "lyrics.txt").replace(secs)
-        shutil.rmtree(ROOT / "posts" / tmp, ignore_errors=True)
+            (POSTS / tmp / "lyrics.txt").replace(secs)
+        shutil.rmtree(POSTS / tmp, ignore_errors=True)
     print(f"参考歌词: {p['txt']}（建议过一眼：现场版和录音室版的歌词可能不同）")
     p["source"].write_text("reference")
 
@@ -257,7 +257,7 @@ def stage_align(a, w):
         # 有带段落标记的歌词（lyrics 阶段一并抓取）就按段落对齐：段内严格按歌词、段间跟现场顺序；否则逐窗匹配
         secs = w / "lyrics_sections.txt"
         use_secs = False
-        if secs.exists():
+        if secs.exists() and a.dense_order != "free":
             import acoustic
             n_sec, n_ref = len(acoustic.section_lines(secs)), len(acoustic.section_lines(ref))
             # 段落版明显比参考歌词少（抓取失败/只抓到一部分），不用它，避免整段歌词被当成没唱
@@ -484,6 +484,9 @@ def main():
     p.add_argument("--align-mode", choices=["dense", "qwen", "lyrics"], default="dense",
                    help="dense（默认）：2.5s 密集窗口 Qwen 识别定结构 + 逐句局部对齐；qwen：10~20s 分块（旧）；"
                         "lyrics：完全按歌词顺序对齐")
+    p.add_argument("--dense-order", choices=["auto", "free"], default="auto",
+                   help="dense 对齐的顺序：auto（默认）有完整的段落歌词就按段落，否则逐窗匹配；free 一律逐窗匹配"
+                        "（演唱会缩短版 / 串烧：按段落会把只唱了一半的段补齐，输出没唱的句子）")
     p.add_argument("--no-speech", action="store_true", help="不识别歌词之外的说话（开场白/谢幕）")
     p.add_argument("--speech-gaps", action="store_true", help="说话识别也处理歌曲中间较长的无字幕人声段")
     p.add_argument("--lead", type=float, default=0.12, help="字幕比开口提前出现的秒数（align 阶段）")
