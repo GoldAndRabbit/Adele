@@ -293,9 +293,10 @@ async function videoPane(c, s, at) {
   // 整体提前量：字幕文件里已经统一提前 BAKED_LEAD；切换时整体往后 / 往前挪，播放中立即生效，只影响预览
   const BAKED_LEAD = 0.2;
   let lead = BAKED_LEAD;
-  try { const v = parseFloat(localStorage.getItem("subLead")); if (!Number.isNaN(v)) lead = v; } catch (e) { /* 无痕模式 */ }
+  const LEADS = [[0.2, "提前 0.2s"], [0.4, "0.4s"], [0.6, "0.6s"], [0.8, "0.8s"], [0, "不提前"]];
+  try { const v = parseFloat(localStorage.getItem("subLead")); if (LEADS.some(([x]) => x === v)) lead = v; } catch (e) { /* 无痕模式 */ }
   const applyLead = () => { if (overlay) { overlay.delay = BAKED_LEAD - lead; overlay.tick(); } };
-  const leadSwitch = h("div", { class: "seg" }, ...[[0.2, "提前 0.2s"], [0.3, "提前 0.3s"], [0, "不提前"]].map(([v, label]) =>
+  const leadSwitch = h("div", { class: "seg" }, ...LEADS.map(([v, label]) =>
     h("button", { "data-v": v, class: v === lead ? "on" : null, onclick: () => {
       lead = v;
       try { localStorage.setItem("subLead", String(v)); } catch (e) { /* 无痕模式 */ }
