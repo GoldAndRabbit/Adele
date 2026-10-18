@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 W, H = 1920, 1080
-TEXT_Y = 0.66  # 副标题基线位置（占画面高度）；B 站底部约 16% 会盖播放量/时长，不要超过 0.84
+TEXT_Y = 0.82  # 副标题基线位置（占画面高度），所有景别统一；B 站底部约 16% 会盖播放量/时长，不要超过 0.84
 
 FONTS = {
     "sans": ("/System/Library/Fonts/Avenir Next.ttc", 8),                    # Avenir Next Heavy
@@ -162,10 +162,14 @@ def grab_hd(video, t, work):
 # ---------------------------------------------------------------- 按正脸挑帧
 
 YUNET = ROOT / "models" / "yunet" / "face_detection_yunet_2023mar.onnx"
-SHOTS = [  # (类别, 中文名, 脸高/画面高 下限, 上限, 标题高度)
-    ("closeup", "正脸特写", 0.22, 1.00, 0.82),
-    ("half", "正脸半身", 0.09, 0.22, 0.74),
-    ("full", "正脸全身", 0.035, 0.09, 0.66),
+# 脸部清晰度 = 960 宽画面上脸部的拉普拉斯方差 × 脸高占比（大脸皮肤平滑、方差天然低，乘上脸高才和小脸可比）；
+# < 本景别第 75 百分位 × BLUR_REL，或 < BLUR_FLOOR，算糊（Lose Yourself：糊的 3.9~5.5，清楚的 6~17；候选里糊的多，p75 只有 ~8）
+BLUR_REL, BLUR_FLOOR = 0.7, 3.0
+HALF_MIN_FALLBACK = 0.06  # 半身不够时，脸高 0.06~0.09（七分身）的演唱者帧也拿来补
+SHOTS = [  # (类别, 中文名, 脸高/画面高 下限, 上限)；标题高度各景别统一（以前按景别抬高，半身 / 全身会压到左上的 4K 徽章）
+    ("closeup", "正脸特写", 0.22, 1.00),
+    ("half", "正脸半身", 0.09, 0.22),
+    ("full", "正脸全身", 0.035, 0.09),
 ]
 
 
@@ -252,8 +256,8 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
     # 候选 (档位, 分数, 时间)：档位 3 = 正脸，2 = 接近正脸，1 = 结构补位；先按档位再按分数挑
     cands = {k: [] for k, *_ in SHOTS}
     for i, (t, ratio, conf, sharp, center, _, n, cy, fl) in enumerate(faces_all):
-        for k, _, lo, hi, _ in SHOTS:
-            if not lo <= ratio < hi:
+        for k, _, lo, hi in SHOTS:
+            if not want[k] or not lo <= ratio < hi:
                 continue
             if k == "full":
                 # 全身镜头脸太小，人脸识别不可靠：要求脸在画面上半部分（舞台）、画面里人脸不超过 3 张
@@ -261,30 +265,52 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
                     continue
             elif i not in keep or n > max_faces:  # 特写/半身：必须是识别出的演唱者
                 continue
-            cands[k].append((fl + 1, conf * np.log1p(sharp) * center, t))
+            cands[k].append((fl + 1, conf * np.log1p(sharp) * center, t, sharp * ratio))
     # 某一类识别确认的帧不够 per 张：放宽补位（脸在上半部分、人脸不超过 3 张、和某位演唱者有一定相似度，挡掉观众）
     # 和演唱者每一张确认过的大正脸逐张比（比聚类中心稳：中心会被侧脸带偏；全身镜头的小脸特征不可靠，不当参照）
     refs = np.array([faces_all[i][5] for i in keep if faces_all[i][8] == 2 and faces_all[i][1] >= 0.09]).reshape(-1, 128)
-    for k, _, lo, hi, _ in SHOTS:
-        if k == "full" or len({c[2] for c in cands[k]}) >= want[k]:
+    for k, _, lo, hi in SHOTS:
+        if k == "full" or not want[k] or len({c[2] for c in cands[k]}) >= want[k]:
             continue
         have = {c[2] for c in cands[k]}
         for i, (t, ratio, conf, sharp, center, feat, n, cy, fl) in enumerate(faces_all):
             like = float((refs @ feat).max()) if len(refs) else 0.0
             if lo <= ratio < hi and t not in have and cy <= 0.6 and n <= 3 and like >= 0.35:
-                cands[k].append((1, conf * np.log1p(sharp) * center, t))
+                cands[k].append((1, conf * np.log1p(sharp) * center, t, sharp * ratio))
+    # 半身还不够：脸再小一点（七分身）、识别为演唱者（或和演唱者相似、在画面上半部分）的帧垫底补位
+    if want.get("half") and len({c[2] for c in cands["half"]}) < want["half"]:
+        have = {c[2] for c in cands["half"]}
+        for i, (t, ratio, conf, sharp, center, feat, n, cy, fl) in enumerate(faces_all):
+            like = float((refs @ feat).max()) if len(refs) else 0.0
+            if (HALF_MIN_FALLBACK <= ratio < SHOTS[1][2] and t not in have
+                    and (i in keep and n <= max_faces or cy <= 0.6 and n <= 3 and like >= 0.35)):
+                cands["half"].append((0, conf * np.log1p(sharp) * center, t, sharp * ratio))
+    # 去掉糊的（动态模糊 / 失焦）：见 BLUR_REL。清晰度和片源关系很大（4K 转播特写比 2009 年的 Lose Yourself 高好几倍），
+    # 只能按本首、本景别相对比
     picked = {}
     for k, *_ in SHOTS:
-        chosen = []
-        for _, _, t in sorted(cands[k], reverse=True):
-            if all(abs(t - c) >= gap for c in chosen):
-                chosen.append(t)
+        if not want[k]:
+            picked[k] = []
+            continue
+        thr = max(BLUR_FLOOR, BLUR_REL * float(np.percentile([c[3] for c in cands[k]], 75))) if cands[k] else 0
+        blurry = len({c[2] for c in cands[k] if c[3] < thr})
+        cands[k] = [c for c in cands[k] if c[3] >= thr]
+        # 间隔 gap 秒挑；凑不够 want 张就把间隔减半再挑（同一个镜头里也能挑出不太一样的两张）
+        for g in (gap, gap / 2, gap / 4):
+            chosen = []
+            for _, _, t, _ in sorted(cands[k], reverse=True):
+                if all(abs(t - c) >= g for c in chosen):
+                    chosen.append(t)
+                if len(chosen) == want[k]:
+                    break
             if len(chosen) == want[k]:
                 break
+        if blurry:
+            print(f"  {k}: 去掉糊的 {blurry} 帧（脸部清晰度 < {thr:.1f}）")
         picked[k] = sorted(chosen)
         tier = {t: max(c[0] for c in cands[k] if c[2] == t) for t in chosen}
         print(f"  {k}: 候选 {len(cands[k])} 帧，选 {len(chosen)} 张 "
-              + str([f"{x:.0f}s{'' if tier[x] == 3 else '(近正脸)' if tier[x] == 2 else '(补位)'}" for x in picked[k]]))
+              + str([f"{x:.0f}s{'' if tier[x] == 3 else '(近正脸)' if tier[x] == 2 else '(补位)' if tier[x] == 1 else '(七分身)'}" for x in picked[k]]))
         if len(chosen) < want[k]:
             print(f"  ⚠ {k} 只找到 {len(chosen)} 张可靠的演唱者画面（宁缺毋滥），需要的话用 --at 手动补")
     return picked
@@ -554,6 +580,7 @@ def compose(frame, a):
     bw = int(ch * 0.231)
     badge_path = ROOT / a.badge
     b = badge_from_file(badge_path, bw) if badge_path.exists() else badge(bw)
+    badge_bottom = 34 + logo.height + 10 + b.height
     paste_with_shadow(canvas, b, (60 + (lw - b.width) // 2, 34 + logo.height + 10))
 
     # 右上: 额外 logo（队徽等）
@@ -569,29 +596,38 @@ def compose(frame, a):
     # 标题 + 副标题，整体底边在安全线以上
     title_key = a.title_font or "cjk"  # 中日英标题统一用冬青黑体 W8，和之前的封面一致
     # 标题撑满到接近左右边缘（默认 94% 画布宽），字号再受高度上限约束
-    tf = fit_width(a.title, title_key, int(cw * a.title_width), int(ch * 0.30))
-    title_w = ink_width(a.title, tf)
     sub_y = int(ch * (a.text_y - a.text_lift))
-    if a.subtitle and a.sub_fit == "natural":
-        # 正常字距、居中：字号最大到标题的 0.72（至少画布高的 11.5%，但不超过标题的 0.85——长标题字小，
-        # 副标题不能比标题还大），宽度最多到标题宽的 88% / 画布宽的 85%，不拉宽到和标题等宽
-        sf = fit_width(a.subtitle, "sub", max(int(title_w * 0.88), int(cw * 0.85)),
-                       int(min(tf.size * 0.85, max(ch * 0.115, tf.size * 0.72))))
-        title_y = sub_y - int(sf.size * 1.12)
-        draw_text(canvas, (cw / 2, title_y), a.title, tf)
-        draw_text(canvas, (cw / 2, sub_y), a.subtitle, sf, stroke=0.08)
-    elif a.subtitle:
-        # “A · B · C” 里的空格在宋体里很宽，白白占掉宽度、字就放不大；去掉分隔符两边的空格
+    if a.subtitle:
+        # 宋体的「·」是全角字、两边自带留白，再加空格就空得很丑（也白白占宽度、字放不大）；去掉分隔符两边的空格
         a.subtitle = re.sub(r"\s*[·・]\s*", "·", a.subtitle)
-        # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
-        sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.68))
-        gaps = max(1, len(a.subtitle) - 1)
-        tracking = max(0.0, (title_w - ink_width(a.subtitle, sf)) / gaps)
-        title_y = sub_y - int(sf.size * 1.12)
-        draw_text(canvas, (cw / 2, title_y), a.title, tf)
+
+    def layout(max_size):
+        tf = fit_width(a.title, title_key, int(cw * a.title_width), max_size)
+        title_w = ink_width(a.title, tf)
+        if not a.subtitle:
+            return tf, None, 0.0, sub_y
+        if a.sub_fit == "natural":
+            # 正常字距、居中：字号最大到标题的 0.72（至少画布高的 11.5%，但不超过标题的 0.85——长标题字小，
+            # 副标题不能比标题还大），宽度最多到标题宽的 88% / 画布宽的 85%，不拉宽到和标题等宽
+            sf = fit_width(a.subtitle, "sub", max(int(title_w * 0.88), int(cw * 0.85)),
+                           int(min(tf.size * 0.85, max(ch * 0.115, tf.size * 0.72))))
+            tracking = 0.0
+        else:
+            # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
+            sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.68))
+            tracking = max(0.0, (title_w - ink_width(a.subtitle, sf)) / max(1, len(a.subtitle) - 1))
+        return tf, sf, tracking, sub_y - int(sf.size * 1.12)
+
+    # 标题撑满宽度，必然横跨左上角的 logo + 4K 徽章：字顶不能高过徽章底边，太高就缩小字号（底边位置不变）
+    max_size = int(ch * 0.30)
+    while True:
+        tf, sf, tracking, title_y = layout(max_size)
+        if title_y + tf.getbbox(a.title, anchor="ms")[1] >= badge_bottom + int(ch * 0.03) or max_size <= 40:
+            break
+        max_size = int(max_size * 0.95)
+    draw_text(canvas, (cw / 2, title_y), a.title, tf)
+    if sf:
         draw_text_tracked(canvas, cw / 2, sub_y, a.subtitle, sf, tracking, 0.08)
-    else:
-        draw_text(canvas, (cw / 2, sub_y), a.title, tf)
     return canvas.convert("RGB")
 
 
@@ -665,13 +701,11 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     if a.recompose:
-        ty, base = {k: y for k, _, _, _, y in SHOTS}, a.text_y
         for f in sorted(out.glob("frame_*.jpg")):
             m = re.match(r"frame_(?:(closeup|half|full)_)?(\d\d)_", f.name)
             if not m:
                 continue
             k = m[1] or "cover"
-            a.text_y = ty.get(k, base)   # 按清晰度补的（cover_XX）用默认高度
             img = Image.open(f).convert("RGB")
             compose(img, a).save(out / f"{k}_{m[2]}.jpg", quality=95)
             compose(crop_ratio(img, 4 / 3), a).save(out / f"{k}_{m[2]}_4x3.jpg", quality=95)
@@ -679,10 +713,10 @@ def main():
         return
 
     if not a.image and not a.at and a.select == "faces":
-        # 默认：正脸特写 / 正脸半身 / 正脸全身 各 per 张，每类单独一张候选总图，标题高度按景别调整
+        # 默认：正脸特写 / 正脸半身 / 正脸全身 各 per 张，每类单独一张候选总图
         if a.closeup_min != 0.22:   # 特写 / 半身的分界
-            SHOTS[0] = (SHOTS[0][0], SHOTS[0][1], a.closeup_min, *SHOTS[0][3:])
-            SHOTS[1] = (*SHOTS[1][:3], a.closeup_min, SHOTS[1][4])
+            SHOTS[0] = (*SHOTS[0][:2], a.closeup_min, SHOTS[0][3])
+            SHOTS[1] = (*SHOTS[1][:3], a.closeup_min)
         per = {k: a.per for k, *_ in SHOTS}
         for kv in (a.per_shot or "").split(","):
             if "=" in kv:
@@ -693,8 +727,7 @@ def main():
             for f in [*out.glob(f"{k}_*.jpg"), *out.glob(f"frame_{k}_*.jpg")]:
                 f.unlink()
         sheets, sheets43 = [], []
-        for k, label, _, _, ty in SHOTS:
-            a.text_y = ty
+        for k, label, *_ in SHOTS:
             row, row43 = [], []
             for i, t in enumerate(picked[k], 1):
                 t2 = clean_time(video, t) if a.avoid_subs else t

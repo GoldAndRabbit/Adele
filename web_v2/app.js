@@ -47,6 +47,11 @@ const state = { concerts: [], concert: null, song: null, cleanup: [] };
 
 function renderSidebar(route) {
   const c = state.concert;
+  // 顶栏的场次切换（侧边栏收起时也能切）
+  const pick = $("#concert-pick");
+  pick.replaceChildren(...state.concerts.map((x) => h("option", { value: x.slug }, `${x.title}（${x.songs} 首）`)));
+  pick.value = route.slug || "";
+  pick.onchange = () => { location.hash = `#/${pick.value}`; };
   $("#concerts").replaceChildren(...state.concerts.map((x) =>
     h("a", { href: `#/${x.slug}`, class: x.slug === route.slug && !route.name ? "active" : null },
       h("span", { class: "jn" }, x.title), h("span", { class: "jd" }, `${x.songs} 首`))));
@@ -148,17 +153,20 @@ async function viewSong(route) {
   const player = await videoPane(c, s, route.at);
   const covers = coverPane(s);
   const form = formPane(c, s, covers, head);
-  // 歌词栏：原流程 / 新流程（实验）切换，视频上的字幕和表格一起换
+  // 歌词栏：v2 / v1（实验）/ v0（原流程）切换，视频上的字幕和表格一起换
   const lyricsPane = h("div", { class: "pane lyrics-pane" });
+  const exps = s.exps || {};
+  const modes = [...["v2", "v1"].filter((k) => exps[k]), "v0"];
   const showLines = async (mode) => {
-    const table = mode === "exp" ? expTable(s, player.video, player.offset) : linesTable(s, player.video, player.offset);
-    if (player.setAss) await player.setAss(mode === "exp" ? s.exp.ass : s.ass);
-    lyricsPane.replaceChildren(...(s.exp ? [modeSwitch] : []), table);
+    const table = mode === "v0" ? linesTable(s, player.video, player.offset) : expTable(s, exps[mode], mode, player.video, player.offset);
+    if (player.setAss) await player.setAss(mode === "v0" ? s.ass : exps[mode].ass);
+    lyricsPane.replaceChildren(...(modes.length > 1 ? [modeSwitch] : []), table);
     modeSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
   };
-  const modeSwitch = h("div", { class: "seg mode-switch" }, ...[["old", "原流程"], ["exp", "新流程（实验）"]].map(([m, l]) =>
-    h("button", { "data-m": m, onclick: () => showLines(m) }, l)));
-  await showLines("old");
+  const LABEL = { v2: "v2（新实验）", v1: "v1", v0: "v0（原流程）" };
+  const modeSwitch = h("div", { class: "seg mode-switch" }, ...modes.map((m) =>
+    h("button", { "data-m": m, onclick: () => showLines(m) }, LABEL[m])));
+  await showLines(modes[0]);   // 默认看最新的实验，其他的点了才切过去
   const card = h("div", { class: "card" }, head,
     h("div", { class: "top" }, player.el, lyricsPane),
     h("div", { class: "bottom" }, covers.el, form));
@@ -282,11 +290,23 @@ async function videoPane(c, s, at) {
       subSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.m === m));
     } }, label)));
 
+  // 整体提前量：字幕文件里已经统一提前 BAKED_LEAD；切换时整体往后 / 往前挪，播放中立即生效，只影响预览
+  const BAKED_LEAD = 0.2;
+  let lead = BAKED_LEAD;
+  try { const v = parseFloat(localStorage.getItem("subLead")); if (!Number.isNaN(v)) lead = v; } catch (e) { /* 无痕模式 */ }
+  const applyLead = () => { if (overlay) { overlay.delay = BAKED_LEAD - lead; overlay.tick(); } };
+  const leadSwitch = h("div", { class: "seg" }, ...[[0.2, "提前 0.2s"], [0.3, "提前 0.3s"], [0, "不提前"]].map(([v, label]) =>
+    h("button", { "data-v": v, class: v === lead ? "on" : null, onclick: () => {
+      lead = v;
+      try { localStorage.setItem("subLead", String(v)); } catch (e) { /* 无痕模式 */ }
+      applyLead();
+      leadSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.v) === v));
+    } }, label)));
+  applyLead();
   const el = h("div", { class: "pane" },
     stage,
     h("div", { class: "toolbar tight" },
-      h("button", { class: "btn", onclick: () => { seekAbs(edges.start); video.play(); } }, "▶ 从头"),
-      h("button", { class: "btn", onclick: () => { seekAbs(Math.max(edges.start, edges.end - 8)); video.play(); } }, "听结尾"),
+      leadSwitch,
       h("div", { class: "spacer" }),
       subSwitch,
       h("button", { class: "btn", onclick: () => toggleFullscreen(stage) }, "⛶")));
@@ -296,35 +316,34 @@ async function videoPane(c, s, at) {
     const ass = parseAss(await (await fetch(url, { cache: "no-store" })).text());
     if (overlay) overlay.setAss(ass);
     else overlay = new SubOverlay(stage, video, ass, subOffset);
-    overlay.tick();
+    applyLead();
   };
   return { el, video, offset: subOffset, setAss };
 }
 
-// 新流程（实验）的逐句表格：三个时间引擎各自的结果都打出来
-const VERDICT = { ok: ["✓", "ok"], warn: ["黄", "warn"], bad: ["红", "bad"], miss: ["漏", "bad"] };
-function expTable(s, video, offset) {
-  const data = s.exp.rows;
-  const sec = (x) => (x == null ? "–" : x.toFixed(2));
+// 实验（v1 / v2）的逐句表格；每行时间怎么定的（几个来源投票）在「判定」的鼠标悬停说明里
+const VERDICT = { ok: ["✓", "ok"], warn: ["黄", "warn"], bad: ["红", "bad"], miss: ["漏", "bad"], title: ["", ""],
+  unconfirmed: ["未确认", "bad"], patch: ["补", "warn"] };
+const LANG = { en: "英", es: "西", it: "意", pt: "葡", fr: "法", ja: "日", zh: "中", ko: "韩" };
+const langTd = (r) => h("td", { class: "lang", title: r.lang || "" }, LANG[r.lang] || r.lang || "");
+function expTable(s, x, ver, video, offset) {
+  const data = x.rows;
+  const M = x.models || { asr: "qwen-audio-3.1-asr-flash" };
   const rows = data.map((r) => h("tr", {
-    class: [r.removed ? "removed" : "", r.suspect != null ? "mismatch" : "", `v-${r.verdict}`].join(" ").trim(),
+    class: [r.removed ? "removed" : "", r.speech ? "speech" : "", `v-${r.verdict}`].join(" ").trim(),
     onclick: () => { if (video && r.start_ms != null) { video.currentTime = offset + r.start; video.play(); } },
   },
   h("td", { class: "t" }, r.start_ms != null ? fmtMs(r.start_ms) : "–"),
-  h("td", { class: "g" }, r.genius || h("span", { class: "none" }, "（Genius 没有）")),
-  h("td", { class: "heard" }, r.qwen || ""),
-  h("td", { class: "o" }, r.text || h("span", { class: "none" }, "（没有字幕）"),
-    r.suspect != null ? h("span", { class: "sus" }, ` 复核 ${r.suspect}`) : null),
-  h("td", { class: `eng${r.pick === "A" ? " pick" : ""}` }, sec(r.A)),
-  h("td", { class: `eng${r.pick === "B" ? " pick" : ""}` }, sec(r.B)),
-  h("td", { class: `eng${r.pick === "C" ? " pick" : ""}` }, sec(r.C)),
-  h("td", { class: `vd ${VERDICT[r.verdict][1]}`, title: r.strategy }, VERDICT[r.verdict][0]),
-  h("td", { class: "heard" }, r.heard || ""),
+  langTd(r),
+  h("td", { class: "g" }, r.genius || (r.verdict === "title" || r.speech ? "" : h("span", { class: "none" }, "（Genius 没有）"))),
+  h("td", { class: "heard" }, r.verdict === "title" ? h("span", { class: "none" }, r.strategy) : r.qwen || ""),
+  h("td", { class: "o" }, r.text || h("span", { class: "none" }, "（没有字幕）")),
+  h("td", { class: `vd ${VERDICT[r.verdict] ? VERDICT[r.verdict][1] : ""}`, title: r.strategy },
+    r.speech && r.verdict !== "title" ? "讲话" : (VERDICT[r.verdict] || [""])[0]),
   h("td", { class: "zh" }, r.zh || "")));
   const wrap = h("div", { class: "table-wrap" }, h("table", { class: "lines-table exp-table" },
-    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", {}, "Genius 原句"), h("th", {}, "Qwen 整段听到"),
-      h("th", {}, "校准字幕"), h("th", { title: "Qwen 字级时间戳" }, "A Qwen"), h("th", { title: "这行文字和 2.5s 窗口识别做文本匹配" }, "B 文本"),
-      h("th", { title: "MMS 声学强制对齐" }, "C MMS"), h("th", {}, "判定"), h("th", {}, "Qwen 复核听到"), h("th", {}, "中文"))),
+    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", {}, "语言"), h("th", {}, "Genius 原句"), h("th", {}, M.asr),
+      h("th", {}, "校准字幕"), h("th", {}, "判定"), h("th", {}, "中文"))),
     h("tbody", {}, ...rows)));
   if (video) {
     let last = -1;
@@ -342,11 +361,13 @@ function expTable(s, video, offset) {
     });
   }
   const n = (v) => data.filter((r) => r.verdict === v).length;
-  return h("details", { class: "lines", open: true },
-    h("summary", {}, `新流程（实验）${data.filter((r) => !r.removed).length} 行 · 三个引擎一致 ${n("ok")} · 标黄 ${n("warn")} · 标红 ${n("bad")} · 漏掉的段落 ${n("miss")}`),
-    h("div", { class: "legend" }, "A = Qwen 整段识别自带的字级时间戳；B = 这行文字和 2.5s 窗口识别做文本匹配；C = MMS 声学强制对齐；",
-      "至少两个引擎开头相差 ≤ 0.5s 算一致（加粗的是采用的那个）；鼠标停在「判定」上看原因"),
-    wrap);
+  const p = x.profile;
+  const bits = [`${data.filter((r) => !r.removed && r.verdict !== "title").length} 行`,
+    p ? `语言 ${(p.langs || [p.main]).map((l) => LANG[l] || l).join(" / ")}${p.mismatch ? `（识别出来是${LANG[p.heard_main] || p.heard_main}）` : ""}` : "",
+    n("warn") && `黄 ${n("warn")}`, n("bad") && `红 ${n("bad")}`, n("patch") && `补 ${n("patch")}`,
+    data.filter((r) => r.speech).length && `讲话 ${data.filter((r) => r.speech).length}`,
+    n("miss") && `漏 ${n("miss")}`, n("unconfirmed") && `未确认 ${n("unconfirmed")}`].filter(Boolean);
+  return h("details", { class: "lines", open: true }, h("summary", {}, bits.join(" · ")), wrap);
 }
 
 const fmtMs = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
@@ -365,6 +386,7 @@ function linesTable(s, video, offset) {
     onclick: () => { if (video) { video.currentTime = offset + r.start; video.play(); } },
   },
   h("td", { class: "t" }, fmtMs(r.start_ms)),
+  langTd(r),
   h("td", { class: "g" }, r.genius || (r.genius === null || r.speech || r.strategy === "片头歌名" ? "" : h("span", { class: "none" }, "（Genius 没有）"))),
   h("td", { class: "heard" }, r.heard || ""),
   h("td", { class: "o" }, r.removed ? h("span", { class: "gone" }, r.was || "") : r.text,
@@ -372,7 +394,7 @@ function linesTable(s, video, offset) {
   h("td", { class: "st" }, r.strategy || ""),
   h("td", { class: "zh" }, r.zh || "")));
   const wrap = h("div", { class: "table-wrap" }, h("table", { class: "lines-table" },
-    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", {}, "Genius 原句"), h("th", {}, "Qwen 复核听到"),
+    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", {}, "语言"), h("th", {}, "Genius 原句"), h("th", {}, "Qwen 复核听到"),
       h("th", {}, "校准字幕"), h("th", {}, "校准策略"), h("th", {}, "中文"))),
     h("tbody", {}, ...rows)));
   if (video) {

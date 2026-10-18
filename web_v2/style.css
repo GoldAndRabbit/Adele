@@ -284,11 +284,13 @@ td.src { white-space: nowrap; }
 
 /* 原流程 / 新流程切换 + 三引擎表格 */
 .mode-switch { margin: 0 0 8px; }
-.exp-table td.eng { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; font-size: 12px; }
-.exp-table td.eng.pick { color: var(--fg); font-weight: 700; }
 .exp-table td.vd { text-align: center; font-weight: 700; white-space: nowrap; cursor: help; }
 .exp-table td.vd.ok { color: var(--ok); }
 .exp-table td.vd.warn { color: var(--warn); }
 .exp-table td.vd.bad { color: var(--bad); }
 .exp-table tr.v-warn td.o { box-shadow: inset 3px 0 0 var(--warn); }
-.lines .legend { font-size: 12px; color: var(--muted); margin: 4px 2px 8px; line-height: 1.7; }
+.lines-table td.lang { width: 1%; white-space: nowrap; font-size: 12px; color: var(--muted); text-align: center; }
+.lines-table tr.speech td.o { color: #ffd666; }
+
+.concert-pick { margin-right: 12px; background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; font-size: 13px; }

@@ -5,6 +5,7 @@
 
     .venv/bin/python tests/regression_shakira.py            # 4 首全查
     .venv/bin/python tests/regression_shakira.py 32_dai_dai # 只查一首
+    加 --exp 查 v1 实验（exp/），加 --v2 查 v2 实验（exp_v2/）
 """
 
 import re
@@ -22,9 +23,17 @@ def norm(s):
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", "".join(c for c in s if not unicodedata.combining(c)))).strip()
 
 
-def load(song):
-    subs = pysubs2.load(str(SONGS / song / "lyrics.srt"))
-    return [(e.start / 1000, e.end / 1000, e.plaintext.strip()) for e in subs.events]
+POSTS = Path(__file__).resolve().parent.parent / "posts"
+
+
+def load(song, exp=""):
+    """exp="" 查正式字幕（v0），"exp" 查 v1 实验，"exp_v2" 查 v2 实验。"""
+    base = (POSTS / song) if (POSTS / song).exists() and not (SONGS / song).exists() else SONGS / song
+    subs = pysubs2.load(str(base / (f"{exp}/lyrics.srt" if exp else "lyrics.srt")))
+    ev = list(subs.events)
+    if exp and (base / exp / "speech.srt").exists():   # v2 的讲话单独一个文件（黄色），画面上一样会出现
+        ev += pysubs2.load(str(base / exp / "speech.srt")).events
+    return sorted((e.start / 1000, e.end / 1000, e.plaintext.strip()) for e in ev)
 
 
 def find(lines, pat, lo=0, hi=1e9):
@@ -72,6 +81,11 @@ def no_text(pat, why):
     return lambda L: (not [x for x in L if re.search(pat, x[2])], why, [x for x in L if re.search(pat, x[2])][:3])
 
 
+def short_lines(max_words=14):
+    long = lambda L: [x for x in L if len(x[2].split()) > max_words]
+    return lambda L: (not long(L), f"一行字幕不超过 {max_words} 个词（整段没标点时会连成一整屏）", long(L)[:2])
+
+
 CHECKS = {
     "04_girl_like_me": [
         lacks(r".", 4.5, 30, "开头没唱（片头歌名之后到 30 s）不出字幕"),
@@ -106,16 +120,29 @@ CHECKS = {
         has(r"culpa mia que te critiquen", 95, 102, "1:39「Entendí que no es culpa mía que te critiquen」"),
         no_text(r"[Ѐ-ӿ]|Pas si fort", "不能有俄语 / 法语幻听"),
     ],
+    "sara_perche_1983": [
+        has(r"primavera sara perche ti amo", 37, 41, "0:38「È primavera, sarà perché ti amo」（之前 sarà perché ti amo 被并到下一句）"),
+        has(r"cade una stella", 41, 44, "0:42「Cade una stella, ma dimmi dove siamo」"),
+    ],
+    "sara_perche_zarrella2023": [],
+    "ricchi_sanremo2020_medley": [
+        has(r"stringimi forte", 18, 32, "0:2x「Stringimi forte e stammi più vicino」单独一行（之前和后面几句连成一整屏）"),
+    ],
+    "lose_yourself_2009": [],
+    "sobaniirune": [],
+    "hkt48_sobaniirune": [],
 }
+for _song in CHECKS:
+    CHECKS[_song].append(short_lines())
 
 
 def main():
-    only = sys.argv[1:]
+    only = [x for x in sys.argv[1:] if not x.startswith("--")]
     total = bad = 0
     for song, checks in CHECKS.items():
         if only and song not in only:
             continue
-        L = load(song)
+        L = load(song, exp="exp_v2" if "--v2" in sys.argv else "exp" if "--exp" in sys.argv else "")
         print(f"\n== {song}（{len(L)} 句）")
         for c in checks:
             ok, why, detail = c(L)

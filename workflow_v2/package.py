@@ -16,10 +16,9 @@ from concurrent.futures import ThreadPoolExecutor
 from .paths import ROOT, VENV_PY, read_json, write_json
 from .refine import selected
 
-COVERS = 12  # 每首候选封面张数
-PER_SHOT = "closeup=6,half=3,full=3"   # 正脸特写 6 张、半身 3 张、全身 3 张
+PER_SHOT = "closeup=16,half=16,full=0"   # 正脸特写 16 张、半身 16 张；全身脸太小、当封面看不清人，不要
 CLOSEUP_MIN = 0.14  # 脸高占画面 14% 以上算特写：转播里 22% 以上的大特写很少（GIRL LIKE ME 只有 6 帧候选），凑不够 6 张
-TEXT_LIFT = 0.08   # 标题 + 副标题整体上移画面高度的 8%（特写 0.82 -> 0.74）：底部 17% 压暗遮挡转播的推广条，字压在上面太靠下
+TEXT_LIFT = 0.08   # 标题 + 副标题整体上移画面高度的 8%（0.82 -> 0.74）：底部 17% 压暗遮挡转播的推广条，字压在上面太靠下
 LANG_ZH = {"es": "西班牙语", "en": "英语", "it": "意大利语", "ja": "日语", "pt": "葡萄牙语", "fr": "法语"}
 COVER_RE = re.compile(r"^(closeup|half|full|cover)_(\d\d)\.jpg$")
 FRAME_RE = re.compile(r"^frame_(?:(closeup|half|full)_)?(\d\d)_([\d.]+)s\.jpg$")
@@ -57,8 +56,8 @@ def subtitle_line(c, it):
 
 
 def make_covers(c, it, seg, a):
-    """候选封面：make_cover 的默认流程（正脸特写 / 半身 / 全身各 4 张，Real-ESRGAN 高清化）；
-    正脸景别不够（make_cover 宁缺毋滥）就在同一段里按清晰度补到 COVERS 张（cover_XX.jpg）。"""
+    """候选封面：make_cover 的默认流程（正脸特写 / 半身各 16 张，去掉糊的，Real-ESRGAN 高清化）。
+    不再按整帧清晰度补 cover_XX：补出来的基本是全景，看不清人。"""
     import shutil
     d = c.song_dir(it)
     out = d / "covers"
@@ -77,12 +76,6 @@ def make_covers(c, it, seg, a):
             r = subprocess.run([str(x) for x in common + ["--per-shot", PER_SHOT]], stdout=fh, stderr=subprocess.STDOUT)
             if r.returncode:
                 raise RuntimeError(f"封面失败，见 {log}")
-        short = COVERS - len(cover_candidates(d))
-        if short > 0 and not any(x["id"].startswith("cover_") for x in cover_candidates(d)):
-            r = subprocess.run([str(x) for x in common + ["--select", "sharp", "--n", str(short)]],
-                               stdout=fh, stderr=subprocess.STDOUT)
-            if r.returncode:
-                raise RuntimeError(f"补封面失败，见 {log}")
 
 
 def song_title_zh(c, it):

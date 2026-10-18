@@ -66,9 +66,43 @@ def song_summary(c, it, segs, rv):
         "start": seg.get("start"), "end": seg.get("end"), "confidence": seg.get("confidence"),
         "flags": seg.get("flags", []), "manual": bool(seg.get("manual")),
         "stage": st["stage"], "review": st["review"], "needs_refine": st["needs_refine"],
-        "thumb": f"/media/{c.slug}/songs/{it['name']}/{(chosen or (covers[0] if covers else {})).get('file')}" if covers else None,
+        "thumb": media_url(c, it["name"], (chosen or covers[0])["file"]) if covers else None,
         "job": job_state(c, it["name"]),
     }
+
+
+def exp_data(d, sub, ass_url):
+    """一份实验结果（exp/ 或 exp_v2/）给审核页：逐句表格 + 字幕文件 + 用的模型。"""
+    x = d / sub
+    if not (x / "lines.json").exists():
+        return None
+    from workflow_v2 import align3
+    from workflow_v2.align4 import line_lang
+    import qwen_asr
+    prof = read_json(x / "profile.json", {}) or {}
+    main = prof.get("main") or "en"
+    xl = ass_lines(x / "lyrics.ass") if (x / "lyrics.ass").exists() else []
+    xrows = []
+    for r in read_json(x / "lines.json", []) or []:
+        t = (r["start_ms"] or 0) / 1000
+        m = next((y for y in xl if abs(y["start"] - t) < 0.06 and y["orig"] == r["text"]), None) if r["text"] else None
+        lang = r.get("lang") or line_lang(r.get("text") or r.get("genius") or r.get("qwen") or "", main)
+        xrows.append({**r, "lang": lang, "zh": m["zh"] if m else "", "start": t, "end": (r["end_ms"] or 0) / 1000})
+    have = {(round(r["start"], 1), r["text"]) for r in xrows}
+    for y in xl:   # 片头歌名（翻译时加的）和讲话：字幕文件里有、逐句数据里没有的
+        if y["orig"].startswith("《") or (y["style"] != "Default" and (round(y["start"], 1), y["orig"]) not in have):
+            xrows.append({"start_ms": round(y["start"] * 1000), "end_ms": round(y["end"] * 1000), "start": y["start"],
+                          "end": y["end"], "genius": "", "qwen": "", "heard": "", "text": y["orig"], "zh": y["zh"],
+                          "lang": "" if y["orig"].startswith("《") else line_lang(y["orig"], main),
+                          "verdict": "title", "removed": False, "speech": y["style"] != "Default",
+                          "strategy": "片头歌名（歌名翻译）" if y["orig"].startswith("《") else "讲话"})
+        elif y["style"] != "Default":   # 讲话行：逐句数据里有，补上中文
+            for r in xrows:
+                if r["text"] == y["orig"] and abs(r["start"] - y["start"]) < 0.06:
+                    r["zh"], r["speech"] = y["zh"], True
+    xrows.sort(key=lambda r: (r["start_ms"] is None, r["start_ms"] or 0))
+    return {"rows": xrows, "ass": ass_url if (x / "lyrics.ass").exists() else None, "profile": prof or None,
+            "models": {"asr": align3.MODEL, "verify": qwen_asr.MODEL}}
 
 
 @app.get("/api/concerts")
@@ -159,19 +193,16 @@ def get_song(slug: str, name: str):
                              "strategy": "片头歌名" if x["orig"].startswith("《") else "讲话（Qwen 识别，两遍复听都对上）",
                              "speech": x["style"] != "Default"})
         rows.sort(key=lambda r: r["start_ms"])
-    # 新流程的实验结果（songs/<nn>/exp/，align3.py）：审核页上可以切换着对比，不影响正式字幕
-    exp = None
-    if (d / "exp" / "lines.json").exists():
-        xl = ass_lines(d / "exp" / "lyrics.ass") if (d / "exp" / "lyrics.ass").exists() else []
-        xrows = []
-        for r in read_json(d / "exp" / "lines.json", []) or []:
-            t = (r["start_ms"] or 0) / 1000
-            m = next((x for x in xl if abs(x["start"] - t) < 0.06 and x["orig"] == r["text"]), None) if r["text"] else None
-            xrows.append({**r, "zh": m["zh"] if m else "", "start": t, "end": (r["end_ms"] or 0) / 1000})
-        exp = {"rows": xrows, "ass": f"/media/{slug}/songs/{name}/exp/lyrics.ass" if (d / "exp" / "lyrics.ass").exists() else None}
+    # 实验结果：v1 = songs/<nn>/exp/（align3.py），v2 = songs/<nn>/exp_v2/（align4.py）；审核页上切换着对比，不影响正式字幕（v0）
+    exps = {k: exp_data(d, sub, f"/media/{slug}/songs/{name}/{sub}/lyrics.ass") for k, sub in (("v2", "exp_v2"), ("v1", "exp"))}
+    exps = {k: v for k, v in exps.items() if v}
+    from workflow_v2.align4 import line_lang
+    main = info.get("lang") or "en"
+    for r in rows:
+        r.setdefault("lang", line_lang(r.get("text") or r.get("genius") or "", main) if (r.get("text") or r.get("genius")) else "")
     return {
         **base,
-        "exp": exp,
+        "exps": exps,
         "artist": it.get("artist"), "parts": it.get("parts"), "lang": info.get("lang"),
         "genius_urls": info.get("genius_urls", []), "slice": info.get("slice"),
         "lyric_start": segs.get(name, {}).get("lyric_start"), "lyric_end": segs.get(name, {}).get("lyric_end"),
@@ -180,8 +211,8 @@ def get_song(slug: str, name: str):
         "preview_span": info.get("preview"), "align": info.get("align"),
         "lines": lines,
         "rows": rows,
-        "covers": [{**x, "file": f"/media/{slug}/songs/{name}/{x['file']}",
-                    "file_4x3": f"/media/{slug}/songs/{name}/{x['file_4x3']}" if x["file_4x3"] else None}
+        "covers": [{**x, "file": media_url(c, name, x["file"]),
+                    "file_4x3": media_url(c, name, x["file_4x3"]) if x["file_4x3"] else None}
                    for x in cover_candidates(d)],
         "draft": read_json(d / "post_draft.json", {}),
         "review_entry": rv["songs"].get(name, {}),
@@ -236,6 +267,13 @@ def post_rerun(slug: str, name: str):
 MEDIA_OK = {".mp4", ".ass", ".jpg", ".srt"}
 
 
+def media_url(c, name, rel):
+    """封面会原地重新生成（文件名不变）：地址带上修改时间，换了图浏览器一定重新拉，不会用缓存里的旧图。"""
+    f = c.song_dir({"name": name}) / rel
+    v = int(f.stat().st_mtime) if f.exists() else 0
+    return f"/media/{c.slug}/songs/{name}/{rel}?v={v}"
+
+
 @app.get("/media/{slug}/{path:path}")
 def media(slug: str, path: str):
     c = concert(slug)
@@ -244,11 +282,12 @@ def media(slug: str, path: str):
     allowed = f.suffix in MEDIA_OK and (
         path == "source.mp4"
         or (len(parts) == 3 and parts[0] == "songs" and parts[2] in ("lyrics.ass", "preview.mp4"))
-        or (len(parts) == 4 and parts[0] == "songs" and parts[2] == "exp" and parts[3] == "lyrics.ass")
+        or (len(parts) == 4 and parts[0] == "songs" and parts[2] in ("exp", "exp_v2") and parts[3] == "lyrics.ass")
         or (len(parts) >= 4 and parts[0] == "songs" and parts[2] in ("covers", "post")))
     if not allowed or ".." in parts or not f.resolve().is_file():
         raise HTTPException(404)
-    return FileResponse(f)  # source.mp4 是软链接时也照样给；Range 请求由 FileResponse 处理
+    # 封面 / 字幕会原地重新生成（文件名不变）：每次回源校验（ETag 没变就 304），不然浏览器按启发式缓存一直显示旧图
+    return FileResponse(f, headers={"Cache-Control": "no-cache"})  # source.mp4 是软链接时也照样给；Range 请求由 FileResponse 处理
 
 
 class NoCacheStatic(StaticFiles):

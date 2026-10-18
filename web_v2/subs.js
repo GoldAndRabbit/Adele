@@ -199,7 +199,7 @@ class SubOverlay extends SubRenderer {
     new ResizeObserver(fit).observe(video);
     video.addEventListener("loadedmetadata", fit);
     const tick = () => {
-      const t = video.currentTime - this.offset;
+      const t = video.currentTime - this.offset - (this.delay || 0);   // delay：整体往后挪（秒），审核页切换提前量用
       this.render(this.ass.events.filter((x) => t >= x.start && t < x.end));
     };
     video.addEventListener("timeupdate", tick);
