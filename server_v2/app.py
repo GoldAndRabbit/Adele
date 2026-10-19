@@ -113,6 +113,16 @@ def exp_data(d, sub, ass_url):
                       f"透明度 {wm.get('opacity', 0.6):.0%}", "zh": "", "lang": "", "verdict": "wm", "removed": False,
                       "style": "wm", "watermark": True,
                       "strategy": f"位置 x={it['x']:.2f} y={it['y']:.2f}（占画面比例），淡入淡出各 {it['fade']} 秒；避开字幕区、左上角 logo 和人脸（这一刻检测到 {it.get('faces', 0)} 张脸）"})
+    # 观众合唱检测（song_crowd_workflow）：每个候选段一行，鼠标停上去看每项证据
+    cr = read_json(x / "crowd.json", None) or {}
+    for sg in cr.get("segments", []):
+        ev = sg.get("evidence", {})
+        lines_ = [f"{k}：{'✓' if v.get('成立') else '✗'}  {v.get('说明', '')}；值 = {json.dumps(v.get('值'), ensure_ascii=False)[:120]}"
+                  for k, v in ev.items()]
+        xrows.append({"start_ms": round(sg["s"] * 1000), "end_ms": round(sg["e"] * 1000), "start": sg["s"], "end": sg["e"],
+                      "genius": "", "qwen": sg.get("heard", "")[:80], "lang": "", "zh": "", "removed": False, "crowdseg": True,
+                      "text": f"观众合唱检测：{sg['verdict']}（置信度 {sg['confidence']}）· 该唱 {len(sg.get('want', []))} 句",
+                      "verdict": "crowdseg", "style": "crowdseg", "strategy": "\n".join(lines_)})
     xrows.sort(key=lambda r: (r["start_ms"] is None, r["start_ms"] or 0))
     # 翻译（song_translation_workflow：translation/result.json；旧的二次翻译 zh2.json 兼容）：按时间 + 原文对回每一行
     tr = read_json(x / "translation" / "result.json", {}) or {}
@@ -232,7 +242,7 @@ def get_song(slug: str, name: str):
                              "speech": x["style"] != "Default"})
         rows.sort(key=lambda r: r["start_ms"])
     # v3（exp_v3/，workflow_v3）和 v2（exp_v2/，align4.py）：审核页默认看 v3，可以切到 v2 对比；v1、v0 不再显示
-    exps = {k: exp_data(d, sub, f"/media/{slug}/songs/{name}/{sub}/lyrics.ass") for k, sub in (("v3", "exp_v3"), ("v2", "exp_v2"))}
+    exps = {k: exp_data(d, sub, f"/media/{slug}/songs/{name}/{sub}/lyrics.ass") for k, sub in (("v4", "exp_v4"), ("v3", "exp_v3"), ("v2", "exp_v2"))}
     exps = {k: v for k, v in exps.items() if v}
     from workflow_v2.align4 import line_lang
     main = info.get("lang") or "en"
@@ -263,7 +273,7 @@ def v3_dirs(slug, name):
     """v3 结果的真实目录（v1 单曲在 concerts/v1_singles 里是软链接，定稿表要写到 posts/<name>/）。"""
     c = concert(slug)
     d = c.song_dir(song(c, name))
-    x = (d / "exp_v3").resolve()
+    x = (d / "exp_v3").resolve()   # 审核页不再编辑；这个接口只给 v3 用
     if not (x / "translation" / "result.json").exists():
         raise HTTPException(400, "这首还没有 v3 翻译")
     return x.parent, x
@@ -365,7 +375,7 @@ def media(slug: str, path: str):
     allowed = f.suffix in MEDIA_OK and (
         path == "source.mp4"
         or (len(parts) == 3 and parts[0] == "songs" and parts[2] in ("lyrics.ass", "preview.mp4"))
-        or (len(parts) == 4 and parts[0] == "songs" and parts[2] in ("exp", "exp_v2", "exp_v3") and parts[3] in ("lyrics.ass", "lyrics_zh2.ass"))
+        or (len(parts) == 4 and parts[0] == "songs" and parts[2] in ("exp", "exp_v2", "exp_v3", "exp_v4") and parts[3] in ("lyrics.ass", "lyrics_zh2.ass"))
         or (len(parts) >= 4 and parts[0] == "songs" and parts[2] in ("covers", "post")))
     if not allowed or ".." in parts or not f.resolve().is_file():
         raise HTTPException(404)

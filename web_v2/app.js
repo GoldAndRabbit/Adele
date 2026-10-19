@@ -155,16 +155,13 @@ async function viewSong(route) {
   // 歌词栏：v3（默认）/ v2 切换，视频上的字幕和表格一起换；都没有时退回原来的字幕
   const lyricsPane = h("div", { class: "pane lyrics-pane" });
   const exps = s.exps || {};
-  const modes = ["v3", "v2"].filter((k) => exps[k]);
-  let cur = null, zhVer = "v2";   // 视频字幕默认用中文 v2（二次翻译）；没有 v2 的退回 v1
-  const zhSwitch = h("div", { class: "seg" }, ...[["v2", "视频中文 v2"], ["v1", "视频中文 v1"]].map(([v, l]) =>
-    h("button", { "data-v": v, onclick: async () => { zhVer = v; await applyAss(); } }, l)));
+  const modes = ["v4", "v3", "v2"].filter((k) => exps[k]);
+  let cur = null;
+  // 视频字幕固定用中文 v2（二次翻译定稿）；没有 v2 的退回字幕文件本身
   const applyAss = async () => {
     const x = cur ? exps[cur] : null;
-    const url = x ? (zhVer === "v2" && x.ass_zh2 ? x.ass_zh2 : x.ass) : s.ass;
+    const url = x ? (x.ass_zh2 || x.ass) : s.ass;
     if (player.setAss) await player.setAss(url);
-    zhSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === zhVer));
-    zhSwitch.style.display = x && x.ass_zh2 ? "" : "none";
   };
   const showLines = async (mode) => {
     cur = mode;
@@ -176,18 +173,42 @@ async function viewSong(route) {
     const table = mode ? expTable(s, exps[mode], mode, player.video, player.offset, player.delay, refresh)
       : linesTable(s, player.video, player.offset, player.delay);
     await applyAss();
-    lyricsPane.replaceChildren(h("div", { class: "toolbar tight" }, ...(modes.length > 1 ? [modeSwitch] : []),
-      h("div", { class: "spacer" }), zhSwitch), table);
+    lyricsPane.replaceChildren(table);
     modeSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
   };
-  const modeSwitch = h("div", { class: "seg mode-switch" }, ...modes.map((m) =>
-    h("button", { "data-m": m, onclick: () => showLines(m) }, m === "v3" ? "v3（多锚点校准）" : "v2")));
+  const LABELS = { v4: "v4（+观众合唱）", v3: "v3（多锚点校准）", v2: "v2" };
+  // v4 按钮一直显示：这首还没跑 v4 就是灰的
+  const modeSwitch = h("div", { class: "seg mode-switch" }, ...["v4", "v3", "v2"].filter((m) => exps[m] || m === "v4").map((m) =>
+    h("button", { "data-m": m, disabled: !exps[m], title: exps[m] ? "" : "这首还没跑 v4", onclick: () => exps[m] && showLines(m) }, LABELS[m])));
+  // 版本切换、视频中文切换、「所有注释」放到标题那一行
+  const notesBtn = h("button", { class: "btn", onclick: () => showNotes(cur ? exps[cur] : null, player, s) }, "所有注释");
+  head.insertBefore(h("div", { class: "head-ctrls" }, modeSwitch, notesBtn), head.querySelector(".spacer"));
   await showLines(modes[0] || null);
   const card = h("div", { class: "card" }, head,
     h("div", { class: "top" }, player.el, lyricsPane),
     h("div", { class: "bottom" }, covers.el, form));
   $("#view").replaceChildren(card);
   if (s.job && s.job.running) pollJob(c, s, card.querySelector(".notice"));
+}
+
+// 所有顶部注释和对应原文（当前版本）：页面内弹层，点一条跳到那一句
+function showNotes(x, player, s) {
+  const rows = x ? x.rows.filter((r) => r.note && !r.removed) : [];
+  const close = () => { box.remove(); window.removeEventListener("keydown", onKey, true); };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+  const list = rows.length ? h("table", { class: "notes-list" },
+    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", {}, "原文"), h("th", {}, "中文"), h("th", {}, "注释"))),
+    h("tbody", {}, ...rows.map((r) => h("tr", { onclick: () => {
+      if (player.video) { player.video.currentTime = player.offset + r.start + player.delay(); player.video.play(); }
+      close();
+    } }, h("td", { class: "t" }, fmtMs(r.start_ms + Math.round((player.offset || 0) * 1000))), h("td", {}, r.text),
+      h("td", {}, r.zh2 || r.zh || ""), h("td", { class: "note" }, r.note)))))
+    : h("div", { class: "empty" }, "这首没有顶部注释");
+  const box = h("div", { class: "lightbox notes-box", onclick: (e) => { if (e.target === box) close(); } },
+    h("div", { class: "notes-panel" }, h("div", { class: "notes-title" }, `${s.title} · 顶部注释 ${rows.length} 条`,
+      h("button", { class: "lb-close", title: "关闭（Esc）", onclick: close }, "×")), list));
+  window.addEventListener("keydown", onKey, true);
+  document.body.append(box);
 }
 
 // 看大图：页面内弹层（不开新标签页——审核页可能是独立窗口，新开的页没法关），× / Esc / 点图外面都能关
@@ -384,7 +405,7 @@ async function videoPane(c, s, at) {
 
 // 实验（v1 / v2）的逐句表格；每行时间怎么定的（几个来源投票）在「判定」的鼠标悬停说明里
 const VERDICT = { ok: ["✓", "ok"], warn: ["黄", "warn"], bad: ["红", "bad"], miss: ["漏", "bad"], title: ["", ""],
-  unconfirmed: ["未确认", "bad"], patch: ["补", "warn"], seq: ["顺序", "warn"], calib: ["校", "ok"], live: ["改词", "warn"], wm: ["水印", "wm"] };
+  unconfirmed: ["未确认", "bad"], patch: ["补", "warn"], seq: ["顺序", "warn"], calib: ["校", "ok"], live: ["改词", "warn"], wm: ["水印", "wm"], crowd: ["合唱", "ok"], crowdseg: ["检测", "crowdseg"] };
 // 语言用国旗显示（鼠标停上去看语言名）
 const LANG = { en: ["🇬🇧", "英语"], es: ["🇪🇸", "西班牙语"], it: ["🇮🇹", "意大利语"], pt: ["🇵🇹", "葡萄牙语"], fr: ["🇫🇷", "法语"],
   ja: ["🇯🇵", "日语"], zh: ["🇨🇳", "中文"], ko: ["🇰🇷", "韩语"] };
@@ -392,7 +413,7 @@ const flag = (l) => (LANG[l] ? LANG[l][0] : l || "");
 const langTd = (r) => h("td", { class: "lang", title: LANG[r.lang] ? LANG[r.lang][1] : r.lang || "" }, flag(r.lang));
 // 唱法：唱 / 说唱 / 讲话（v2 按音高稳定度 + 语速判断）
 const STYLE = { sing: ["唱", ""], rap: ["说唱", "rap"], speech: ["讲话", "speech"], crowd: ["观众合唱?", "crowd"],
-  title: ["歌名歌手", ""], wm: ["水印", "wm"] };
+  title: ["歌名歌手", ""], wm: ["水印", "wm"], crowd_ok: ["观众合唱", "crowd"], crowdseg: ["合唱检测", "crowdseg"] };
 const styleTd = (r) => h("td", { class: `style ${(STYLE[r.style] || ["", ""])[1]}`,
   title: r.style === "crowd" ? `人声左右声道相关性比本首中位低 ${-r.steady}（观众合唱是现场环境话筒收的，左右差别大），而且没有很准地对上 Genius；估计，请审听`
     : r.steady != null ? `音高稳定度 ${r.steady}（唱歌停在音上，高；说唱 / 讲话音高一直在滑，低）` : "" },
@@ -430,21 +451,19 @@ function expTable(s, x, ver, video, offset, delay = () => 0, onChanged = null) {
     r.credit ? h("div", { class: "credit" }, r.credit) : null),
   h("td", { class: `vd ${VERDICT[r.verdict] ? VERDICT[r.verdict][1] : ""}`, title: r.strategy },
     (VERDICT[r.verdict] || [""])[0]),
-  ...(hasZh2 ? [zh2Cell(r)] : []),
-  h("td", { class: "zh zh1" }, r.zh || "")));
+  hasZh2 ? zh2Cell(r) : h("td", { class: "zh" }, r.zh || "")));
   const wrap = h("div", { class: "table-wrap" }, h("table", { class: "lines-table exp-table" },
     h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", { class: "lang" }, "语言"), ...(ver !== "v1" ? [h("th", { class: "lang" }, "唱法")] : []),
       h("th", {}, "Genius 原句"), h("th", {}, M.asr),
       h("th", {}, "校准字幕"), h("th", {}, "判定"),
-      ...(hasZh2 ? [h("th", { title: `二次翻译：${x.zh2_model || ""}，更有画面感和表现力（视频默认用这一版）` }, "中文 v2")] : []),
-      h("th", {}, "中文 v1"))),
+      h("th", { title: hasZh2 ? `翻译：${x.zh2_model || ""}（视频里用的就是这一版）` : "" }, "中文"))),
     h("tbody", {}, ...rows)));
   if (video) {
     let last = -1;
     video.addEventListener("timeupdate", () => {
       if (!wrap.isConnected) return;
       const t = video.currentTime - offset - delay();   // 和画面上的字幕用同一个提前量
-      const i = data.findIndex((r) => !r.removed && !r.watermark && t >= r.start && t < r.end);
+      const i = data.findIndex((r) => !r.removed && !r.watermark && !r.crowdseg && t >= r.start && t < r.end);
       if (i === last) return;
       if (last >= 0) rows[last].classList.remove("now");
       last = i;
@@ -456,7 +475,8 @@ function expTable(s, x, ver, video, offset, delay = () => 0, onChanged = null) {
   }
   const n = (v) => data.filter((r) => r.verdict === v).length;
   const p = x.profile;
-  const bits = [`${data.filter((r) => !r.removed && r.verdict !== "title" && !r.watermark).length} 行`,
+  const bits = [`${data.filter((r) => !r.removed && r.verdict !== "title" && !r.watermark && !r.crowdseg).length} 行`,
+    data.filter((r) => r.crowdseg && r.text.includes("：观众合唱")).length && `观众合唱 ${data.filter((r) => r.crowdseg && r.text.includes("：观众合唱")).length} 段`,
     data.filter((r) => r.watermark).length && `水印 ${data.filter((r) => r.watermark).length} 次`,
     p ? `语言 ${(p.langs || [p.main]).map(flag).join(" ")}${p.mismatch ? `（识别出来是 ${flag(p.heard_main)}）` : ""}` : "",
     data.filter((r) => r.anchor).length && `锚点 ${data.filter((r) => r.anchor).length}`,
@@ -501,7 +521,7 @@ function linesTable(s, video, offset, delay = () => 0) {
     video.addEventListener("timeupdate", () => {
       if (!wrap.isConnected) return;
       const t = video.currentTime - offset - delay();   // 和画面上的字幕用同一个提前量
-      const i = data.findIndex((r) => !r.removed && !r.watermark && t >= r.start && t < r.end);
+      const i = data.findIndex((r) => !r.removed && !r.watermark && !r.crowdseg && t >= r.start && t < r.end);
       if (i === last) return;
       if (last >= 0) rows[last].classList.remove("now");
       last = i;

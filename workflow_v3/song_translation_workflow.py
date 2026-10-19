@@ -369,7 +369,7 @@ def translate(d, out_dir, lyrics, title):
         members[gid] = g
     for u in units:
         h = u.get("heard") or ""
-        if u["type"] == "歌词" and not u.get("anchor") and h and h != "（没听到）" \
+        if u["type"] == "歌词" and not u.get("anchor") and u.get("verdict") != "crowd" and h and h not in ("（没听到）", "（观众合唱）") \
                 and fuzz.partial_ratio(key_of(h), key_of(u["orig"])) < GARBAGE_KEEP:
             gid = len(items)
             items.append({"id": gid, "type": "歌词", "识别": h, "歌词": u["orig"]})
@@ -465,8 +465,6 @@ def build_outputs(d, out_dir):
         ass.styles["Speech"] = sty
         for u in sp:
             text = u["orig"] + (r" \N" + u[key] if u[key] and u[key] != u["orig"] else "")
-            if not CJK_RE.search(u["orig"]) and len(u["orig"]) > 40:
-                text = (r"{\fs19}" if len(u["orig"]) <= 62 else r"{\fs17}") + text
             ass.events.append(pysubs2.SSAEvent(start=u["start"], end=u["end"], text=text, style="Speech"))
         # 顶部注释「原词：解释」：浅绿色半透明小字、没有描边和底色、顶住画面上边缘居中；跟着对应那句，至少 4 s
         note = ass.styles["Default"].copy()

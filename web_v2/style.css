@@ -325,9 +325,21 @@ td.src { white-space: nowrap; }
 .exp-table .zh-badge { display: inline-block; font-size: 11px; padding: 0 5px; margin-left: 6px; border-radius: 3px; vertical-align: middle; }
 .exp-table .zh-badge.locked { background: #1f3b2a; color: #7ee2a8; }
 .exp-table .zh-badge.rev { background: #3a2a10; color: #f5c46b; cursor: help; }
-.exp-table .note-line { font-size: 12px; color: #aaebaa; margin-top: 3px; }
+.exp-table .note-line { color: #aaebaa; margin-top: 3px; }
 .exp-table .zh-edit { width: 100%; min-width: 180px; font: inherit; background: var(--bg); color: var(--fg); border: 1px solid #555; border-radius: 4px; }
 .exp-table .note-edit { width: 100%; margin-top: 4px; font-size: 12px; background: var(--bg); color: #aaebaa; border: 1px solid #555; border-radius: 4px; }
 .exp-table .zh-actions { display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
 .exp-table .zh-msg { font-size: 12px; color: var(--muted); }
 .btn.small { padding: 2px 8px; font-size: 12px; }
+.exp-table tr.v-crowdseg td { background: rgba(127, 219, 202, .08); }
+.exp-table td.style.crowdseg, .exp-table td.vd.crowdseg { color: #7fdbca; font-weight: 700; }
+.mode-switch button[disabled] { opacity: .35; cursor: not-allowed; }
+.card-head .head-ctrls { display: flex; gap: 10px; align-items: center; margin-left: 12px; flex-wrap: wrap; }
+.notes-box { display: flex; align-items: center; justify-content: center; }
+.notes-panel { background: var(--panel, #1b1f27); color: var(--fg); border-radius: 10px; padding: 16px 20px; width: min(960px, 92vw); max-height: 80vh; overflow: auto; position: relative; }
+.notes-title { font-weight: 600; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+.notes-title .lb-close { position: static; }
+.notes-list { width: 100%; border-collapse: collapse; font-size: 14px; }
+.notes-list td, .notes-list th { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.08); text-align: left; vertical-align: top; }
+.notes-list tr:hover td { background: rgba(255,255,255,.04); cursor: pointer; }
+.notes-list td.note { color: #aaebaa; }

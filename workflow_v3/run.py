@@ -169,7 +169,11 @@ def display_rows(o, ly, cells, next_s=None):
 
 # ---------------------------------------------------------------- 主流程
 
-def run(d, lyrics, out_dir):
+def run(d, lyrics, out_dir, meta=None):
+    """meta：{video, offset, title, artist}，观众合唱检测看画面、取录音室版时间轴用。"""
+    meta = meta or {}
+    from workflow_v2.paths import read_json as _rj
+    opts = _rj(d / "align_options.json", {}) or {}   # 只对这首歌开的规则开关（默认都关）
     import librosa
     import llm
     import pysubs2
@@ -239,6 +243,12 @@ def run(d, lyrics, out_dir):
             o["shown"] = False
     occ = [o for o in occ if o["shown"]]
     occ = fill_by_order(occ, cells, ly, y, SR)
+    # 观众合唱检测（song_crowd_workflow）：只在 v4 里开（meta["crowd"]），v3 不变
+    if meta.get("crowd"):
+        from .song_crowd_workflow import detect, place_crowd
+        crowd_segs, lrc = detect(d, out_dir, occ, ly, cells, reads, dur, y, SR, meta.get("video"), meta.get("offset", 0.0),
+                                 V2.PITCH, V2.STEREO, meta.get("title", ""), meta.get("artist", ""))
+        occ = place_crowd(occ, crowd_segs, ly, lrc, cells)
 
     # 第 4 步：歌词外的段落
     matched = {u for o in occ for u in o["cells"]}
@@ -319,8 +329,36 @@ def run(d, lyrics, out_dir):
     for blk in (block(shown, dur, head=True), block(shown, dur, head=False)):
         if blk and V2.PITCH.ratio(blk[0]["s"], blk[-1]["e"]) < BLOCK_TALK:
             for r in blk:
+                # 开关 talk_block_heard（歌曲目录 align_options.json，默认关）：对话段里只是勉强对上的歌词行
+                # （不是锚点）显示识别到的原话，不显示没唱的歌词（Antología 开头介绍 Dua Lipa 被对成了歌词）
+                o = r.get("occ")
+                if opts.get("talk_block_heard") and r["kind"] == "lyric" and o and not o["anchor"] and r.get("heard"):
+                    h = r["heard"]
+                    r.update({"text": h[:1].upper() + h[1:], "genius": "", "talk_heard": True})
                 r["kind"] = "talk"
                 r["block_talk"] = True
+            if opts.get("talk_block_heard"):
+                # 整段对话重新切：取一遍识别在这一段里的完整原话，按停顿（≥ 0.6 s）/ 8 个词重新分行，
+                # 代替按「对错的歌词行」切出来的碎片（「Por」「Lo que」）
+                s0, e0 = blk[0]["s"], blk[-1]["e"]
+                per = [[w for w in ws if s0 - 0.2 <= w["s"] <= e0 + 0.2] for ws in reads]
+                one = max(per, key=len)
+                if one:
+                    rows[:] = [r for r in rows if not (s0 - 0.2 <= r["s"] <= e0 + 0.2 and r["kind"] in ("talk", "out", "lyric"))]
+                    cur, parts = [], []
+                    for w in one:
+                        if cur and (w["s"] - cur[-1]["e"] >= 0.6 or len(cur) >= 8):
+                            parts.append(cur)
+                            cur = []
+                        cur.append(w)
+                    if cur:
+                        parts.append(cur)
+                    for ws in parts:
+                        t = V2.A3.text_of(ws)
+                        rows.append({"k": None, "genius": "", "text": t[:1].upper() + t[1:], "lang": line_lang_safe(t, ly.main),
+                                     "heard": t, "s": ws[0]["s"], "e": ws[-1]["e"], "A": ws[0]["s"], "A_end": ws[-1]["e"],
+                                     "starts": {}, "occ": None, "kind": "talk", "block_talk": True, "talk_heard": True})
+                    rows.sort(key=lambda r: r["s"])
 
     # 讲话行：按停顿 / 8 个词拆开（太长一屏放不下）
     rows = split_talk(rows, cells)
@@ -361,7 +399,9 @@ def run(d, lyrics, out_dir):
     for r in rows:
         o = r["occ"]
         if r["kind"] == "lyric":
-            if o.get("live_change"):
+            if o.get("crowd"):
+                r["verdict"] = "crowd"
+            elif o.get("live_change"):
                 r["verdict"] = "live"
             elif o.get("seq"):
                 r["verdict"] = "seq"
@@ -401,7 +441,8 @@ def run(d, lyrics, out_dir):
     for r in rows:
         o = r["occ"]
         if r["kind"] == "lyric":
-            why = (f"对上 Genius 第 {r['k'] + 1} 行（覆盖 {o['coverage']:.0%}，读音 {o['sim']:.2f}，{o['support']:.1f} 遍支持，"
+            why = (f"观众合唱段：按 Genius 顺序排第 {r['k'] + 1} 行，时间按录音室版的时长比例分（识别听不清，不逐句对）"
+                   if o.get("crowd") else None) or (f"对上 Genius 第 {r['k'] + 1} 行（覆盖 {o['coverage']:.0%}，读音 {o['sim']:.2f}，{o['support']:.1f} 遍支持，"
                    f"置信度 {o['conf']:.2f}{'，锚点' if o['anchor'] else ''}）") if not o.get("filled") else \
                   (f"Genius 第 {r['k'] + 1} 行：前一句唱的是第 {r['k']} 行、后一句是第 {r['k'] + 2} 行附近，"
                    f"中间听到「{o['heard']}」没对上任何一句，按顺序填这句")
@@ -421,6 +462,8 @@ def run(d, lyrics, out_dir):
             why = f"歌词外，没出字幕（{r.get('support', 0):.0%} 的词多遍听到，音高稳定度 {r.get('steady', 0):.2f}）"
         sty = V2.style_of({**r, "speech": r["kind"] == "talk", "score": 100 * (o["sim"] if o else 0)}, ly.main) \
             if r["kind"] != "out" else (None, None)
+        if o and o.get("crowd"):
+            sty = ("crowd_ok", None)
         table.append({
             "start_ms": round(r.get("show_s", r["s"]) * 1000), "end_ms": round(r.get("show_e", r["e"]) * 1000),
             "genius": r["genius"] if r["kind"] == "lyric" else "", "qwen": r["heard"],
@@ -543,28 +586,35 @@ def summary(name, table, prof):
           f"校准 {len(prof['rounds'])} 轮", flush=True)
 
 
-def run_song(slug, name):
+def run_song(slug, name, variant="v3"):
     import acoustic
     from workflow_v2.paths import Concert
     from workflow_v2.refine import sub_title
     c = Concert(slug)
     it = c.item(name)
     d = c.song_dir(it)
-    out = d / "exp_v3"
-    table, prof = run(d, [t for t, _ in acoustic.section_lines(d / "lyrics.txt")], out)
+    out = d / ("exp_v4" if variant == "v4" else "exp_v3")
+    from workflow_v2.paths import read_json
+    info = read_json(d / "song.json", {})
+    sl, pv = info.get("slice") or [0, 0], info.get("preview") or [0, 0]
+    artist = it.get("artist") or read_json(c.dir / "concert.json", {}).get("artist", "")
+    meta = {"video": d / "preview.mp4", "offset": sl[0] - pv[0], "title": it["title"], "artist": artist,
+            "crowd": variant == "v4"}
+    table, prof = run(d, [t for t, _ in acoustic.section_lines(d / "lyrics.txt")], out, meta)
     from .song_translation_workflow import translate as st
     st(d, out, [t for t, _ in acoustic.section_lines(d / "lyrics.txt")], sub_title(c, it))   # 翻译（song_translation_workflow）
     summary(it["title"], table, prof)
 
 
-def run_post(name):
+def run_post(name, variant="v3"):
     from workflow_v2.paths import ROOT
     d = ROOT / "posts" / name
-    out = d / "exp_v3"
+    out = d / ("exp_v4" if variant == "v4" else "exp_v3")
     post = json.loads((d / "post" / f"{name}.json").read_text())
     song = post.get("song") or {}
     lyrics = [l.strip() for l in (d / "lyrics.txt").read_text().splitlines() if l.strip() and not l.startswith("[")]
-    table, prof = run(d, lyrics, out)
+    table, prof = run(d, lyrics, out, {"video": d / "source.mp4", "offset": 0.0, "title": song.get("title") or name,
+                                       "artist": song.get("artist") or "", "crowd": variant == "v4"})
     from .song_translation_workflow import translate as st
     st(d, out, lyrics, f"《{song.get('title') or name}》 {song.get('artist') or ''}".strip())   # 翻译（song_translation_workflow）
     summary(name, table, prof)
@@ -573,7 +623,9 @@ def run_post(name):
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "workflow"))
-    if sys.argv[1] == "post":
-        run_post(sys.argv[2])
+    variant = "v4" if "--v4" in sys.argv else "v3"   # v4 = v3 + 观众合唱检测，写到 exp_v4/
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if args[0] == "post":
+        run_post(args[1], variant)
     else:
-        run_song(sys.argv[2], sys.argv[3])
+        run_song(args[1], args[2], variant)

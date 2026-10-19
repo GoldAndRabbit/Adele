@@ -179,10 +179,7 @@ def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None, speech_start=
         orig = text
         if z and z != text:
             text += r" \N♪ " + z + " ♪"
-        # 整行歌词不拆：长行由渲染器自动换行，并按长度缩小字号，保证两行以内放得下
-        w = len(orig)
-        if not CJK_RE.search(orig) and w > 40:
-            text = (r"{\fs19}" if w <= 62 else r"{\fs17}") + text
+        # 整行歌词不拆，长行由渲染器自动换行；字号统一，不按长度缩小（一行大一行小观感差）
         out.events.append(pysubs2.SSAEvent(start=e.start, end=e.end, text=text))
     return out
 
@@ -319,8 +316,6 @@ def main():
             z = no_period(strip_interjections(l, z0))
             l = no_period(l)
             text = l + (r" \N" + z if z and z != l else "")
-            if a.style == "bzrp" and not CJK_RE.search(l) and len(l) > 40:
-                text = (r"{\fs19}" if len(l) <= 62 else r"{\fs17}") + text
             ass.events.append(pysubs2.SSAEvent(start=e.start, end=e.end, text=text, style="Speech"))
         ass.events.sort(key=lambda x: x.start)
         if a.cache:
