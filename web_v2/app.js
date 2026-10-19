@@ -63,7 +63,6 @@ function renderSidebar(route) {
     const s = songs[it.name];
     const warn = s.start == null || (s.confidence != null && s.confidence < 0.5) || s.needs_refine;
     return h("li", {}, h("a", { href: `#/${c.slug}/${it.name}`, class: route.name === it.name ? "active" : null, title: it.title },
-      h("span", { class: `dot ${s.review}`, title: REVIEW[s.review][0] }),
       h("span", { class: "ji" }, it.idx),
       h("span", { class: "jn" }, it.title),
       warn ? h("span", { class: "warn", title: s.needs_refine ? "边界改过，需要重跑精校" : "定位置信度低" }, "⚠") : null,
@@ -153,25 +152,53 @@ async function viewSong(route) {
   const player = await videoPane(c, s, route.at);
   const covers = coverPane(s);
   const form = formPane(c, s, covers, head);
-  // 歌词栏：v2 / v1（实验）/ v0（原流程）切换，视频上的字幕和表格一起换
+  // 歌词栏：v3（默认）/ v2 切换，视频上的字幕和表格一起换；都没有时退回原来的字幕
   const lyricsPane = h("div", { class: "pane lyrics-pane" });
   const exps = s.exps || {};
-  const modes = [...["v2", "v1"].filter((k) => exps[k]), "v0"];
+  const modes = ["v3", "v2"].filter((k) => exps[k]);
+  let cur = null, zhVer = "v2";   // 视频字幕默认用中文 v2（二次翻译）；没有 v2 的退回 v1
+  const zhSwitch = h("div", { class: "seg" }, ...[["v2", "视频中文 v2"], ["v1", "视频中文 v1"]].map(([v, l]) =>
+    h("button", { "data-v": v, onclick: async () => { zhVer = v; await applyAss(); } }, l)));
+  const applyAss = async () => {
+    const x = cur ? exps[cur] : null;
+    const url = x ? (zhVer === "v2" && x.ass_zh2 ? x.ass_zh2 : x.ass) : s.ass;
+    if (player.setAss) await player.setAss(url);
+    zhSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === zhVer));
+    zhSwitch.style.display = x && x.ass_zh2 ? "" : "none";
+  };
   const showLines = async (mode) => {
-    const table = mode === "v0" ? linesTable(s, player.video, player.offset) : expTable(s, exps[mode], mode, player.video, player.offset);
-    if (player.setAss) await player.setAss(mode === "v0" ? s.ass : exps[mode].ass);
-    lyricsPane.replaceChildren(...(modes.length > 1 ? [modeSwitch] : []), table);
+    cur = mode;
+    const refresh = async () => {   // 改了中文 / 注释：重新取这首的数据，表格和字幕一起刷新
+      const fresh = await api(`/api/concerts/${c.slug}/songs/${s.name}`);
+      Object.assign(exps, fresh.exps || {});
+      await showLines(cur);
+    };
+    const table = mode ? expTable(s, exps[mode], mode, player.video, player.offset, player.delay, refresh)
+      : linesTable(s, player.video, player.offset, player.delay);
+    await applyAss();
+    lyricsPane.replaceChildren(h("div", { class: "toolbar tight" }, ...(modes.length > 1 ? [modeSwitch] : []),
+      h("div", { class: "spacer" }), zhSwitch), table);
     modeSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
   };
-  const LABEL = { v2: "v2（新实验）", v1: "v1", v0: "v0（原流程）" };
   const modeSwitch = h("div", { class: "seg mode-switch" }, ...modes.map((m) =>
-    h("button", { "data-m": m, onclick: () => showLines(m) }, LABEL[m])));
-  await showLines(modes[0]);   // 默认看最新的实验，其他的点了才切过去
+    h("button", { "data-m": m, onclick: () => showLines(m) }, m === "v3" ? "v3（多锚点校准）" : "v2")));
+  await showLines(modes[0] || null);
   const card = h("div", { class: "card" }, head,
     h("div", { class: "top" }, player.el, lyricsPane),
     h("div", { class: "bottom" }, covers.el, form));
   $("#view").replaceChildren(card);
   if (s.job && s.job.running) pollJob(c, s, card.querySelector(".notice"));
+}
+
+// 看大图：页面内弹层（不开新标签页——审核页可能是独立窗口，新开的页没法关），× / Esc / 点图外面都能关
+function lightbox(src) {
+  const close = () => { box.remove(); window.removeEventListener("keydown", onKey, true); };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+  const box = h("div", { class: "lightbox", onclick: (e) => { if (e.target === box) close(); } },
+    h("img", { src }),
+    h("button", { class: "lb-close", title: "关闭（Esc）", onclick: close }, "×"));
+  window.addEventListener("keydown", onKey, true);
+  document.body.append(box);
 }
 
 function coverPane(s) {
@@ -185,7 +212,7 @@ function coverPane(s) {
       return h("button", {
         class: `cover${x.id === st.chosen ? " on" : ""}`, title: `${x.id}（双击看大图）`,
         onclick: () => { st.chosen = x.id; draw(); },
-        ondblclick: () => window.open(src, "_blank"),
+        ondblclick: () => lightbox(src),
       }, h("img", { src, loading: "lazy" }),
       x.t != null ? h("span", { class: "ct" }, `${SHOT[x.id.split("_")[0]] || ""} ${hms(x.t)}`.trim()) : null,
       x.id === st.chosen ? h("span", { class: "pick" }, "已选") : null);
@@ -211,7 +238,7 @@ function formPane(c, s, covers, head) {
   const d = draft.intro || {};
   const oldIntro = [entry.intro_song, entry.intro_performance].filter(Boolean).join("\n\n");
   const intro = h("textarea", { rows: 14 },
-    entry.intro ?? (oldIntro || draft.intro_text || [d.song, d.performance].filter(Boolean).join("\n\n")));
+    entry.intro ?? (oldIntro || draft.intro_text || [d.song, d.performance, d.lyrics].filter(Boolean).join("\n\n")));
   const tags = tagEditor(entry.tags ?? draft.tags ?? []);
   const note = h("input", { value: entry.note || "" });
   const msg = h("span", { class: "hint" }, entry.updated_at ? `上次保存 ${entry.updated_at}` : "");
@@ -229,7 +256,7 @@ function formPane(c, s, covers, head) {
   return h("div", { class: "form" },
     h("div", { class: "section-label" }, "投稿信息"),
     h("label", {}, h("span", {}, "投稿标题 ", cnt), title),
-    h("label", {}, "简介（歌曲介绍 + 演出介绍）", intro),
+    h("label", {}, "简介（歌曲介绍 + 演出介绍 + 歌词介绍）", intro),
     h("div", { class: "field" }, h("span", {}, "标签"), tags.el),
     h("div", { class: "actions" },
       h("label", { class: "grow" }, "备注（打回原因等）", note),
@@ -264,7 +291,7 @@ function tagEditor(init) {
 async function videoPane(c, s, at) {
   if (!s.preview || !s.preview_span) {
     const el = h("div", { class: "pane" }, h("div", { class: "placeholder" }, "还没有预览视频（preview 阶段）"));
-    return { el, video: null, offset: 0, setAss: null };
+    return { el, video: null, offset: 0, setAss: null, delay: () => 0 };
   }
   // 预览视频 = 整场 [clip0, clip1]（歌的前后各多留 10s）；整场时间 = clip0 + 播放时间
   const [clip0, clip1] = s.preview_span;
@@ -274,7 +301,40 @@ async function videoPane(c, s, at) {
   const edges = { start: s.start, end: s.end };
   const video = h("video", { src: s.preview, controls: true, preload: "auto", playsinline: true,
     controlslist: "nofullscreen", disablepictureinpicture: true });
-  const stage = h("div", { class: "stage" }, video);
+  // 左上角叠朝阳 Adele 的 logo（只是预览：和成品 make_mv.py 一样的比例和位置——宽度约为画面的 10.25%、离左上角 15/3840；
+  // 不改视频文件，只是一张图片叠在播放器上）
+  const logo = h("img", { src: "adele-logo.png", class: "preview-logo", alt: "" });
+  const stage = h("div", { class: "stage" }, video, logo);
+  const placeLogo = () => {
+    const W = video.clientWidth, H = video.clientHeight;
+    const ar = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
+    const cw = Math.min(W, H * ar), ch = cw / ar;   // 画面按 contain 居中，算出实际画面区域
+    const x0 = (W - cw) / 2, y0 = (H - ch) / 2;
+    Object.assign(logo.style, { left: `${x0 + cw * 15 / 3840}px`, top: `${y0 + ch * 15 / 2160}px`, width: `${cw * 0.1025}px` });
+  };
+  new ResizeObserver(placeLogo).observe(video);
+  video.addEventListener("loadedmetadata", placeLogo);
+  // 歌曲中间随机出现的半透明水印（预览）：按 watermark.json 的时间、位置淡入淡出
+  const wm = s.watermark && s.watermark.items && s.watermark.items.length ? s.watermark : null;
+  if (wm) {
+    const wmImg = h("img", { src: "adele-logo.png", class: "preview-wm", alt: "" });
+    stage.append(wmImg);
+    const frame = () => {
+      const t = video.currentTime - subOffset;   // 歌曲内时间
+      const it = wm.items.find((x) => t >= x.t && t < x.t + x.dur);
+      if (!it) { wmImg.style.opacity = 0; return; }
+      const a = Math.min(1, (t - it.t) / it.fade, (it.t + it.dur - t) / it.fade);
+      const W = video.clientWidth, H = video.clientHeight;
+      const ar = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
+      const cw = Math.min(W, H * ar), ch = cw / ar;
+      Object.assign(wmImg.style, { left: `${(W - cw) / 2 + cw * it.x}px`, top: `${(H - ch) / 2 + ch * it.y}px`,
+        width: `${cw * wm.width}px`, opacity: wm.opacity * Math.max(0, a) });
+    };
+    const loop = () => { frame(); if (!video.paused && stage.isConnected) requestAnimationFrame(loop); };
+    video.addEventListener("play", loop);
+    video.addEventListener("seeked", frame);
+    video.addEventListener("timeupdate", frame);
+  }
   video.addEventListener("loadedmetadata", () => seekAbs(at != null ? (s.slice ? s.slice[0] : s.start) + at : edges.start), { once: true });
   video.addEventListener("dblclick", () => toggleFullscreen(stage));
   state.video = video;
@@ -292,8 +352,8 @@ async function videoPane(c, s, at) {
 
   // 整体提前量：字幕文件里已经统一提前 BAKED_LEAD；切换时整体往后 / 往前挪，播放中立即生效，只影响预览
   const BAKED_LEAD = 0.2;
-  let lead = BAKED_LEAD;
-  const LEADS = [[0.2, "提前 0.2s"], [0.4, "0.4s"], [0.6, "0.6s"], [0.8, "0.8s"], [0, "不提前"]];
+  const LEADS = [[0.8, "提前 0.8s"], [0, "不提前"]];
+  let lead = LEADS[0][0];   // 默认提前 0.8s
   try { const v = parseFloat(localStorage.getItem("subLead")); if (LEADS.some(([x]) => x === v)) lead = v; } catch (e) { /* 无痕模式 */ }
   const applyLead = () => { if (overlay) { overlay.delay = BAKED_LEAD - lead; overlay.tick(); } };
   const leadSwitch = h("div", { class: "seg" }, ...LEADS.map(([v, label]) =>
@@ -319,42 +379,72 @@ async function videoPane(c, s, at) {
     else overlay = new SubOverlay(stage, video, ass, subOffset);
     applyLead();
   };
-  return { el, video, offset: subOffset, setAss };
+  return { el, video, offset: subOffset, setAss, delay: () => BAKED_LEAD - lead };
 }
 
 // 实验（v1 / v2）的逐句表格；每行时间怎么定的（几个来源投票）在「判定」的鼠标悬停说明里
 const VERDICT = { ok: ["✓", "ok"], warn: ["黄", "warn"], bad: ["红", "bad"], miss: ["漏", "bad"], title: ["", ""],
-  unconfirmed: ["未确认", "bad"], patch: ["补", "warn"] };
+  unconfirmed: ["未确认", "bad"], patch: ["补", "warn"], seq: ["顺序", "warn"], calib: ["校", "ok"], live: ["改词", "warn"], wm: ["水印", "wm"] };
 // 语言用国旗显示（鼠标停上去看语言名）
 const LANG = { en: ["🇬🇧", "英语"], es: ["🇪🇸", "西班牙语"], it: ["🇮🇹", "意大利语"], pt: ["🇵🇹", "葡萄牙语"], fr: ["🇫🇷", "法语"],
   ja: ["🇯🇵", "日语"], zh: ["🇨🇳", "中文"], ko: ["🇰🇷", "韩语"] };
 const flag = (l) => (LANG[l] ? LANG[l][0] : l || "");
 const langTd = (r) => h("td", { class: "lang", title: LANG[r.lang] ? LANG[r.lang][1] : r.lang || "" }, flag(r.lang));
-function expTable(s, x, ver, video, offset) {
+// 唱法：唱 / 说唱 / 讲话（v2 按音高稳定度 + 语速判断）
+const STYLE = { sing: ["唱", ""], rap: ["说唱", "rap"], speech: ["讲话", "speech"], crowd: ["观众合唱?", "crowd"],
+  title: ["歌名歌手", ""], wm: ["水印", "wm"] };
+const styleTd = (r) => h("td", { class: `style ${(STYLE[r.style] || ["", ""])[1]}`,
+  title: r.style === "crowd" ? `人声左右声道相关性比本首中位低 ${-r.steady}（观众合唱是现场环境话筒收的，左右差别大），而且没有很准地对上 Genius；估计，请审听`
+    : r.steady != null ? `音高稳定度 ${r.steady}（唱歌停在音上，高；说唱 / 讲话音高一直在滑，低）` : "" },
+  r.speech && r.verdict !== "title" ? "讲话" : (STYLE[r.style] || [""])[0]);
+function expTable(s, x, ver, video, offset, delay = () => 0, onChanged = null) {
   const data = x.rows;
+  // 中文 v2（只显示，不在页面上编辑：修改都通过对话由我改定稿表）：定稿 / 审校改过的标出来，顶部注释挂在下面
+  const zh2Cell = (r) => {
+    const issues = r.zh_issues || [];
+    const badge = [r.zh_locked ? h("span", { class: "zh-badge locked", title: "你定稿的译法" }, "定稿") : null,
+      issues.length ? h("span", { class: "zh-badge rev", title: issues.map((i) => `${i.type}：${i.problem}\n原：${i.from}\n改：${i.fix}`).join("\n\n") },
+        "审校改") : null];
+    const td = h("td", { class: "zh zh2" },
+      r.zh2 || "", ...badge, r.note ? h("div", { class: "note-line" }, r.note) : null);
+    return td;
+  };
+  const hasZh2 = data.some((r) => r.zh2);
   const M = x.models || { asr: "qwen-audio-3.1-asr-flash" };
   const rows = data.map((r) => h("tr", {
     class: [r.removed ? "removed" : "", r.speech ? "speech" : "", `v-${r.verdict}`].join(" ").trim(),
-    onclick: () => { if (video && r.start_ms != null) { video.currentTime = offset + r.start; video.play(); } },
+    onclick: () => {
+      if (!video || r.start_ms == null) return;
+      if (r.watermark) { video.pause(); video.currentTime = offset + (r.start + r.end) / 2; return; }   // 水印：停在 3 秒的正中间
+      video.currentTime = offset + r.start + delay(); video.play();
+    },
   },
-  h("td", { class: "t" }, r.start_ms != null ? fmtMs(r.start_ms) : "–"),
+  // 时间按左边播放器的时间显示（预览视频比这首歌多留了开头，字幕时间 + offset 才和播放器对得上）
+  h("td", { class: "t", title: r.start_ms != null ? `歌曲内 ${fmtMs(r.start_ms)}` : "" },
+    r.start_ms != null ? fmtMs(r.start_ms + Math.round((offset || 0) * 1000)) : "–"),
   langTd(r),
+  ...(ver !== "v1" ? [styleTd(r)] : []),
   h("td", { class: "g" }, r.genius || (r.verdict === "title" || r.speech ? "" : h("span", { class: "none" }, "（Genius 没有）"))),
   h("td", { class: "heard" }, r.verdict === "title" ? h("span", { class: "none" }, r.strategy) : r.qwen || ""),
-  h("td", { class: "o" }, r.text || h("span", { class: "none" }, "（没有字幕）")),
+  h("td", { class: "o" }, r.text || h("span", { class: "none" }, "（没有字幕）"),
+    r.credit ? h("div", { class: "credit" }, r.credit) : null),
   h("td", { class: `vd ${VERDICT[r.verdict] ? VERDICT[r.verdict][1] : ""}`, title: r.strategy },
-    r.speech && r.verdict !== "title" ? "讲话" : (VERDICT[r.verdict] || [""])[0]),
-  h("td", { class: "zh" }, r.zh || "")));
+    (VERDICT[r.verdict] || [""])[0]),
+  ...(hasZh2 ? [zh2Cell(r)] : []),
+  h("td", { class: "zh zh1" }, r.zh || "")));
   const wrap = h("div", { class: "table-wrap" }, h("table", { class: "lines-table exp-table" },
-    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", { class: "lang" }, "语言"), h("th", {}, "Genius 原句"), h("th", {}, M.asr),
-      h("th", {}, "校准字幕"), h("th", {}, "判定"), h("th", {}, "中文"))),
+    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", { class: "lang" }, "语言"), ...(ver !== "v1" ? [h("th", { class: "lang" }, "唱法")] : []),
+      h("th", {}, "Genius 原句"), h("th", {}, M.asr),
+      h("th", {}, "校准字幕"), h("th", {}, "判定"),
+      ...(hasZh2 ? [h("th", { title: `二次翻译：${x.zh2_model || ""}，更有画面感和表现力（视频默认用这一版）` }, "中文 v2")] : []),
+      h("th", {}, "中文 v1"))),
     h("tbody", {}, ...rows)));
   if (video) {
     let last = -1;
     video.addEventListener("timeupdate", () => {
       if (!wrap.isConnected) return;
-      const t = video.currentTime - offset;
-      const i = data.findIndex((r) => !r.removed && t >= r.start && t < r.end);
+      const t = video.currentTime - offset - delay();   // 和画面上的字幕用同一个提前量
+      const i = data.findIndex((r) => !r.removed && !r.watermark && t >= r.start && t < r.end);
       if (i === last) return;
       if (last >= 0) rows[last].classList.remove("now");
       last = i;
@@ -366,10 +456,15 @@ function expTable(s, x, ver, video, offset) {
   }
   const n = (v) => data.filter((r) => r.verdict === v).length;
   const p = x.profile;
-  const bits = [`${data.filter((r) => !r.removed && r.verdict !== "title").length} 行`,
+  const bits = [`${data.filter((r) => !r.removed && r.verdict !== "title" && !r.watermark).length} 行`,
+    data.filter((r) => r.watermark).length && `水印 ${data.filter((r) => r.watermark).length} 次`,
     p ? `语言 ${(p.langs || [p.main]).map(flag).join(" ")}${p.mismatch ? `（识别出来是 ${flag(p.heard_main)}）` : ""}` : "",
+    data.filter((r) => r.anchor).length && `锚点 ${data.filter((r) => r.anchor).length}`,
+    n("calib") && `校 ${n("calib")}`, n("seq") && `顺序 ${n("seq")}`, n("live") && `现场改词 ${n("live")}`,
     n("warn") && `黄 ${n("warn")}`, n("bad") && `红 ${n("bad")}`, n("patch") && `补 ${n("patch")}`,
     data.filter((r) => r.speech).length && `讲话 ${data.filter((r) => r.speech).length}`,
+    data.filter((r) => r.style === "rap").length && `说唱 ${data.filter((r) => r.style === "rap").length}`,
+    data.filter((r) => r.style === "crowd").length && `观众合唱? ${data.filter((r) => r.style === "crowd").length}`,
     n("miss") && `漏 ${n("miss")}`, n("unconfirmed") && `未确认 ${n("unconfirmed")}`].filter(Boolean);
   return h("details", { class: "lines", open: true }, h("summary", {}, bits.join(" · ")), wrap);
 }
@@ -377,7 +472,7 @@ function expTable(s, x, ver, video, offset) {
 const fmtMs = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
 
 // 逐句表格：毫秒时间 / Genius 原句 / Qwen 复核听到 / 校准字幕（最终版本）/ 校准策略（哪一步来的、被哪些步骤改过）/ 中文
-function linesTable(s, video, offset) {
+function linesTable(s, video, offset, delay = () => 0) {
   const legacy = !(s.rows && s.rows.length);   // 还没有逐句来历（老数据，或者正在重跑精校）
   const data = !legacy ? s.rows : s.lines.map((ln) => ({
     start_ms: Math.round(ln.start * 1000), end_ms: Math.round(ln.end * 1000), start: ln.start, end: ln.end,
@@ -387,9 +482,9 @@ function linesTable(s, video, offset) {
   if (!data.length) return h("div", { class: "empty" }, "还没有字幕（refine 阶段）");
   const rows = data.map((r) => h("tr", {
     class: [r.speech ? "speech" : "", r.suspect != null ? "mismatch" : "", r.removed ? "removed" : ""].join(" ").trim() || null,
-    onclick: () => { if (video) { video.currentTime = offset + r.start; video.play(); } },
+    onclick: () => { if (video) { video.currentTime = offset + r.start + delay(); video.play(); } },
   },
-  h("td", { class: "t" }, fmtMs(r.start_ms)),
+  h("td", { class: "t", title: `歌曲内 ${fmtMs(r.start_ms)}` }, fmtMs(r.start_ms + Math.round((offset || 0) * 1000))),
   langTd(r),
   h("td", { class: "g" }, r.genius || (r.genius === null || r.speech || r.strategy === "片头歌名" ? "" : h("span", { class: "none" }, "（Genius 没有）"))),
   h("td", { class: "heard" }, r.heard || ""),
@@ -405,8 +500,8 @@ function linesTable(s, video, offset) {
     let last = -1;
     video.addEventListener("timeupdate", () => {
       if (!wrap.isConnected) return;
-      const t = video.currentTime - offset;
-      const i = data.findIndex((r) => !r.removed && t >= r.start && t < r.end);
+      const t = video.currentTime - offset - delay();   // 和画面上的字幕用同一个提前量
+      const i = data.findIndex((r) => !r.removed && !r.watermark && t >= r.start && t < r.end);
       if (i === last) return;
       if (last >= 0) rows[last].classList.remove("now");
       last = i;
@@ -479,13 +574,22 @@ function toggleFullscreen(el) {
 }
 
 // 侧边栏：默认收起，状态记在本机
+// 侧边栏：默认收起；展开后 4 s 自动收起（鼠标停在侧边栏上时不收，移开后重新计 4 s）
+const SIDE_AUTO_CLOSE = 4000;
+let sideTimer = null;
+function armSideClose() {
+  clearTimeout(sideTimer);
+  sideTimer = setTimeout(() => {
+    if (!$("#sidebar").matches(":hover")) setCollapsed(true);
+  }, SIDE_AUTO_CLOSE);
+}
 function setCollapsed(v) {
   $("#app").classList.toggle("collapsed", v);
-  try { localStorage.setItem("v2.sideCollapsed", v ? "1" : "0"); } catch (_) { /* 无痕模式等 */ }
+  if (v) clearTimeout(sideTimer);
+  else armSideClose();
 }
-let sideCollapsed = true;
-try { sideCollapsed = localStorage.getItem("v2.sideCollapsed") !== "0"; } catch (_) { /* 默认收起 */ }
-setCollapsed(sideCollapsed);
+setCollapsed(true);
+$("#sidebar").addEventListener("mouseleave", () => { if (!$("#app").classList.contains("collapsed")) armSideClose(); });
 $("#side-toggle").addEventListener("click", () => { setCollapsed(true); $("#sidebar").classList.remove("open"); });
 $("#menu").addEventListener("click", () => {
   if (window.innerWidth <= 720) $("#sidebar").classList.toggle("open");

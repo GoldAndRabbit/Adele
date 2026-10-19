@@ -24,6 +24,12 @@ function assColor(c) {
   return m ? `#${m[4]}${m[3]}${m[2]}` : "#fff";
 }
 
+// &HAABBGGRR -> rgba()（AA 是透明度：00 不透明，FF 全透明）
+function assRgba(c) {
+  const m = /&H([0-9A-F]{2})([0-9A-F]{2})([0-9A-F]{2})([0-9A-F]{2})/i.exec(c || "");
+  return m ? `rgba(${parseInt(m[4], 16)}, ${parseInt(m[3], 16)}, ${parseInt(m[2], 16)}, ${(1 - parseInt(m[1], 16) / 255).toFixed(2)})` : null;
+}
+
 function parseAss(text) {
   // 多样式：Default（一条里「英文 \\N 中文」，逐句模式）；EN / ZH（段落模式，中英文各自独立的事件）
   const info = { playResX: 384, playResY: 288, styles: {}, events: [] };
@@ -33,14 +39,25 @@ function parseAss(text) {
     else if (line.startsWith("PlayResY:")) info.playResY = +line.split(":")[1];
     else if (line.startsWith("Style:")) {
       const f = line.slice(6).split(",").map((x) => x.trim());
-      info.styles[f[0]] = { size: +f[2], color: assColor(f[3]), outline: +f[16], marginL: +f[19], marginR: +f[20], marginV: +f[21] };
+      info.styles[f[0]] = { size: +f[2], color: assRgba(f[3]) || assColor(f[3]), outline: +f[16], marginL: +f[19], marginR: +f[20], marginV: +f[21],
+        align: +f[18] || 2, box: +f[15] === 3 ? assRgba(f[5]) : null };   // align 7~9 顶部；BorderStyle 3 = 底条
     } else if (line.startsWith("Dialogue:")) {
       const f = line.slice(9).split(",");
       let size = null;   // {\fs} 跨 \N 延续
       const lines = f.slice(9).join(",").split("\\N").map((l) => {
         const m = l.match(/^\s*\{\\fs(\d+)\}/);
         if (m) size = +m[1];
-        return { text: l.replace(/\{[^}]*\}/g, "").trim(), size };
+        // 行内颜色 {\c&HBBGGRR&} … {\c}：切成几段，各段带自己的颜色（片头署名里的 Takit 是蓝色）
+        const spans = [];
+        let color = null;
+        for (const part of l.split(/(\{[^}]*\})/)) {
+          if (part.startsWith("{")) {
+            const c = part.match(/\\1?c(&H[0-9A-Fa-f]+&?)?/);
+            if (c) color = c[1] ? assColor(c[1]) : null;
+          } else if (part) spans.push({ text: part, color });
+        }
+        const text = l.replace(/\{[^}]*\}/g, "").trim();
+        return { text, size, spans: spans.some((x) => x.color) ? spans : null };
       });
       info.events.push({ start: t(f[1].trim()), end: t(f[2].trim()), style: f[3].trim() || "Default", lines });
     }
@@ -65,10 +82,13 @@ class SubRenderer {
     return this.layers[style];
   }
   setAss(ass) {
+    // 换字幕文件（v3 / v2、视频中文 v1 / v2）：旧文件里正在显示的条目作废，下一次 tick 按新文件重画。
+    // 不清的话，新文件里同一时刻的条目「起始时间 + 样式」和旧的一样，会被当成没变而跳过（片头歌名一直是旧的）
     this.ass = ass;
+    this.active = [];
+    this.key = null;
     Object.values(this.layers).forEach((el) => el.replaceChildren());
     this.place();
-    this.render(this.active, true);
   }
   // W×H：播放区域大小；ar：画面宽高比。画面按 contain 居中显示。
   layout(W, H, ar) {
@@ -89,8 +109,15 @@ class SubRenderer {
       s.color = st.color || "#fff";
       s.width = `${inner}px`;
       s.left = `${(W - inner) / 2}px`;
-      el.baseBottom = (H - ph) / 2 + st.marginV * this.ky;
-      s.bottom = `${el.baseBottom}px`;
+      el.top = st.align >= 7;   // 顶部对齐（顶部注释）：不参与底部的上下错开
+      el.box = st.box;
+      if (el.top) {
+        s.top = `${(H - ph) / 2 + st.marginV * this.ky}px`;
+        s.bottom = "";
+      } else {
+        el.baseBottom = (H - ph) / 2 + st.marginV * this.ky;
+        s.bottom = `${el.baseBottom}px`;
+      }
       s.setProperty("--stroke", `${2 * st.outline * this.ky}px`);
       el.maxW = inner;
     }
@@ -159,11 +186,28 @@ class SubRenderer {
           for (const l of lines.filter((l) => l && l.text)) {
             const size = l.size || st.size;
             this.maxW = el.maxW;
-            for (const text of this.wrap(l.text, size)) {
+            const wrapped = this.wrap(l.text, size);
+            for (const text of wrapped) {
               const div = document.createElement("div");
               div.style.lineHeight = `${size * this.ky}px`;
               div.style.fontSize = `${this.font("a", size).px}px`;   // 行的 strut 和英文同字号，否则基线对齐会把行距撑大
-              div.append(...this.run(text, size));
+              if (l.spans && wrapped.length === 1) {   // 带行内颜色、没被折行：按段画
+                const parts = l.spans.map((sp, i) => ({ ...sp, text: i === 0 ? sp.text.trimStart() : sp.text }));
+                for (const sp of parts) {
+                  for (const el2 of this.run(sp.text, size)) {
+                    if (sp.color) el2.style.color = sp.color;
+                    div.append(el2);
+                  }
+                }
+              } else div.append(...this.run(text, size));
+              if (el.box) {   // 底条：半透明背景，不描边
+                div.style.cssText += `;display:inline-block;background:${el.box};padding:${2 * this.ky}px ${6 * this.ky}px;` +
+                  "border-radius:3px;-webkit-text-stroke:0;";
+                const wrapDiv = document.createElement("div");
+                wrapDiv.append(div);
+                kids.push(wrapDiv);
+                continue;
+              }
               kids.push(div);
             }
           }
@@ -175,6 +219,7 @@ class SubRenderer {
     let lift = 0;
     for (const name of this.stackOrder(evs)) {
       const el = this.layers[name];
+      if (el.top) continue;
       el.style.bottom = `${el.baseBottom + lift}px`;
       if (el.childElementCount) lift += el.offsetHeight;
     }

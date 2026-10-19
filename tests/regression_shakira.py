@@ -5,7 +5,7 @@
 
     .venv/bin/python tests/regression_shakira.py            # 4 首全查
     .venv/bin/python tests/regression_shakira.py 32_dai_dai # 只查一首
-    加 --exp 查 v1 实验（exp/），加 --v2 查 v2 实验（exp_v2/）
+    加 --exp 查 v1 实验（exp/），加 --v2 查 v2 实验（exp_v2/），加 --v3 查 v3（exp_v3/）
 """
 
 import re
@@ -27,13 +27,23 @@ POSTS = Path(__file__).resolve().parent.parent / "posts"
 
 
 def load(song, exp=""):
-    """exp="" 查正式字幕（v0），"exp" 查 v1 实验，"exp_v2" 查 v2 实验。"""
+    """exp="" 查正式字幕（v0），"exp" 查 v1 实验，"exp_v2" 查 v2 实验，"exp_v3" 查 v3。"""
     base = (POSTS / song) if (POSTS / song).exists() and not (SONGS / song).exists() else SONGS / song
+    ass = base / exp / "lyrics.ass" if exp == "exp_v3" else None
+    if ass is not None and ass.exists():
+        # v3：查视频里实际显示的字幕文件（翻译阶段去掉的幻听、顶部注释、片头歌名都按最终结果算）
+        out = []
+        for e in pysubs2.load(str(ass)).events:
+            first = pysubs2.SSAEvent(text=e.text.replace("\\n", "\\N").split("\\N")[0]).plaintext.strip()
+            if e.style in ("Default", "Speech") and first and not first.startswith("《"):
+                out.append((e.start / 1000, e.end / 1000, first, e.style == "Speech"))
+        return sorted(out)
     subs = pysubs2.load(str(base / (f"{exp}/lyrics.srt" if exp else "lyrics.srt")))
-    ev = list(subs.events)
-    if exp and (base / exp / "speech.srt").exists():   # v2 的讲话单独一个文件（黄色），画面上一样会出现
-        ev += pysubs2.load(str(base / exp / "speech.srt")).events
-    return sorted((e.start / 1000, e.end / 1000, e.plaintext.strip()) for e in ev)
+    ev = [(e, False) for e in subs.events]
+    if exp and (base / exp / "speech.srt").exists():   # 讲话单独一个文件（黄色），画面上一样会出现
+        ev += [(e, True) for e in pysubs2.load(str(base / exp / "speech.srt")).events]
+    # (起, 止, 文字, 是不是讲话)
+    return sorted((e.start / 1000, e.end / 1000, e.plaintext.strip(), sp) for e, sp in ev)
 
 
 def find(lines, pat, lo=0, hi=1e9):
@@ -81,8 +91,38 @@ def no_text(pat, why):
     return lambda L: (not [x for x in L if re.search(pat, x[2])], why, [x for x in L if re.search(pat, x[2])][:3])
 
 
+def has_raw(pat, lo, hi, why):
+    """原文匹配（日文等，norm 会把非拉丁字母去掉）。"""
+    f = lambda L: [x for x in L if lo <= x[0] <= hi and re.search(pat, x[2])]
+    return lambda L: (bool(f(L)), why, [x[:3] for x in L if lo - 5 <= x[0] <= hi + 5][:4])
+
+
+def no_raw(pat, why):
+    bad = lambda L: [x[:3] for x in L if re.search(pat, x[2])]
+    return lambda L: (not bad(L), why, bad(L)[:3])
+
+
+def all_speech(lo, hi, why, pat=None):
+    """[lo, hi] 里（匹配 pat 的）每一行都是讲话（黄色），而且至少有一行。"""
+    def f(L):
+        xs = [x for x in L if lo <= x[0] <= hi and (pat is None or re.search(pat, norm(x[2])))]
+        bad = [x[:3] for x in xs if not x[3]]
+        return bool(xs) and not bad, why, bad[:4] or (xs[:2] if xs else "这段没有字幕")
+    return f
+
+
+def short_raw(max_chars, lo, hi, why):
+    """日文一行不超过 max_chars 个字（不连成一整屏）。"""
+    bad = lambda L: [x[:3] for x in L if lo <= x[0] <= hi and len(re.sub(r"\s", "", x[2])) > max_chars]
+    return lambda L: (not bad(L), why, bad(L)[:2])
+
+
+INTERJ_TOK = re.compile(r"^\W*(?:(?:oh|uh|ah|eh|ay|yeah|hey|na|la|mm)\W*)+$", re.I)
+
+
 def short_lines(max_words=14):
-    long = lambda L: [x for x in L if len(x[2].split()) > max_words]
+    # 语气词（uh-uh-uh-uh）不算词数：Genius 原句后面带的语气词留在同一行
+    long = lambda L: [x for x in L if len([w for w in x[2].split() if not INTERJ_TOK.match(w)]) > max_words]
     return lambda L: (not long(L), f"一行字幕不超过 {max_words} 个词（整段没标点时会连成一整屏）", long(L)[:2])
 
 
@@ -100,7 +140,7 @@ CHECKS = {
     "32_dai_dai": [
         lacks(r"em polo|like the name|always see it solid", 0, 30, "开头人群声里的幻听讲话不出字幕"),
         count(r"oh eh", 38, 56, 1, "0:42~0:54 唱「Oh-eh-oh-eh」要有字幕"),
-        has(r"you knew from the day", 52, 56, "0:54「You knew from the day you were born」"),
+        has(r"knew from the day you were born", 52, 56, "0:54「(You) knew from the day you were born」（Genius 前后两处写法不同，现场把结尾那段搬到了开头）"),
         has(r"^dale$", 190.8, 192.6, "3:11 左右的「Dale」不能太早（之前早 2 s）也不能太晚"),
         order([r"^dale$", r"no olvide", r"juega como tu sabes"], 188, 200, "Dale → No olvide' lo que vales → Juega como tú sabes 顺序"),
         has(r"juega como tu sabes", 192, 198, "3:13 左右「Juega como tú sabes」"),
@@ -113,6 +153,14 @@ CHECKS = {
         has(r"llego el momento", 27, 32, "0:29「Llegó el momento, caen las murallas」"),
     ],
     "37_bzrp_music_sessions_53": [
+        has(r"claramente no es como suena", 186, 192, "3:08「Claramente no es como suena」（不是又一遍 Tiene nombre…）"),
+        has(r".", 211, 235, "3:31~3:55 有字幕（识别整段漏掉的地方）"),
+        has(r"con la prensa", 276, 283, "4:38「Con la prensa en la puerta…」（观众合唱，识别成 La suegra y la vecina）"),
+        has(r"las mujeres ya no lloran", 284, 292, "4:46「Las mujeres ya no lloran…」（识别成 Más dura）"),
+        count(r"tipos como tu", 290, 300, 2, "4:52、4:56「Pa' tipos como tú」两遍"),
+        has(r"a ti te quede grande", 298, 307, "5:00「A ti te quedé grande…」"),
+        lacks(r"^oh oh", 295, 310, "5:00 不能补成「Oh-oh」"),
+        lacks(r"^uh uh uh uh$", 0, 400, "「uh-uh-uh-uh」不单独成行"),
         lacks(r"por aca no vuelva", 3, 12, "开头「Ah, ah」不是「Por acá no vuelva', hazme caso」"),
         has(r"perdon ya cogi otro avion", 38.5, 44, "0:41「Perdón, ya cogí otro avión」"),
         has(r"aqui no vuelvo", 42, 46, "0:43「Aquí no vuelvo, no quiero otra decepción」"),
@@ -128,9 +176,23 @@ CHECKS = {
     "ricchi_sanremo2020_medley": [
         has(r"stringimi forte", 18, 32, "0:2x「Stringimi forte e stammi più vicino」单独一行（之前和后面几句连成一整屏）"),
     ],
-    "lose_yourself_2009": [],
-    "sobaniirune": [],
-    "hkt48_sobaniirune": [],
+    "lose_yourself_2009": [
+        all_speech(4, 29, "开场「Hey yo … Keep your heads up」全部是讲话（黄色）"),
+        all_speech(285, 312, "结尾致谢（Thank you / Everybody for coming out tonight / Peace）全部是讲话",
+                   pat=r"thank|everybody|noise|peace|detroit|love you"),
+        lacks(r"^yo$", 280, 312, "结尾致谢里的「you」不能配成歌词「Yo」"),
+        lacks(r"mom i love you", 300, 312, "结尾「man we love you」不能配成「Mom, I love you…」"),
+    ],
+    "sobaniirune": [
+        all_speech(6, 30, "0:06~0:30 开场对话（久しぶり / 元気？…）全部是讲话（黄色）"),
+        no_raw(r"(心の中では).*\1", "1:00「心の中では…」不能在一条字幕里出现两遍"),
+    ],
+    "hkt48_sobaniirune": [
+        has_raw(r"あなたのこと", 10, 15, "0:11「あなたのこと私は今でも」对上 Genius"),
+        has_raw(r"思い続けているよ", 13, 19, "0:15「思い続けているよ」"),
+        has_raw(r"心の中では", 26.5, 29.5, "0:27「心の中では」开头在 0:27~0:29（不是 0:32）"),
+        short_raw(30, 135, 200, "2:15~3:20 每句一行，不连成一整屏（一行不超过 30 字）"),
+    ],
 }
 for _song in CHECKS:
     CHECKS[_song].append(short_lines())
@@ -142,7 +204,7 @@ def main():
     for song, checks in CHECKS.items():
         if only and song not in only:
             continue
-        L = load(song, exp="exp_v2" if "--v2" in sys.argv else "exp" if "--exp" in sys.argv else "")
+        L = load(song, exp="exp_v3" if "--v3" in sys.argv else "exp_v2" if "--v2" in sys.argv else "exp" if "--exp" in sys.argv else "")
         print(f"\n== {song}（{len(L)} 句）")
         for c in checks:
             ok, why, detail = c(L)

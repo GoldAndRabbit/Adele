@@ -46,6 +46,8 @@ def build(names):
             link(d / "exp" / f, p / "exp" / f)
         link(d / "covers", p / "exp" / "covers")
         link(d / "exp_v2", p / "exp_v2")   # v2 实验（align4.py）整个目录
+        link(d / "exp_v3", p / "exp_v3")   # v3（workflow_v3）整个目录
+        link(d / "watermark.json", p / "watermark.json")   # 中间水印计划（workflow_v3/watermark.py）
         # 预览：整首 720p（硬件编码，几十秒）
         if not (d / "preview.mp4").exists():
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(p / "source.mp4"), "-vf", "scale=-2:720",

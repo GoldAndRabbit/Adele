@@ -26,6 +26,8 @@ PLAY_W, PLAY_H = 1920, 1080
 LATIN_FONT = "Arial Rounded MT Bold"
 CJK_FONT = "Hiragino Sans GB"      # 中文译文（\b1 加粗）
 JA_FONT = "Hiragino Sans W6"       # 日文/含汉字的原文，Arial 没有这些字形，fallback 字体太细
+CREDIT_BLUE = "&HFFA34D&"           # 网址用蓝色（ASS 颜色是 BGR：#4DA3FF）
+CREDIT = r"AI 自动字幕精校 {\c" + CREDIT_BLUE + r"}https://takit.app{\c}"  # 片头歌名下面的署名
 CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
 
 SYSTEM_PROMPT = """你是专业的歌词译者。用户给出一首歌按时间轴切分的歌词行（JSON 数组），
@@ -71,6 +73,39 @@ def translate_api(lines, context):
     raise SystemExit("翻译行数始终对不上，请改用 --zh-file")
 
 
+SPEECH_PROMPT = """你是专业的字幕译者。用户给出歌手在演唱会上对观众说的一段话，已按时间轴切成若干行（JSON 数组，一行是一条字幕），
+识别时一句话常被切在半中间（如 "I want to dedicate to all the auto" / "Workers in Detroit"）。
+请先把整段连起来理解，翻成通顺自然的简体中文口语，再按原文的行数切回去，要求：
+- 输出 JSON: {"zh": [...]}，长度与输入完全一致
+- 每一行中文对应同一时间说的内容；为了中文通顺，可以在相邻行之间调整语序、把半句话挪到上一行或下一行
+  （如上例译成 "我想把这首歌献给所有" / "底特律的汽车工人"），不要逐行硬翻出读不通的半句
+- 不加原话没有的意思；专有名词用通行中文名；粗口按中文口语自然处理
+- 纯语气词 / 喊声的行输出空字符串；不要添加任何解释"""
+
+
+def speech_groups(events, gap_ms=1000, max_lines=12):
+    """连续的说话（相邻两行间隔 <= gap_ms）合成一段，一起翻译。"""
+    groups, cur = [], []
+    for i, e in enumerate(events):
+        if cur and (e.start - events[cur[-1]].end > gap_ms or len(cur) >= max_lines):
+            groups.append(cur)
+            cur = []
+        cur.append(i)
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def translate_speech(lines, context):
+    user = (f"歌曲: {context}\n" if context else "") + json.dumps(lines, ensure_ascii=False)
+    for attempt in range(3):
+        zh = chat_json(SPEECH_PROMPT, user, label="说话翻译", effort=os.environ.get("TRANSLATE_EFFORT", "high")).get("zh", [])
+        if len(zh) == len(lines):
+            return [z.strip() for z in zh]
+        print(f"返回行数 {len(zh)} != {len(lines)}，重试 {attempt + 1}/3")
+    return translate_api(lines, context)   # 实在对不上就退回逐行翻
+
+
 def no_period(t):
     """字幕句末不加句号：去掉末尾单个 “.” / “。”（保留 ? ! … 和省略号 ...）。"""
     t = t.rstrip()
@@ -89,8 +124,14 @@ INTERJ_SRC = re.compile(r"\b(oh+|ooh+|yeah|ah+|uh+|woah|whoa|hey|na|la)\b", re.I
 INTERJ_ZH = re.compile(r"(^|[\s，,。.!！?？、…~～])(哦|噢|喔|耶|呃|啊|呀|哟|哇|嘿)+(?=$|[\s，,。.!！?？、…~～])")
 
 
+ONLY_INTERJ = re.compile(r"^(?:\W*\b(?:oh+|ooh+|o+|yeah|yeh|ah+|a+|uh+|huh|eh+|ey|ay+|aye|woah|whoa|hey|na|la|mm+|hmm|ha|woo|oe|ole)\b\W*)+$", re.I)
+
+
 def strip_interjections(src, zh):
-    """原文有语气词时，把译文里对应的“哦/耶/啊…”去掉（包括去掉后多余的标点）。"""
+    """原文有语气词时，把译文里对应的“哦/耶/啊…”去掉（包括去掉后多余的标点）。
+    原文整行都是语气词（uh-uh-uh-uh、Oh-eh-oh-eh）：中文留空（模型偶尔会译成「嗯-嗯-嗯-嗯」）。"""
+    if ONLY_INTERJ.match(src.strip()):
+        return ""
     if not zh or not INTERJ_SRC.search(src):
         return zh
     out = INTERJ_ZH.sub(r"\1", zh)
@@ -130,6 +171,7 @@ def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None, speech_start=
         if speech_start is not None and speech_start >= 1000:  # 标题不和开场说话叠在一起
             first = min(first, speech_start)
         t = title + (r" \N" + title_zh if title_zh and title_zh != title else "")
+        t += r" \N{\fs21}" + CREDIT   # 片头署名：歌名、歌手下面一行小字
         out.events.append(pysubs2.SSAEvent(start=0, end=min(title_duration, first), text=t))
     for e, z in zip(subs.events, zh):
         text = no_period(e.plaintext.replace("\n", " ").strip())
@@ -165,6 +207,7 @@ def build_ass_modern(subs, zh, title, title_duration, title_zh=None):
         t = (r"{\fn" + JA_FONT + "}" + title) if CJK_RE.search(title) else title
         if title_zh and title_zh != title:
             t += r"\N{\fn" + CJK_FONT + r"\b1\fs56}" + title_zh
+        t += r"\N{\fn" + CJK_FONT + r"\b0\fs50}" + CREDIT
         out.events.append(pysubs2.SSAEvent(start=0, end=title_duration, text=t, style="Title"))
     for e, z in zip(subs.events, zh):
         text = no_period(e.plaintext.replace("\n", " ").strip())
@@ -183,7 +226,7 @@ def main():
     p.add_argument("srt")
     p.add_argument("-o", "--output", required=True)
     p.add_argument("--title", help="首行标题，如 '《Song》 Artist'")
-    p.add_argument("--title-duration", type=int, default=4000, help="标题最长显示毫秒")
+    p.add_argument("--title-duration", type=int, default=6000, help="标题最长显示毫秒（默认 6 s，下一句先来就截到下一句之前）")
     p.add_argument("--zh-file")
     p.add_argument("--speech", help="歌词之外的说话字幕 srt（speech_asr.py 产出），一起翻译，中文不加 ♪")
     p.add_argument("--retranslate", action="store_true", help="忽略缓存里的歌词译文和歌曲解读，整首重翻（标题译文保留）")
@@ -257,17 +300,23 @@ def main():
     if a.speech and os.path.exists(a.speech) and not a.zh_file:
         sp = pysubs2.load(a.speech).events
         sl = [re.sub(r"\s+", " ", e.plaintext).strip() for e in sp]
-        todo = sorted({l for l in sl if l and l not in cache}, key=sl.index)
-        for i in range(0, len(todo), 25):
-            batch = todo[i:i + 25]
-            for k, v in zip(batch, translate_api(batch, (a.title or "") + "\n（以下是歌手在演唱前后对观众说的话，不是歌词）")):
-                cache[k] = v
+        # 说话按段翻：一句话常被切成好几行（"I want to dedicate to all the auto" / "Workers in Detroit"），
+        # 逐行翻会翻出「献给所有汽车」「工人，在底特律」；整段理解后再按行切回去，中文可以跨行调整语序
+        sp_zh, todo = [""] * len(sl), 0
+        for g in speech_groups(sp):
+            src = [sl[i] for i in g]
+            key = "__speech__" + "\n".join(src)
+            if key not in cache:
+                cache[key] = translate_speech(src, (a.title or "") + "\n（以下是歌手在演唱前后对观众说的话，不是歌词）")
+                todo += len(src)
+            for i, z in zip(g, cache[key]):
+                sp_zh[i] = z
         # 说话用单独样式：暖黄色，和白色歌词区分；中文不加 ♪
         sty = ass.styles["Default"].copy()
         sty.primarycolor = pysubs2.Color(255, 214, 102)
         ass.styles["Speech"] = sty
-        for e, l in zip(sp, sl):
-            z = no_period(strip_interjections(l, cache.get(l, "")))
+        for e, l, z0 in zip(sp, sl, sp_zh):
+            z = no_period(strip_interjections(l, z0))
             l = no_period(l)
             text = l + (r" \N" + z if z and z != l else "")
             if a.style == "bzrp" and not CJK_RE.search(l) and len(l) > 40:
@@ -277,7 +326,7 @@ def main():
         if a.cache:
             with open(a.cache, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=1)
-        print(f"说话字幕 {len(sp)} 句（新翻 {len(todo)} 句）")
+        print(f"说话字幕 {len(sp)} 句（新翻 {todo} 句，按段翻译）")
     ass.save(a.output)
     print(f"写入 {a.output}（{len(lines)} 句，{sum(1 for z in zh if z)} 句含中文）")
 

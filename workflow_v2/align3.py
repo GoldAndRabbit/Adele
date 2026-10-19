@@ -78,7 +78,10 @@ def asr_words(y, sr, key, cache_path, t0=0.0):
             if out:
                 out[-1]["punct"] = out[-1]["punct"] or (w.get("punctuation") or "")
             continue
-        new_word = not out or gap or raw.startswith(" ") or out[-1]["punct"]
+        # 日中韩没有空格：每个分块各算一个词（不然一整句拼成一个「词」，只剩一个起止时间，
+        # 再被下面的「超过 3 s」规则把开头推到结尾前 1 s：hkt48 0:28 开唱的「心の中では…」变成 0:32.4）
+        cjk = CJK.search(raw) or (out and CJK.search(out[-1]["w"][-1:]))
+        new_word = not out or gap or raw.startswith(" ") or out[-1]["punct"] or cjk
         gap = False
         if new_word:
             out.append({"w": raw.strip(), "s": t0 + w["begin_time"] / 1000, "e": t0 + w["end_time"] / 1000,
@@ -113,7 +116,16 @@ def parts(y, sr, max_len=MAX_PART, phase=0.0):
         if not cuts or cut - cuts[-1] > 10:
             cuts.append(cut)
     edges = [0.0] + cuts + [dur]
-    return list(zip(edges, edges[1:]))
+    # 两个目标切点挨得太近会只留一个，留下超长的块（BZRP 105~188 有 83 s）：超过 max_len 的块在中间最安静处再切一刀
+    out = []
+    for a, b in zip(edges, edges[1:]):
+        while b - a > max_len * 1.1:
+            lo, hi = int((a + 20) * 10), int((min(b - 20, a + max_len)) * 10)
+            c = (lo + int(np.argmin(rms[lo:hi]))) / 10 if hi > lo else a + max_len
+            out.append((a, c))
+            a = c
+        out.append((a, b))
+    return out
 
 
 def read_song(y, sr, key, cache_path, phase=0.0):
@@ -138,10 +150,16 @@ def sentences(words):
 
 
 def text_of(ws):
-    return " ".join(w["w"] for w in ws)
+    """词连成文字：日中韩的词之间不加空格（心 + の中では -> 心の中では）。"""
+    out = ""
+    for w in ws:
+        if out and not (CJK.search(out[-1]) and CJK.search(w["w"][:1])):
+            out += " "
+        out += w["w"]
+    return out
 
 
-CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
+CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uff10-\uff19]")
 
 
 def _romaji(text):

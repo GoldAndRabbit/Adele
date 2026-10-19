@@ -9,6 +9,8 @@
   POST .../rerun     后台重跑这一首的 refine（边界改过之后），一次只跑一个
 """
 
+import json
+import re
 import subprocess
 import sys
 import time
@@ -89,19 +91,54 @@ def exp_data(d, sub, ass_url):
         lang = r.get("lang") or line_lang(r.get("text") or r.get("genius") or r.get("qwen") or "", main)
         xrows.append({**r, "lang": lang, "zh": m["zh"] if m else "", "start": t, "end": (r["end_ms"] or 0) / 1000})
     have = {(round(r["start"], 1), r["text"]) for r in xrows}
+    xl = [y for y in xl if y["style"] != "Note"]   # 顶部注释不是字幕行（逐句表格里挂在对应那句下面）
     for y in xl:   # 片头歌名（翻译时加的）和讲话：字幕文件里有、逐句数据里没有的
         if y["orig"].startswith("《") or (y["style"] != "Default" and (round(y["start"], 1), y["orig"]) not in have):
             xrows.append({"start_ms": round(y["start"] * 1000), "end_ms": round(y["end"] * 1000), "start": y["start"],
                           "end": y["end"], "genius": "", "qwen": "", "heard": "", "text": y["orig"], "zh": y["zh"],
                           "lang": "" if y["orig"].startswith("《") else line_lang(y["orig"], main),
                           "verdict": "title", "removed": False, "speech": y["style"] != "Default",
+                          "style": "title" if y["orig"].startswith("《") else None, "credit": y.get("extra", ""),
                           "strategy": "片头歌名（歌名翻译）" if y["orig"].startswith("《") else "讲话"})
         elif y["style"] != "Default":   # 讲话行：逐句数据里有，补上中文
             for r in xrows:
                 if r["text"] == y["orig"] and abs(r["start"] - y["start"]) < 0.06:
                     r["zh"], r["speech"] = y["zh"], True
+    # 歌曲中间的水印（workflow_v3/watermark.py）也作为一行插进表格，方便对照时间和位置
+    wm = read_json(d / "watermark.json", None) or {}
+    for it in wm.get("items", []):
+        where = ("左" if it["x"] < 0.2 else "右" if it["x"] > 0.6 else "中") + ("上" if it["y"] < 0.25 else "中" if it["y"] < 0.6 else "下")
+        xrows.append({"start_ms": round(it["t"] * 1000), "end_ms": round((it["t"] + it["dur"]) * 1000), "start": it["t"],
+                      "end": it["t"] + it["dur"], "genius": "", "qwen": "", "text": f"朝阳 Adele 水印：{where}，{it['dur']:.0f} 秒，"
+                      f"透明度 {wm.get('opacity', 0.6):.0%}", "zh": "", "lang": "", "verdict": "wm", "removed": False,
+                      "style": "wm", "watermark": True,
+                      "strategy": f"位置 x={it['x']:.2f} y={it['y']:.2f}（占画面比例），淡入淡出各 {it['fade']} 秒；避开字幕区、左上角 logo 和人脸（这一刻检测到 {it.get('faces', 0)} 张脸）"})
     xrows.sort(key=lambda r: (r["start_ms"] is None, r["start_ms"] or 0))
-    return {"rows": xrows, "ass": ass_url if (x / "lyrics.ass").exists() else None, "profile": prof or None,
+    # 翻译（song_translation_workflow：translation/result.json；旧的二次翻译 zh2.json 兼容）：按时间 + 原文对回每一行
+    tr = read_json(x / "translation" / "result.json", {}) or {}
+    z2 = read_json(x / "zh2.json", {}) or {}
+    model = tr.get("model") or z2.get("model")
+    if tr.get("units"):
+        notes = {int(k): v for k, v in (tr.get("final_notes") or tr.get("notes") or {}).items()}
+        for r in xrows:
+            # 原文比较前统一空白（日文歌词里有全角空格，字幕文件里是半角）
+            rt = re.sub(r"\s+", " ", r["text"] or "").strip()
+            m = next((u for u in tr["units"] if abs(u["start"] - (r["start_ms"] or 0)) < 60 and u["orig"] == rt), None)
+            if m:
+                r.update({"zh": m.get("v1", r.get("zh", "")), "zh2": m.get("v2_final", m.get("v2", "")), "zh_issues": m.get("issues", []),
+                          "zh_locked": m.get("locked", False), "unit": m["i"], "note": notes.get(m["i"], "")})
+                if m.get("dropped"):   # 幻听：不出字幕，表格里也不显示翻译
+                    r.update({"removed": True, "verdict": "unconfirmed", "strategy": m["dropped"], "zh": "", "zh2": "", "note": ""})
+    elif z2.get("items"):
+        for r in xrows:
+            m = next((it for it in z2["items"] if abs(it["start_ms"] - (r["start_ms"] or 0)) < 60 and it["orig"] == r["text"]), None)
+            if m:
+                r["zh2"] = m["zh2"]
+    zh2_ass = ass_url.replace("lyrics.ass", "lyrics_zh2.ass") if (x / "lyrics_zh2.ass").exists() else None
+    brief = tr.get("brief") or {}
+    return {"rows": xrows, "ass": ass_url if (x / "lyrics.ass").exists() else None, "ass_zh2": zh2_ass,
+            "zh2_model": model, "profile": prof or None, "editable_zh": bool(tr.get("units")),
+            "brief": {k: brief.get(k) for k in ("theme", "voice", "tone", "core_lines", "notes")} if brief else None,
             "models": {"asr": align3.MODEL, "verify": qwen_asr.MODEL}}
 
 
@@ -142,7 +179,8 @@ def ass_lines(path):
         parts = [x.strip() for x in e.text.replace("\\n", "\\N").split("\\N")]
         clean = [pysubs2.SSAEvent(text=x).plaintext.strip() for x in parts]
         out.append({"start": e.start / 1000, "end": e.end / 1000, "style": e.style,
-                    "orig": clean[0] if clean else "", "zh": clean[1] if len(clean) > 1 else ""})
+                    "orig": clean[0] if clean else "", "zh": clean[1] if len(clean) > 1 else "",
+                    "extra": " ".join(clean[2:])})   # 片头第三行：AI 精校署名
     return out
 
 
@@ -193,8 +231,8 @@ def get_song(slug: str, name: str):
                              "strategy": "片头歌名" if x["orig"].startswith("《") else "讲话（Qwen 识别，两遍复听都对上）",
                              "speech": x["style"] != "Default"})
         rows.sort(key=lambda r: r["start_ms"])
-    # 实验结果：v1 = songs/<nn>/exp/（align3.py），v2 = songs/<nn>/exp_v2/（align4.py）；审核页上切换着对比，不影响正式字幕（v0）
-    exps = {k: exp_data(d, sub, f"/media/{slug}/songs/{name}/{sub}/lyrics.ass") for k, sub in (("v2", "exp_v2"), ("v1", "exp"))}
+    # v3（exp_v3/，workflow_v3）和 v2（exp_v2/，align4.py）：审核页默认看 v3，可以切到 v2 对比；v1、v0 不再显示
+    exps = {k: exp_data(d, sub, f"/media/{slug}/songs/{name}/{sub}/lyrics.ass") for k, sub in (("v3", "exp_v3"), ("v2", "exp_v2"))}
     exps = {k: v for k, v in exps.items() if v}
     from workflow_v2.align4 import line_lang
     main = info.get("lang") or "en"
@@ -215,8 +253,53 @@ def get_song(slug: str, name: str):
                     "file_4x3": media_url(c, name, x["file_4x3"]) if x["file_4x3"] else None}
                    for x in cover_candidates(d)],
         "draft": read_json(d / "post_draft.json", {}),
+        # 歌曲中间的半透明 logo 水印计划（workflow_v3/watermark.py），审核页只做预览，不改视频
+        "watermark": read_json(d / "watermark.json", None),
         "review_entry": rv["songs"].get(name, {}),
     }
+
+
+def v3_dirs(slug, name):
+    """v3 结果的真实目录（v1 单曲在 concerts/v1_singles 里是软链接，定稿表要写到 posts/<name>/）。"""
+    c = concert(slug)
+    d = c.song_dir(song(c, name))
+    x = (d / "exp_v3").resolve()
+    if not (x / "translation" / "result.json").exists():
+        raise HTTPException(400, "这首还没有 v3 翻译")
+    return x.parent, x
+
+
+@app.post("/api/concerts/{slug}/songs/{name}/zh")
+def post_zh(slug: str, name: str, body: dict = Body(...)):
+    """审核页直接改中文（v2）：存进这首歌的定稿表 zh_fixed.json（只这首），重新生成字幕文件（不重新调用模型）。
+    zh 为空字符串 = 取消定稿，恢复模型的译法。"""
+    from workflow_v3.song_translation_workflow import build_outputs
+    d, x = v3_dirs(slug, name)
+    orig, zh = (body.get("orig") or "").strip(), (body.get("zh") or "").strip()
+    if not orig:
+        raise HTTPException(400, "缺少原文")
+    f = d / "zh_fixed.json"
+    fixed = json.loads(f.read_text()) if f.exists() else {}
+    if zh:
+        fixed[orig] = zh
+    else:
+        fixed.pop(orig, None)
+    f.write_text(json.dumps(fixed, ensure_ascii=False, indent=1))
+    build_outputs(d, x)
+    return {"ok": True, "fixed": len(fixed)}
+
+
+@app.post("/api/concerts/{slug}/songs/{name}/note")
+def post_note(slug: str, name: str, body: dict = Body(...)):
+    """审核页改 / 删 / 加顶部注释：{orig: 原文, note: "注：…"}，note 为空 = 删掉；存进这首的 zh_notes.json（按原文）。"""
+    from workflow_v3.song_translation_workflow import build_outputs
+    d, x = v3_dirs(slug, name)
+    f = d / "zh_notes.json"
+    notes = json.loads(f.read_text()) if f.exists() else {}
+    notes[(body.get("orig") or "").strip()] = (body.get("note") or "").strip()
+    f.write_text(json.dumps(notes, ensure_ascii=False, indent=1))
+    build_outputs(d, x)
+    return {"ok": True}
 
 
 @app.post("/api/concerts/{slug}/songs/{name}/review")
@@ -282,7 +365,7 @@ def media(slug: str, path: str):
     allowed = f.suffix in MEDIA_OK and (
         path == "source.mp4"
         or (len(parts) == 3 and parts[0] == "songs" and parts[2] in ("lyrics.ass", "preview.mp4"))
-        or (len(parts) == 4 and parts[0] == "songs" and parts[2] in ("exp", "exp_v2") and parts[3] == "lyrics.ass")
+        or (len(parts) == 4 and parts[0] == "songs" and parts[2] in ("exp", "exp_v2", "exp_v3") and parts[3] in ("lyrics.ass", "lyrics_zh2.ass"))
         or (len(parts) >= 4 and parts[0] == "songs" and parts[2] in ("covers", "post")))
     if not allowed or ".." in parts or not f.resolve().is_file():
         raise HTTPException(404)
