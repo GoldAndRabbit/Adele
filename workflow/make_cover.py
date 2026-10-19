@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 W, H = 1920, 1080
-TEXT_Y = 0.82  # 副标题基线位置（占画面高度），所有景别统一；B 站底部约 16% 会盖播放量/时长，不要超过 0.84
+TEXT_Y = 0.82  # 副标题基线最低位置（占画面高度），所有景别统一；文字块矮时在徽章底边 ~ 这条线之间居中。B 站底部约 16% 会盖播放量/时长，不要超过 0.84
 
 FONTS = {
     "sans": ("/System/Library/Fonts/Avenir Next.ttc", 8),                    # Avenir Next Heavy
@@ -164,8 +164,7 @@ def grab_hd(video, t, work):
 YUNET = ROOT / "models" / "yunet" / "face_detection_yunet_2023mar.onnx"
 # 脸部清晰度 = 960 宽画面上脸部的拉普拉斯方差 × 脸高占比（大脸皮肤平滑、方差天然低，乘上脸高才和小脸可比）；
 # < 本景别第 75 百分位 × BLUR_REL，或 < BLUR_FLOOR，算糊（Lose Yourself：糊的 3.9~5.5，清楚的 6~17；候选里糊的多，p75 只有 ~8）
-BLUR_REL, BLUR_FLOOR = 0.7, 3.0
-HALF_MIN_FALLBACK = 0.06  # 半身不够时，脸高 0.06~0.09（七分身）的演唱者帧也拿来补
+BLUR_REL, BLUR_RELAX, BLUR_FLOOR = 0.7, 0.55, 3.0  # 先只用 >= 0.7 × p75 的；不够再放宽到 0.55 × p75（再低 Lose Yourself 178s 那种糊的就回来了）
 SHOTS = [  # (类别, 中文名, 脸高/画面高 下限, 上限)；标题高度各景别统一（以前按景别抬高，半身 / 全身会压到左上的 4K 徽章）
     ("closeup", "正脸特写", 0.22, 1.00),
     ("half", "正脸半身", 0.09, 0.22),
@@ -277,42 +276,50 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
             like = float((refs @ feat).max()) if len(refs) else 0.0
             if lo <= ratio < hi and t not in have and cy <= 0.6 and n <= 3 and like >= 0.35:
                 cands[k].append((1, conf * np.log1p(sharp) * center, t, sharp * ratio))
-    # 半身还不够：脸再小一点（七分身）、识别为演唱者（或和演唱者相似、在画面上半部分）的帧垫底补位
-    if want.get("half") and len({c[2] for c in cands["half"]}) < want["half"]:
-        have = {c[2] for c in cands["half"]}
-        for i, (t, ratio, conf, sharp, center, feat, n, cy, fl) in enumerate(faces_all):
-            like = float((refs @ feat).max()) if len(refs) else 0.0
-            if (HALF_MIN_FALLBACK <= ratio < SHOTS[1][2] and t not in have
-                    and (i in keep and n <= max_faces or cy <= 0.6 and n <= 3 and like >= 0.35)):
-                cands["half"].append((0, conf * np.log1p(sharp) * center, t, sharp * ratio))
     # 去掉糊的（动态模糊 / 失焦）：见 BLUR_REL。清晰度和片源关系很大（4K 转播特写比 2009 年的 Lose Yourself 高好几倍），
-    # 只能按本首、本景别相对比
+    # 只能按本首、本景别相对比。先只用清楚的挑；不够再放宽到 BLUR_RELAX 补（真糊的仍然进不来）
+    def choose(k, n):
+        if not n or not cands[k]:
+            return [], 0, 0
+        p75 = float(np.percentile([c[3] for c in cands[k]], 75))
+        strict, relaxed = max(BLUR_FLOOR, BLUR_REL * p75), max(BLUR_FLOOR, BLUR_RELAX * p75)
+        chosen = []
+        for thr in (strict, relaxed):
+            pool = sorted((c for c in cands[k] if c[3] >= thr), reverse=True)
+            # 间隔 gap 秒挑；凑不够就把间隔减半再挑（同一个镜头里也能挑出不太一样的两张）；已选的保留
+            for g in (gap, gap / 2, gap / 4):
+                for _, _, t, _ in pool:
+                    if len(chosen) == n:
+                        break
+                    if all(abs(t - c) >= g for c in chosen):
+                        chosen.append(t)
+            if len(chosen) == n:
+                break
+        return chosen, len({c[2] for c in cands[k] if c[3] < thr}), thr
+
+    # 特写 + 半身一共要 sum(want) 张：一类不够，差额让另一类多挑（La fuerte 转播几乎没有特写，就多给半身）
+    res = {k: choose(k, want[k]) for k, *_ in SHOTS}
+    for k, *_ in SHOTS:
+        if not want[k]:
+            continue
+        spare = sum(max(0, want[o] - len(res[o][0])) for o, *_ in SHOTS if o != k and want[o])
+        if spare and len(res[k][0]) == want[k]:
+            res[k] = choose(k, want[k] + spare)
     picked = {}
     for k, *_ in SHOTS:
         if not want[k]:
             picked[k] = []
             continue
-        thr = max(BLUR_FLOOR, BLUR_REL * float(np.percentile([c[3] for c in cands[k]], 75))) if cands[k] else 0
-        blurry = len({c[2] for c in cands[k] if c[3] < thr})
-        cands[k] = [c for c in cands[k] if c[3] >= thr]
-        # 间隔 gap 秒挑；凑不够 want 张就把间隔减半再挑（同一个镜头里也能挑出不太一样的两张）
-        for g in (gap, gap / 2, gap / 4):
-            chosen = []
-            for _, _, t, _ in sorted(cands[k], reverse=True):
-                if all(abs(t - c) >= g for c in chosen):
-                    chosen.append(t)
-                if len(chosen) == want[k]:
-                    break
-            if len(chosen) == want[k]:
-                break
+        chosen, blurry, thr = res[k]
         if blurry:
             print(f"  {k}: 去掉糊的 {blurry} 帧（脸部清晰度 < {thr:.1f}）")
         picked[k] = sorted(chosen)
         tier = {t: max(c[0] for c in cands[k] if c[2] == t) for t in chosen}
         print(f"  {k}: 候选 {len(cands[k])} 帧，选 {len(chosen)} 张 "
-              + str([f"{x:.0f}s{'' if tier[x] == 3 else '(近正脸)' if tier[x] == 2 else '(补位)' if tier[x] == 1 else '(七分身)'}" for x in picked[k]]))
-        if len(chosen) < want[k]:
-            print(f"  ⚠ {k} 只找到 {len(chosen)} 张可靠的演唱者画面（宁缺毋滥），需要的话用 --at 手动补")
+              + str([f"{x:.0f}s{'' if tier[x] == 3 else '(近正脸)' if tier[x] == 2 else '(补位)'}" for x in picked[k]]))
+    total, need = sum(len(v) for v in picked.values()), sum(want.values())
+    if total < need:
+        print(f"  ⚠ 一共只找到 {total} 张可靠的演唱者画面（要 {need} 张，宁缺毋滥），需要的话用 --at 手动补")
     return picked
 
 
@@ -607,11 +614,11 @@ def compose(frame, a):
         if not a.subtitle:
             return tf, None, 0.0, sub_y
         if a.sub_fit == "natural":
-            # 正常字距、居中：字号最大到标题的 0.72（至少画布高的 11.5%，但不超过标题的 0.85——长标题字小，
-            # 副标题不能比标题还大），宽度最多到标题宽的 88% / 画布宽的 85%，不拉宽到和标题等宽
-            sf = fit_width(a.subtitle, "sub", max(int(title_w * 0.88), int(cw * 0.85)),
-                           int(min(tf.size * 0.85, max(ch * 0.115, tf.size * 0.72))))
-            tracking = 0.0
+            # 居中，宽度 = 标题宽的 85%：先按正常字距放大字号；长标题（BZRP Music Sessions #53）字小，副标题要比标题还大
+            # 才够宽，字号就封顶在标题字号，差的宽度用字距补齐。整块变高没关系，后面标题会自动缩小避开徽章、整块再居中
+            sub_w = int(title_w * 0.85)
+            sf = fit_width(a.subtitle, "sub", sub_w, tf.size)
+            tracking = max(0.0, (sub_w - ink_width(a.subtitle, sf)) / max(1, len(a.subtitle) - 1))
         else:
             # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
             sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.68))
@@ -619,15 +626,20 @@ def compose(frame, a):
         return tf, sf, tracking, sub_y - int(sf.size * 1.12)
 
     # 标题撑满宽度，必然横跨左上角的 logo + 4K 徽章：字顶不能高过徽章底边，太高就缩小字号（底边位置不变）
+    top_limit = badge_bottom + int(ch * 0.03)
     max_size = int(ch * 0.30)
     while True:
         tf, sf, tracking, title_y = layout(max_size)
-        if title_y + tf.getbbox(a.title, anchor="ms")[1] >= badge_bottom + int(ch * 0.03) or max_size <= 40:
+        top = title_y + tf.getbbox(a.title, anchor="ms")[1]
+        if top >= top_limit or max_size <= 40:
             break
         max_size = int(max_size * 0.95)
-    draw_text(canvas, (cw / 2, title_y), a.title, tf)
+    # 整块文字在「徽章底边 ~ text_y」之间垂直居中：短标题字大、本来就撑满；长标题（BZRP Music Sessions #53）字小、
+    # 块矮，底边对齐的话会沉在最下面，往上挪到中间
+    shift = max(0, (top - top_limit) // 2)
+    draw_text(canvas, (cw / 2, title_y - shift), a.title, tf)
     if sf:
-        draw_text_tracked(canvas, cw / 2, sub_y, a.subtitle, sf, tracking, 0.08)
+        draw_text_tracked(canvas, cw / 2, sub_y - shift, a.subtitle, sf, tracking, 0.08)
     return canvas.convert("RGB")
 
 

@@ -68,3 +68,34 @@ def chat_json(system, user, temperature=0.3, label="LLM", effort=None):
         print(f"  {label} 第 {attempt + 1} 次失败（{last}），重试")
         time.sleep(3 * (attempt + 1))
     raise RuntimeError(f"{label} 连续失败: {last}")
+
+
+def vision_json(system, text, images, label="看图", model=None):
+    """看图（阿里百炼 Qwen-VL，OpenAI 兼容接口）：images 是 JPEG bytes 列表，要求模型返回 JSON 对象。"""
+    import base64
+    import time
+    from openai import OpenAI
+
+    load_env()
+    base_url, key_var, _ = PROVIDERS["aliyun"]
+    if not os.environ.get(key_var):
+        raise SystemExit(f"缺少 {key_var}（放到 {ROOT}/.env 或 export）")
+    client = OpenAI(base_url=base_url, api_key=os.environ[key_var])
+    model = model or os.environ.get("VISION_MODEL", "qwen3-vl-plus")
+    print(f"{label}: aliyun / {model}（{len(images)} 张图）")
+    content = [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(b).decode()}}
+               for b in images] + [{"type": "text", "text": text}]
+    last = None
+    for attempt in range(3):
+        try:
+            resp = client.chat.completions.create(model=model, response_format={"type": "json_object"}, messages=[
+                {"role": "system", "content": system}, {"role": "user", "content": content}])
+            if resp.choices and resp.choices[0].message and resp.choices[0].message.content:
+                return json.loads(resp.choices[0].message.content)
+            last = "空响应"
+        except Exception as e:  # noqa: BLE001
+            last = str(e)[:120]
+        print(f"  {label} 第 {attempt + 1} 次失败（{last}），重试")
+        time.sleep(3 * (attempt + 1))
+    raise RuntimeError(f"{label} 连续失败: {last}")
+

@@ -137,22 +137,27 @@ def draft_meta(c, it, seg, a):
     user = ("原视频信息（整场演唱会中的一首，以下是全部可用事实）：\n" + json.dumps(facts, ensure_ascii=False, indent=2)
             + f"\n\n字幕：{lang} + 中文（标签写作“中{''.join(x[0] for x in lang.split('、'))}字幕”）"
             + "\n\n补充说明：歌单备注里的英文请转述成中文，不要照抄。"
-            + "\n\n介绍篇幅（覆盖上面的字数要求）：intro_song 和 intro_performance 各写 300~400 字，内容要充实："
+            + "\n\n介绍篇幅（覆盖上面的字数要求）：intro_song 和 intro_performance 各写 300~400 字，intro_lyrics 写 400~600 字，内容要充实："
             + "intro_song 写这首歌的创作 / 发行背景、原唱与合作、风格和主题、成绩与影响；"
             + "intro_performance 写这场演唱会（巡演、场馆、城市、转播）、这首歌在本场的位置和前后衔接、"
-            + "歌单备注里的现场改编或嘉宾、适合观众留意的看点。只写材料里有的事实和广为人知的常识，不编数字和日期。")
+            + "歌单备注里的现场改编或嘉宾，以及这首歌的演出风格、舞台上特别的地方和主唱造型（按「现场画面观察」写）；"
+            + "intro_lyrics 按要求详细讲歌词。只写材料里有的事实和广为人知的常识，不编数字和日期；"
+            + "这站是巡演的第几站、是不是最后一站，这首是不是安可，材料里没有就不要写（「本场第几首」只说第几首）。")
+    notes = make_meta.stage_notes(c.source, seg["start"], seg["end"], d / "stage_notes.json")
+    user += make_meta.media_material(notes, make_meta.lyrics_material(d / "lyrics.txt", d / "zh_cache.json"))
     gen = {}
     for _ in range(2):   # 太短就再写一次
         gen = chat_json(make_meta.SYSTEM_PROMPT, user, temperature=0.5, label=f"元数据 {it['title']}")
-        if min(len(gen.get("intro_song") or ""), len(gen.get("intro_performance") or "")) >= 220:
+        if (min(len(gen.get("intro_song") or ""), len(gen.get("intro_performance") or "")) >= 220
+                and len(gen.get("intro_lyrics") or "") >= 300):
             break
     write_json(dst, {
         "title": post_title(c, it),
         "song": {"title": gen.get("song_title") or it["title"], "artist": gen.get("artist_en"),
                  "artist_zh": gen.get("artist_zh"), "release_year": gen.get("release_year")},
         "performance": {"event": gen.get("event") or info.get("title"), "date": gen.get("event_date") or info.get("date")},
-        "intro": {"song": gen.get("intro_song"), "performance": gen.get("intro_performance")},
-        "intro_text": "\n\n".join(x.strip() for x in (gen.get("intro_song"), gen.get("intro_performance")) if x),
+        "intro": {"song": gen.get("intro_song"), "performance": gen.get("intro_performance"), "lyrics": gen.get("intro_lyrics")},
+        "intro_text": make_meta.intro_text(gen),
         "tags": gen.get("tags", []),
         "subtitles": lang.split("、") + ["中文"],
     })

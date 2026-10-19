@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-人工审核结果 review.json：每首歌一条 {status, cover, title, intro（歌曲介绍 + 演出介绍，空行分开）, tags, note, fingerprint}。
+人工审核结果 review.json：每首歌一条 {status, cover, title, intro（歌曲介绍 + 演出介绍 + 歌词介绍，空行分开）, tags, note, fingerprint}。
 通过时记下指纹（边界 + lyrics.ass + 选中的封面 + 标题）；之后这些有任何变化，通过自动失效（stale），hd 不会处理。
 """
 
