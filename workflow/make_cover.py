@@ -110,6 +110,8 @@ def clean_time(video, t, span=2.0, step=0.25):
 
 
 INPAINT_SUBS = False  # 只把烧录字幕的黑底白字框抹掉（OpenCV inpaint），画面其他地方不动
+INPAINT_CORNERS = False  # 转播两角的歌名 / 台标：只修补文字笔画（inpaint_corners）；有推广横幅的帧挑帧时跳过
+PROMO_MASK = 0.17  # 已经选上的帧有推广横幅（--regrab 时）：退回整条模糊压暗
 
 
 def inpaint_subs(img):
@@ -141,6 +143,35 @@ def inpaint_subs(img):
     return Image.fromarray(out)
 
 
+def has_promo(img):
+    """转播左下角的推广横幅（二维码 + 彩色底框）：看二维码那一小块——大半纯白、又夹着黑色码点。这种修补不了，挑帧时跳过。
+    （按整片亮色判断会把纯红背景、亮色舞台地面误判成横幅）"""
+    import cv2
+    arr = np.asarray(img.convert("RGB"))
+    h, w = arr.shape[:2]
+    hsv = cv2.cvtColor(arr[int(h * 0.835):int(h * 0.92), int(w * 0.05):int(w * 0.115)], cv2.COLOR_RGB2HSV)
+    white = ((hsv[..., 2] > 200) & (hsv[..., 1] < 60)).mean()
+    return white > 0.3 and (hsv[..., 2] < 60).mean() > 0.08
+
+
+def inpaint_corners(img):
+    """抹掉转播左下角的歌名 / LIVE FROM MADRID 和右下角的台标：只修补白色文字笔画（外扩几像素），
+    不像 mask_bottom 那样整条模糊压暗（纯色背景上压暗的一条很显眼）。"""
+    import cv2
+    arr = np.asarray(img.convert("RGB"))
+    h, w = arr.shape[:2]
+    y0, y1 = int(h * 0.86), int(h * 0.985)
+    hsv = cv2.cvtColor(arr[y0:y1], cv2.COLOR_RGB2HSV)
+    text = ((hsv[..., 2] > 190) & (hsv[..., 1] < 70)).astype(np.uint8)
+    text[:, int(w * 0.30):int(w * 0.78)] = 0   # 只管两角
+    mask = np.zeros((h, w), np.uint8)
+    k = max(3, int(h * 0.008)) | 1
+    mask[y0:y1] = cv2.dilate(text * 255, np.ones((k, k), np.uint8), iterations=2)
+    if not mask.any():
+        return img
+    return Image.fromarray(cv2.inpaint(arr, mask, int(h * 0.012), cv2.INPAINT_TELEA))
+
+
 def grab_hd(video, t, work):
     """高清取帧：按原始分辨率截帧（含 crop-bottom）→ Real-ESRGAN x4 → Lanczos 缩到封面尺寸并居中裁切。
     1080p 素材裁掉底部字幕后只剩 ~930 行，直接拉伸会糊。"""
@@ -152,11 +183,17 @@ def grab_hd(video, t, work):
     tmp.unlink()
     if INPAINT_SUBS:
         img = inpaint_subs(img)
+    mask = MASK_BOTTOM
+    if INPAINT_CORNERS:
+        if has_promo(img):
+            mask = max(mask, PROMO_MASK)
+        else:
+            img = inpaint_corners(img)
     img = upscale(img, work, force=True)
     scale = max(W / img.width, H / img.height)
     img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
     x, y = (img.width - W) // 2, (img.height - H) // 2
-    return mask_bottom(img.crop((x, y, x + W, y + H)), MASK_BOTTOM)
+    return mask_bottom(img.crop((x, y, x + W, y + H)), mask)
 
 
 # ---------------------------------------------------------------- 按正脸挑帧
@@ -213,7 +250,10 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
     d = duration(video)
     faces_all = []  # (t, ratio, conf, sharp, center, feature, n_faces)
     for t in np.arange(t0 if t0 is not None else 1.0, (t1 if t1 is not None else d) - 1.0, step):
-        img = grab(video, float(t)).resize((960, 540))
+        img = grab(video, float(t))
+        if INPAINT_CORNERS and has_promo(img):   # 推广横幅挡在左下角，修补不了
+            continue
+        img = img.resize((960, 540))
         fr, n, bgr = frontal_faces(det, img, level=1)
         g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
         for f in fr:
@@ -684,6 +724,10 @@ def main():
                    help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
     p.add_argument("--no-sr", dest="sr", action="store_false",
                    help="不做 Real-ESRGAN 高清化（默认对选中的帧做 x4 超分再缩到封面尺寸）")
+    p.add_argument("--inpaint-corners", action="store_true",
+                   help="转播画面两角的歌名 / 台标：只修补文字笔画，不整条压暗；有推广横幅的帧不选")
+    p.add_argument("--regrab", action="store_true",
+                   help="不重新挑帧：按 out-dir 里已有 frame_*_<秒>s.jpg 的时间点重新高清取帧（底部处理换了时用），再排版")
     p.add_argument("--inpaint-subs", action="store_true",
                    help="画面有烧录字幕时，只把字幕框用周围画面修补掉，保持选定的帧和构图（推荐）")
     p.add_argument("--avoid-subs", action="store_true",
@@ -709,8 +753,22 @@ def main():
     globals()["CROP_BOTTOM"] = a.crop_bottom
     globals()["MASK_BOTTOM"] = a.mask_bottom
     globals()["INPAINT_SUBS"] = a.inpaint_subs
+    globals()["INPAINT_CORNERS"] = a.inpaint_corners
     out = Path(a.out_dir) if a.out_dir else ROOT / "posts" / a.name / "post" / "cover"
     out.mkdir(parents=True, exist_ok=True)
+
+    if a.regrab:
+        for f in sorted(out.glob("frame_*.jpg")):
+            m = re.match(r"frame_(?:(closeup|half|full)_)?(\d\d)_([\d.]+)s\.jpg$", f.name)
+            if not m:
+                continue
+            k, t = m[1] or "cover", float(m[3])
+            img = grab_hd(video, t, out) if a.sr else grab(video, t)
+            img.save(f, quality=95)
+            compose(img, a).save(out / f"{k}_{m[2]}.jpg", quality=95)
+            compose(crop_ratio(img, 4 / 3), a).save(out / f"{k}_{m[2]}_4x3.jpg", quality=95)
+            print(f"{k}_{m[2]}.jpg + 4x3  <- {t:.1f}s（重新取帧）", flush=True)
+        return
 
     if a.recompose:
         for f in sorted(out.glob("frame_*.jpg")):

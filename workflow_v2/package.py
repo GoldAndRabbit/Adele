@@ -64,9 +64,11 @@ def make_covers(c, it, seg, a):
     common = [VENV_PY, ROOT / "workflow" / "make_cover.py", "--name", it["name"], "--title", it["title"],
               "--subtitle", subtitle_line(c, it), "--video", c.source, "--out-dir", out, "--sub-fit", "natural",
               "--start", f"{seg['start']:.2f}", "--end", f"{seg['end']:.2f}", "--text-lift", TEXT_LIFT, "--closeup-min", CLOSEUP_MIN]
-    mask = read_json(c.info).get("cover_mask_bottom")
-    if mask:  # 转播画面底部的台标 / 歌名条 / 推广条：模糊压暗盖住
-        common += ["--mask-bottom", str(mask)]
+    info = read_json(c.info)
+    if info.get("cover_inpaint_corners"):  # 转播两角的歌名 / 台标：只修补文字，有推广横幅的帧不选
+        common += ["--inpaint-corners"]
+    elif info.get("cover_mask_bottom"):  # 底部有大块遮挡：整条模糊压暗盖住（纯色背景上会看出一条暗带）
+        common += ["--mask-bottom", str(info["cover_mask_bottom"])]
     if a.force and out.exists():
         shutil.rmtree(out)  # 重新挑：旧候选的文件名和时间点都不一样了，留着会混在一起
     log = d / "logs" / "v2_covers.log"

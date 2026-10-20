@@ -138,14 +138,14 @@ CHECKS = {
         lacks(r"americana", 95, 125, "「Americana」是上一句 Dominicana 的尾音，不是歌词"),
     ],
     "32_dai_dai": [
-        lacks(r"em polo|like the name|always see it solid", 0, 30, "开头人群声里的幻听讲话不出字幕"),
-        count(r"oh eh", 38, 56, 1, "0:42~0:54 唱「Oh-eh-oh-eh」要有字幕"),
-        has(r"knew from the day you were born", 52, 56, "0:54「(You) knew from the day you were born」（Genius 前后两处写法不同，现场把结尾那段搬到了开头）"),
-        has(r"^dale$", 190.8, 192.6, "3:11 左右的「Dale」不能太早（之前早 2 s）也不能太晚"),
-        order([r"^dale$", r"no olvide", r"juega como tu sabes"], 188, 200, "Dale → No olvide' lo que vales → Juega como tú sabes 顺序"),
-        has(r"juega como tu sabes", 192, 198, "3:13 左右「Juega como tú sabes」"),
-        has(r"mas fuerte", 200, 207, "3:24 左右「Oe, oe, más fuerte」"),
-        has(r"como tu sabes? como tu sabes?", 130, 140, "2:14 左右连唱两遍「Como tú sabes, como tú sabes」"),
+        # 2026-10-20 起点往后挪了 30 s（前 30 s 人群声 / 幻听切掉），下面的时间都是新起点下的
+        count(r"oh eh", 8, 26, 1, "0:12~0:24 唱「Oh-eh-oh-eh」要有字幕"),
+        has(r"knew from the day you were born", 22, 26, "0:24「(You) knew from the day you were born」（Genius 前后两处写法不同，现场把结尾那段搬到了开头）"),
+        has(r"^dale$", 160.8, 162.6, "2:41 左右的「Dale」不能太早（之前早 2 s）也不能太晚"),
+        order([r"^dale$", r"no olvide", r"juega como tu sabes"], 158, 170, "Dale → No olvide' lo que vales → Juega como tú sabes 顺序"),
+        has(r"juega como tu sabes", 162, 168, "2:43 左右「Juega como tú sabes」"),
+        has(r"mas fuerte", 170, 177, "2:54 左右「Oe, oe, más fuerte」"),
+        has(r"como tu sabes? como tu sabes?", 100, 110, "1:44 左右连唱两遍「Como tú sabes, como tú sabes」"),
     ],
     "33_waka_waka_esto_es_africa": [
         count(r"zangalewa", 16, 31, 3, "0:17~0:29「Uh, zangalewa (Otra, otra)」要有字幕（之前整段空着）"),
