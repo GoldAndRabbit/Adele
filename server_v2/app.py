@@ -115,6 +115,9 @@ def exp_data(d, sub, ass_url):
                       "strategy": f"位置 x={it['x']:.2f} y={it['y']:.2f}（占画面比例），淡入淡出各 {it['fade']} 秒；避开字幕区、左上角 logo 和人脸（这一刻检测到 {it.get('faces', 0)} 张脸）"})
     # 观众合唱检测（song_crowd_workflow）：每个候选段一行，鼠标停上去看每项证据
     cr = read_json(x / "crowd.json", None) or {}
+    # 检测行里列出这一段排进去的合唱字幕，和 v3 同一段原来显示的字幕，方便对比
+    seg_rows = lambda f, a, b, cond: [{"start": r["start_ms"] / 1000, "text": r.get("text")} for r in (read_json(f, []) or [])
+                                      if a - 0.2 <= r["start_ms"] / 1000 < b and (r.get("text") or "").strip() and cond(r)]
     for sg in cr.get("segments", []):
         ev = sg.get("evidence", {})
         lines_ = [f"{k}：{'✓' if v.get('成立') else '✗'}  {v.get('说明', '')}；值 = {json.dumps(v.get('值'), ensure_ascii=False)[:120]}"
@@ -122,7 +125,10 @@ def exp_data(d, sub, ass_url):
         xrows.append({"start_ms": round(sg["s"] * 1000), "end_ms": round(sg["e"] * 1000), "start": sg["s"], "end": sg["e"],
                       "genius": "", "qwen": sg.get("heard", "")[:80], "lang": "", "zh": "", "removed": False, "crowdseg": True,
                       "text": f"观众合唱检测：{sg['verdict']}（置信度 {sg['confidence']}）· 该唱 {len(sg.get('want', []))} 句",
-                      "verdict": "crowdseg", "style": "crowdseg", "strategy": "\n".join(lines_)})
+                      "verdict": "crowdseg", "style": "crowdseg", "strategy": "\n".join(lines_),
+                      "crowd_lines": seg_rows(x / "lines.json", sg["s"], sg["e"], lambda r: r.get("verdict") == "crowd"),
+                      "v3_lines": seg_rows(d / "exp_v3" / "lines.json", sg["s"], sg["e"], lambda r: r.get("verdict") != "unconfirmed")
+                      if sub == "exp_v4" else None})
     xrows.sort(key=lambda r: (r["start_ms"] is None, r["start_ms"] or 0))
     # 翻译（song_translation_workflow：translation/result.json；旧的二次翻译 zh2.json 兼容）：按时间 + 原文对回每一行
     tr = read_json(x / "translation" / "result.json", {}) or {}
@@ -257,6 +263,10 @@ def get_song(slug: str, name: str):
         "ass": f"/media/{slug}/songs/{name}/lyrics.ass" if (d / "lyrics.ass").exists() else None,
         "preview": f"/media/{slug}/songs/{name}/preview.mp4" if (d / "preview.mp4").exists() else None,
         "preview_span": info.get("preview"), "align": info.get("align"),
+        # v4 成品（workflow_v4/render.py）：4K60、烧好字幕和水印、FLAC；出来了审核页预览下方直接播
+        "final": (media_url(c, name, f"post/{name} 4K60FPS Sub-WaterMark v4.mp4").replace(" ", "%20")
+                  if (d / "post" / f"{name} 4K60FPS Sub-WaterMark v4.mp4").exists() else None),
+        "final_path": str((d / "post" / f"{name} 4K60FPS Sub-WaterMark v4.mp4").resolve()),
         "lines": lines,
         "rows": rows,
         "covers": [{**x, "file": media_url(c, name, x["file"]),
@@ -323,6 +333,34 @@ def post_review(slug: str, name: str, body: dict = Body(...)):
     return {"entry": entry, "review": review.effective(c, it, entry)}
 
 
+@app.post("/api/concerts/{slug}/songs/{name}/cover_download")
+def post_cover_download(slug: str, name: str, body: dict = Body(...)):
+    """候选封面「下载」：16:9 和 4:3 两张存成 PNG，放到这首歌成品视频所在的 post/ 目录：
+    post/<歌>_cover_picked_<日时分>.png、post/<歌>_cover_picked_4x3_<日时分>.png。
+    v1 单曲的 covers 是软链接到 posts/<歌>/exp/covers，成品在 posts/<歌>/post/，顺着软链接找。"""
+    from PIL import Image
+    c = concert(slug)
+    it = song(c, name)
+    cid = body.get("id") or ""
+    if not re.fullmatch(r"(closeup|half|full|cover)_\d\d", cid):
+        raise HTTPException(400, "封面 id 不对")
+    covers = (c.song_dir(it) / "covers").resolve()
+    base = covers.parent.parent if covers.parent.name == "exp" else covers.parent
+    post = base / "post"
+    post.mkdir(exist_ok=True)
+    stamp = time.strftime("%d%H%M")
+    saved = []
+    for src, suffix in ((covers / f"{cid}.jpg", ""), (covers / f"{cid}_4x3.jpg", "_4x3")):
+        if not src.exists():
+            continue
+        dst = post / f"{name}_cover_picked{suffix}_{stamp}.png"
+        Image.open(src).convert("RGB").save(dst)
+        saved.append(str(dst.relative_to(ROOT)))
+    if not saved:
+        raise HTTPException(404, "没有这张封面")
+    return {"saved": saved}
+
+
 @app.post("/api/concerts/{slug}/songs/{name}/segment")
 def post_segment(slug: str, name: str, body: dict = Body(...)):
     c = concert(slug)
@@ -365,6 +403,17 @@ def media_url(c, name, rel):
     f = c.song_dir({"name": name}) / rel
     v = int(f.stat().st_mtime) if f.exists() else 0
     return f"/media/{c.slug}/songs/{name}/{rel}?v={v}"
+
+
+@app.post("/api/concerts/{slug}/songs/{name}/reveal_final")
+def reveal_final(slug: str, name: str):
+    """在 Finder 里定位这首的 v4 成品（只开这一个文件，审核页「在 Finder 中显示」用）。"""
+    c = concert(slug)
+    f = (c.song_dir(song(c, name)) / "post" / f"{name} 4K60FPS Sub-WaterMark v4.mp4").resolve()
+    if not f.is_file():
+        raise HTTPException(404)
+    subprocess.run(["open", "-R", str(f)], check=False)
+    return {"ok": True}
 
 
 @app.get("/media/{slug}/{path:path}")

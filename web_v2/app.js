@@ -222,6 +222,21 @@ function lightbox(src) {
   document.body.append(box);
 }
 
+// 右下角短暂提示（几秒后自动消失）
+function toast(msg, ok = true) {
+  const el = h("div", { class: `toast${ok ? "" : " err"}` }, msg);
+  document.body.append(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// 圆形半透明的向下箭头按钮（SVG 要用 innerHTML，h() 的 createElement 画不出 SVG）
+function dlButton(attrs) {
+  const el = h("span", attrs);
+  el.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" '
+    + 'stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M6 11l6 6 6-6M5 20h14"/></svg>';
+  return el;
+}
+
 function coverPane(s) {
   const entry = s.review_entry || {};
   const st = { chosen: entry.cover || null, ratio: "169" };
@@ -236,7 +251,26 @@ function coverPane(s) {
         ondblclick: () => lightbox(src),
       }, h("img", { src, loading: "lazy" }),
       x.t != null ? h("span", { class: "ct" }, `${SHOT[x.id.split("_")[0]] || ""} ${hms(x.t)}`.trim()) : null,
-      x.id === st.chosen ? h("span", { class: "pick" }, "已选") : null);
+      x.id === st.chosen ? h("span", { class: "pick" }, "已选") : null,
+      // 下载：16:9 + 4:3 两张 PNG 存到这首歌的 post/ 目录（按钮在 button 里面，不能再嵌 button）
+      dlButton({
+        class: "dl", role: "button", title: "下载到 post/（16:9 + 4:3 PNG）",
+        ondblclick: (e) => e.stopPropagation(),
+        onclick: async (e) => {
+          e.stopPropagation();
+          const b = e.currentTarget;
+          if (b.classList.contains("busy")) return;
+          b.classList.add("busy");
+          try {
+            const r = await api(`/api/concerts/${parseRoute().slug}/songs/${s.name}/cover_download`, { id: x.id });
+            st.chosen = x.id; draw();
+            toast(`已保存：${r.saved.join("、")}`);
+          } catch (err) {
+            b.classList.remove("busy");
+            toast(`下载失败：${err.message || err}`, false);
+          }
+        },
+      }));
     }) : [h("div", { class: "placeholder" }, "还没有候选封面（package 阶段）")]));
   };
   draw();
@@ -392,6 +426,21 @@ async function videoPane(c, s, at) {
       h("div", { class: "spacer" }),
       subSwitch,
       h("button", { class: "btn", onclick: () => toggleFullscreen(stage) }, "⛶")));
+  // v4 成品（4K60、字幕和水印已经烧进画面）：放在预览下方直接播；两个视频同时只播一个
+  if (s.final) {
+    const fin = h("video", { src: s.final, controls: true, preload: "metadata", playsinline: true, class: "final-video" });
+    fin.addEventListener("play", () => video.pause());
+    video.addEventListener("play", () => fin.pause());
+    // 成品在本机的完整路径：可以复制，或者直接在 Finder 里定位到这个文件
+    const copyBtn = h("button", { class: "btn", onclick: async () => {
+      try { await navigator.clipboard.writeText(s.final_path); copyBtn.textContent = "已复制"; } catch (e) { copyBtn.textContent = "复制失败"; }
+      setTimeout(() => { copyBtn.textContent = "复制路径"; }, 1500);
+    } }, "复制路径");
+    const revealBtn = h("button", { class: "btn", onclick: () => fetch(`/api/concerts/${c.slug}/songs/${s.name}/reveal_final`, { method: "POST" }) },
+      "在 Finder 中显示");
+    el.append(h("div", { class: "final-wrap" }, h("div", { class: "final-title" }, "成品 4K60（v4，字幕和水印已烧进画面）"),
+      h("div", { class: "final-path" }, h("code", {}, s.final_path), copyBtn, revealBtn), fin));
+  }
   // 换一份字幕（原流程 / 新流程）
   const setAss = async (url) => {
     if (!url) { if (overlay) { overlay.setAss({ ...overlay.ass, events: [] }); overlay.tick(); } return; }
@@ -448,7 +497,12 @@ function expTable(s, x, ver, video, offset, delay = () => 0, onChanged = null) {
   h("td", { class: "g" }, r.genius || (r.verdict === "title" || r.speech ? "" : h("span", { class: "none" }, "（Genius 没有）"))),
   h("td", { class: "heard" }, r.verdict === "title" ? h("span", { class: "none" }, r.strategy) : r.qwen || ""),
   h("td", { class: "o" }, r.text || h("span", { class: "none" }, "（没有字幕）"),
-    r.credit ? h("div", { class: "credit" }, r.credit) : null),
+    r.credit ? h("div", { class: "credit" }, r.credit) : null,
+    // 合唱检测行：这一段排进去的合唱字幕 + v3 同一段原来的字幕（时间按播放器时间）
+    ...(r.crowdseg ? [["合唱字幕", r.crowd_lines], ["v3 这段原来", r.v3_lines]].filter(([, ls]) => ls).map(([label, ls]) =>
+      h("div", { class: "seg-lines" }, h("div", { class: "seg-label" }, label),
+        ...(ls.length ? ls.map((l) => h("div", {}, h("span", { class: "seg-t" }, fmtMs(Math.round((l.start + (offset || 0)) * 1000))), l.text))
+          : [h("div", { class: "none" }, "（没有）")]))) : [])),
   h("td", { class: `vd ${VERDICT[r.verdict] ? VERDICT[r.verdict][1] : ""}`, title: r.strategy },
     (VERDICT[r.verdict] || [""])[0]),
   hasZh2 ? zh2Cell(r) : h("td", { class: "zh" }, r.zh || "")));

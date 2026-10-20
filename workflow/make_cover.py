@@ -665,6 +665,10 @@ def compose(frame, a):
             sub_w = int(title_w * 0.85)
             sf = fit_width(a.subtitle, "sub", sub_w, tf.size)
             tracking = max(0.0, (sub_w - ink_width(a.subtitle, sf)) / max(1, len(a.subtitle) - 1))
+            if sf.size < ch * 0.10:
+                # 超短标题（TQG）：字号顶到高度上限也不宽，副标题按 85% 算会小得看不清；字号保底画布高的 10%
+                # （和长标题的副标题一样大），宽度最多到画布宽的 85%，可以比标题宽
+                sf, tracking = fit_width(a.subtitle, "sub", int(cw * 0.85), int(ch * 0.10)), 0.0
         else:
             # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
             sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.68))

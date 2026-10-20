@@ -188,22 +188,6 @@ def lattice(reads):
         attach["s"] = float(np.median([s for cd in attach["cands"] for s, _ in cd["reads"].values()]))
         attach["e"] = float(np.median([e for cd in attach["cands"] for _, e in cd["reads"].values()]))
     cells.sort(key=lambda c: c["s"])
-    # 单遍复读：一遍识别里同一个词 2 s 内又出现一次（识别结巴），而同一时刻另外至少两遍只听到一次 —— 投票输了，
-    # 这一下不和歌词对上（真的重唱几遍都会听到，不受影响）
-    spans = {}
-    for ws in reads:
-        for w in ws:
-            spans.setdefault(w["src"], []).append((w["s"], w["e"]))
-    for i, c in enumerate(cells):
-        c["minority"] = False
-        if len(c["srcs"]) != 1:
-            continue
-        src, mid = next(iter(c["srcs"])), (c["s"] + c["e"]) / 2
-        keys = {cd["key"] for cd in c["cands"]}
-        again = any(src in p["srcs"] and len(p["srcs"]) >= 2 and keys & {cd["key"] for cd in p["cands"] if src in cd["reads"]}
-                    for p in cells[max(0, i - 12):i] if c["s"] - p["s"] <= 2.0)
-        others = sum(1 for o, sp in spans.items() if o != src and any(s <= mid <= e for s, e in sp))
-        c["minority"] = again and others >= 2
     return cells
 
 
@@ -233,8 +217,6 @@ def gains(cells, ly):
     for u, c in enumerate(cells):
         for ci, cd in enumerate(c["cands"]):
             nr = len(cd["reads"])
-            if c.get("minority"):
-                continue   # 投票输了的单元不和任何歌词对上（按歌词外处理）
             if cd["kind"] == "k":
                 for t in gk.get((cd["key"], "k"), []):
                     v = gain(1.0, nr, t)

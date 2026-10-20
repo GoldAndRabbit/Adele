@@ -10,6 +10,8 @@
         e. 提示语：前面 15 s 有没有叫观众唱的话（canten / sing / everybody / todos …）
         f. 歌词顺序：这里该唱几句
     第 3 步 综合判定：观众合唱 / 不是 / 不确定，带置信度和每项证据
+    第 4 步 自检（唱不唱得下）：按录音室版的唱速，这段该唱的句子要唱多久，和这段实际多长比；
+        超过 PACE_MAX 倍（按 1.5 倍速也唱不完）= 现场在这里跳过了歌词，不是观众按原词合唱，改判「不是」（这段保持 v3 原样）
     合唱段的处理（place_crowd）：区间里该唱的句子按 Genius 顺序排进去，时间按录音室版歌词时间轴（LRC，lrclib.net）
         的时长比例分；没有 LRC 就均分。识别碎片只用来确认这里有人在唱。
 输出 exp_v4/crowd.json。
@@ -21,6 +23,8 @@ import urllib.parse
 import urllib.request
 
 import numpy as np
+
+PACE_MAX = 1.5   # 第 4 步：该唱的句子按录音室唱速要唱多久 / 这段实际多长，超过这个就不算观众合唱
 
 CUE = re.compile(r"\b(canten|cántenla|cantad|cantemos|todos|todo el mundo|sing|everybody|let me hear|cantate|tutti|"
                  r"歌って|みんな)\b", re.I)
@@ -115,6 +119,9 @@ def detect(d, out_dir, occ, ly, cells, reads, dur, y, sr, video, offset, pitch, 
     vcache = json.loads(vcache_f.read_text()) if vcache_f.exists() else {}
     anchors = sorted([o for o in occ if o["anchor"]], key=lambda o: o["s"])
     st_med = float(np.nanmedian([pitch.ratio(o["s"], o["e"]) for o in anchors])) if anchors else 0.6
+    lrc = fetch_lrc(title, artist, ly.lines, d / "reports" / "lrc.json")
+    # 没有录音室时间轴的句子：按这首歌自己已经对上的句子，中位每句唱多久
+    line_dur = float(np.median([o["e"] - o["s"] for o in anchors])) if anchors else 3.0
     segs = []
     for a, b in zip(anchors, anchors[1:]):
         t0, t1 = a["e"], b["s"]
@@ -159,10 +166,17 @@ def detect(d, out_dir, occ, ly, cells, reads, dur, y, sr, video, offset, pitch, 
             verdict, conf = "不确定", 0.5
         else:
             verdict, conf = "不是", 0.2
+        # 第 4 步 自检：这段时间唱不唱得下这么多句
+        durs = lrc_durations(lrc, [ly.lines[k] for k in want]) if lrc else [None] * len(want)
+        need = sum(x or line_dur for x in durs)
+        pace = need / (t1 - t0)
+        ev["唱速"] = {"值": round(pace, 2), "成立": pace <= PACE_MAX,
+                    "说明": f"该唱的 {len(want)} 句按录音室唱速要 {need:.0f}s，这段 {t1 - t0:.0f}s；超过 {PACE_MAX} 倍 = 唱不下，现场跳过了歌词"}
+        if verdict == "观众合唱" and pace > PACE_MAX:
+            verdict, conf = "不是", 0.2
         segs.append({"s": round(t0, 2), "e": round(t1, 2), "a_k": a["k"], "b_k": b["k"], "want": want,
                      "verdict": verdict, "confidence": conf, "evidence": ev, "heard": heard[:200]})
     vcache_f.write_text(json.dumps(vcache, ensure_ascii=False, indent=1))
-    lrc = fetch_lrc(title, artist, ly.lines, d / "reports" / "lrc.json")
     (out_dir / "crowd.json").write_text(json.dumps({"segments": segs, "lrc_lines": len(lrc)}, ensure_ascii=False, indent=1))
     return segs, lrc
 
