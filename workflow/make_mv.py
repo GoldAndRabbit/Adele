@@ -6,19 +6,16 @@
 阶段（可用 --from / --to 断点续跑）:
   download   yt-dlp 下载原视频 + 官方字幕 + 元信息      -> posts/<name>/source.mp4, meta.json
   prep       截取片段、降到 1080p、导出 FLAC 48k/24bit  -> posts/<name>/video_1080.mp4, audio.flac
-  lyrics     参考歌词：官方带时间字幕优先（--sub-lang），
-             否则 get_ytb_lyrics_from_link.py 从 Genius 取歌词文本 -> posts/<name>/official.srt 或 lyrics.txt
+  lyrics     参考歌词：官方带时间字幕优先（--sub-lang，只取文字），
+             否则 get_ytb_lyrics_from_link.py 从 Genius 取歌词文本 -> posts/<name>/lyrics.txt
   separate   Mel-Band RoFormer 人声分离（.venv-sep）    -> posts/<name>/vocals.wav
-  align      时间轴：官方字幕只做后处理；歌词文本走
-             Qwen 演唱序列 -> 分块对齐 -> 推理补句 -> 强制对齐精修 -> 后处理 -> 逐句 Qwen 复核
-                                                        -> posts/<name>/lyrics.srt
-  speech     歌词之外的说话（开场白/谢幕）Qwen 识别     -> posts/<name>/speech.srt
-  translate  DeepSeek 翻译（按句缓存）+ 标题中文行        -> posts/<name>/lyrics.ass
   interp     原生帧率抽帧 + RIFE 一步插到 60fps          -> posts/<name>/frames_out/
-  render     4K + 烧字幕 + 水印 + FLAC，渲染后检查音轨   -> posts/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4
+
+字幕对齐、翻译、注释走 v4（.venv/bin/python -m workflow_v4.run post <name>），
+4K 渲染（字幕 + logo + 水印 + FLAC）走 .venv/bin/python -m workflow_v4.render post:<name>（它调本脚本的 interp）。
 
 用法:
-  .venv/bin/python workflow/make_mv.py --name X --url "https://..." --lang ja --title "《歌名》 歌手"
+  .venv/bin/python workflow/make_mv.py --name X --url "https://..." --to separate
 """
 
 import argparse
@@ -34,8 +31,7 @@ from paths import BIN, MODELS, POSTS, ROOT, WORKFLOW as PIPE, Song  # noqa: E402
 
 VENV_BIN = ROOT / ".venv" / "bin"
 SEP_PY = ROOT / ".venv-sep" / "bin" / "python"
-STAGES = ["download", "prep", "lyrics", "separate", "align", "speech", "translate", "interp", "render"]
-LANG_CODES = {"english": "en", "japanese": "ja", "spanish": "es", "chinese": "zh", "italian": "it"}
+STAGES = ["download", "prep", "lyrics", "separate", "interp"]
 TARGET_FPS = 60
 
 
@@ -153,11 +149,6 @@ def find_official_subs(a, w):
     return subs[0] if subs else None
 
 
-def lang_code(a):
-    l = (a.lang or "en").lower()
-    return LANG_CODES.get(l, l)
-
-
 def paths(a, w):
     S = Song(a.name)
     return {"srt": S.lyrics_srt, "txt": S.lyrics_txt, "vocals": S.vocals, "source": S.lyrics_source}
@@ -179,6 +170,7 @@ def stage_lyrics(a, w):
                 e.start = max(e.start, 0)
         shutil.copy(sub, Song(a.name).official_srt)
         subs.save(str(p["srt"]))
+        p["txt"].write_text("\n".join(e.plaintext.replace("\n", " ").strip() for e in subs.events if e.plaintext.strip()) + "\n")   # v4 读歌词文本
         p["source"].write_text("official")
         return
     if not p["txt"].exists():
@@ -217,135 +209,16 @@ def stage_separate(a, w):
     run([SEP_PY, PIPE / "separate_roformer.py", Song(a.name).audio, "-o", p["vocals"]])
 
 
-CJK_LANGS = {"ja", "zh", "ko"}
 
 
-def maybe_split(a, py, srt, voc):
-    """歌词一行就显示一行（尊重歌词的分行）。只有日文/中文这类没有空格、渲染时没法自动换行的长句，
-    才在歌词自带的全角空格处拆开；英文/意大利语等长行交给字幕渲染自动换行 + 缩小字号。"""
-    if lang_code(a) in CJK_LANGS:
-        run([py, PIPE / "split_long.py", srt, "--vocals", voc, "--max-width", a.max_width])
 
 
-def stage_speech(a, w):
-    """歌词之外的说话（开场白、谢幕、互动）→ speech.srt，translate 时一起翻译。"""
-    if a.no_speech:
-        return
-    p = paths(a, w)
-    run([sys.executable, PIPE / "speech_asr.py", p["srt"], "--vocals", p["vocals"], "--lang", lang_code(a),
-         "-o", w / "speech.srt"] + (["--gaps"] if a.speech_gaps else []))
-
-
-def stage_align(a, w):
-    """时间轴。文字只来自参考歌词（官方字幕 / Genius 文本），识别结果只用来定位和复核。"""
-    p = paths(a, w)
-    py, lang, voc, srt = sys.executable, lang_code(a), p["vocals"], p["srt"]
-    source = p["source"].read_text().strip() if p["source"].exists() else "reference"
-    common = ["--vocals", voc, "--lang", lang]
-
-    if source == "official":
-        # 官方时间轴是人工打的，实测任何重解码都会变差：只拆长句 + 拖音/短空档桥接/句尾收紧
-        ref = Song(a.name).official_srt
-        maybe_split(a, py, srt, voc)
-        run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "-o", srt,
-             "--report", w / "reports" / "acoustic_report.json"])
-        return
-
-    ref = p["txt"]
-    if a.align_mode == "dense":
-        # 默认：2.5s 窗口逐窗 Qwen 识别定结构（分得清副歌和长得像的段落），逐句局部强制对齐定时间
-        # 有带段落标记的歌词（lyrics 阶段一并抓取）就按段落对齐：段内严格按歌词、段间跟现场顺序；否则逐窗匹配
-        secs = w / "lyrics_sections.txt"
-        use_secs = False
-        if secs.exists() and a.dense_order != "free":
-            import acoustic
-            n_sec, n_ref = len(acoustic.section_lines(secs)), len(acoustic.section_lines(ref))
-            # 段落版明显比参考歌词少（抓取失败/只抓到一部分），不用它，避免整段歌词被当成没唱
-            use_secs = n_sec >= 0.9 * n_ref
-            if not use_secs:
-                print(f"警告：{secs.name} 只有 {n_sec} 句，参考歌词 {n_ref} 句，段落版不完整，改用逐窗匹配")
-        order = ["--sections", secs, "--order", "sections"] if use_secs else ["--order", "free"]
-        run([py, PIPE / "qwen_dense.py", "--ref", ref, *common, *order, "--cache", w / "reports" / "dense_cache.json",
-             "-o", srt, "--report", w / "reports" / "dense.json"])
-        run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "--no-fill-gaps",
-             "-o", srt, "--report", w / "reports" / "acoustic_report.json"])
-        maybe_split(a, py, srt, voc)
-        print(f"\n>>> 字幕（密集窗口）: {srt}")
-        return
-    if a.align_mode == "lyrics":
-        # 歌词主导（说唱等 ASR 难识别、但基本按原词唱的歌）：整首歌词按顺序强制对齐，识别只用来复核、不换句
-        run([py, PIPE / "lyrics_align.py", "--ref", ref, *common, "-o", srt, "--report", w / "reports" / "lyrics_align.json"])
-        maybe_split(a, py, srt, voc)
-        run([py, PIPE / "refine_timing.py", srt, *common, "--lead", a.lead,
-             "-o", srt, "--report", w / "reports" / "timing_report.json"])
-        run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "--no-fill-gaps",
-             "-o", srt, "--report", w / "reports" / "acoustic_report.json"])
-        run([py, PIPE / "verify_qwen.py", srt, "--ref", ref, *common, "--no-swap",
-             "-o", srt, "--report", w / "reports" / "verify_report.json"])
-        maybe_split(a, py, srt, voc)
-        print(f"\n>>> 字幕（歌词主导）: {srt}")
-        return
-    order, order_rep = w / "reports" / "sung_order.txt", w / "reports" / "sung_order.json"
-    # 1) Qwen3-ASR 分块识别 -> 这一版实际演唱的句子顺序 + 每句所在时间块
-    run([py, PIPE / "qwen_sequence.py", "--ref", ref, *common, "-o", order, "--report", order_rep])
-    # 2) 分块对齐：每块的句子序列，在块的时间范围里用 MMS 按顺序强制对齐
-    run([py, PIPE / "chunk_align.py", "--order", order, "--chunks", order_rep, *common, "-o", srt])
-    maybe_split(a, py, srt, voc)
-    # 3) 先推理补句（空档还在的时候），再精修和后处理——顺序反了，拖音会先把空档盖住
-    run([py, PIPE / "infer_insert.py", srt, "--ref", ref, *common, "--no-neighbor-fix",
-         "-o", srt, "--report", w / "reports" / "infer_report.json"])
-    run([py, PIPE / "refine_timing.py", srt, *common, "--lead", a.lead,
-         "-o", srt, "--report", w / "reports" / "timing_report.json"])
-    run([py, PIPE / "acoustic.py", srt, "--ref", ref, *common, "--mode", "post", "--no-fill-gaps",
-         "-o", srt, "--report", w / "reports" / "acoustic_report.json"])
-    # 4) 逐句 Qwen 复核：明显是别的句子就换，明确不对的隐藏
-    run([py, PIPE / "verify_qwen.py", srt, "--ref", ref, *common, "-o", srt, "--report", w / "reports" / "verify_report.json"])
-    maybe_split(a, py, srt, voc)
-    print(f"\n>>> 字幕: {srt}；可疑句见 {w / 'reports' / 'verify_report.json'}")
 
 
 TITLE_PROMPT = """从 YouTube 视频标题里提取演唱的歌名和歌手，输出 JSON {"title": "《歌名》 歌手"}。
 - 只用标题和简介里明确写出的信息，不要猜；歌名、歌手保持原文写法
 - 多首歌（串烧）用 " / " 分隔，按标题里的顺序：《歌1 / 歌2》 歌手
 - 去掉节目名、日期、频道名、Official Video / Live / 4K / Lyrics 等标签；合作歌手用 " & " 连接"""
-
-
-def auto_title(w):
-    """字幕首行标题：默认从 YouTube 视频标题提取（LLM 整理成《歌名》 歌手），结果存 title.txt 可手改。"""
-    cached = w / "title.txt"
-    if cached.exists():
-        return cached.read_text(encoding="utf-8").strip()
-    meta = json.loads((w / "meta.json").read_text()) if (w / "meta.json").exists() else {}
-    if not meta.get("title"):
-        return None
-    from llm import chat_json
-    src = f"标题: {meta['title']}\n频道: {meta.get('channel', '')}\n简介开头: {(meta.get('description') or '')[:300]}"
-    title = chat_json(TITLE_PROMPT, src, temperature=0, label="标题提取").get("title", "").strip() or meta["title"]
-    cached.write_text(title + "\n", encoding="utf-8")
-    print(f"字幕标题（来自 YouTube 标题，可改 {cached}）: {title}")
-    return title
-
-
-def stage_translate(a, w):
-    src, out = Song(a.name).lyrics_srt, Song(a.name).lyrics_ass
-    if out.exists() and not a.force:
-        print(f"已存在 {out}（人工校对过的不会被覆盖，--force 可重新生成）")
-        return
-    title = a.title or auto_title(w)
-    speech = w / "speech.srt"
-    cmd = [sys.executable, PIPE / "translate_ass.py", src, "-o", out,
-           "--cache", w / "zh_cache.json"]
-    if title:
-        cmd += ["--title", title]
-    if a.zh_file:
-        cmd += ["--zh-file", a.zh_file]
-    cmd += ["--style", a.sub_style]
-    if a.retranslate:
-        cmd += ["--retranslate"]
-    if speech.exists() and not a.no_speech:
-        cmd += ["--speech", speech]
-    run(cmd)
-    print(f"\n>>> 双语字幕已生成: {out}，建议过一遍再 --from interp")
 
 
 def pick_frame_ext(a, video, info, w):
@@ -410,51 +283,6 @@ def check_hires(path):
     print("音轨检查: FLAC 48kHz/24bit ✓（Hi-Res无损）")
 
 
-def stage_render(a, w):
-    ass = Path(a.ass).resolve() if a.ass else Song(a.name).lyrics_ass
-    if not ass.exists():
-        sys.exit(f"缺少字幕 {ass}")
-    # ass 滤镜对路径里的空格/冒号转义很麻烦，拷到工作目录用相对路径
-    shutil.copy(ass, w / "subs.ass")
-    if a.sub_shift:
-        # 整体提前/推后字幕（人眼对画面变化反应快，提前一点看起来更跟手）；标题行不动
-        import pysubs2
-        subs = pysubs2.load(str(w / "subs.ass"))
-        ms = int(a.sub_shift * 1000)
-        for ev in subs.events:
-            if ev.style == "Default" and ev.start > 0:
-                ev.start, ev.end = max(0, ev.start - ms), max(0, ev.end - ms)
-        subs.save(str(w / "subs.ass"))
-        print(f"字幕整体提前 {a.sub_shift}s")
-    out = Song(a.name).video(a.tag)
-    ext = "jpg" if any((w / "frames_out").glob("*.jpg")) else "png"
-
-    if a.fast:
-        venc = ["-c:v", "hevc_videotoolbox", "-q:v", "70", "-tag:v", "hvc1"]
-    else:
-        venc = ["-c:v", "libx264", "-crf", str(a.crf), "-preset", "medium",
-                "-profile:v", "high", "-level", "5.2"]
-
-    run(["ffmpeg", "-y", "-hide_banner",
-         "-framerate", TARGET_FPS, "-i", f"frames_out/%08d.{ext}",
-         "-i", Song(a.name).audio,
-         "-i", ROOT / a.logo,
-         "-filter_complex",
-         "[0:v]scale=3840:2160:flags=lanczos,ass=subs.ass[sub];"
-         f"[2:v]scale=iw*{a.logo_scale}:-1[wm];"
-         "[sub][wm]overlay=15:15:format=auto,format=yuv420p[v]",
-         "-map", "[v]", "-map", "1:a",
-         *venc,
-         # 必须是 FLAC（48kHz/24bit）原样放进 mp4：B 站靠它给 “Hi-Res无损” 标，不要改成 AAC
-         "-c:a", "copy",
-         "-shortest", "-movflags", "+faststart",
-         out], cwd=w)
-    check_hires(out)
-    print(f"\n>>> 成品: {out}")
-    if a.clean_frames:
-        shutil.rmtree(w / "frames_out", ignore_errors=True)
-
-
 def start_log(w, stages):
     """本次运行的全部输出（含子进程）同时写到 posts/<name>/logs/<时间>_<阶段>.log，终端照常显示。"""
     import time
@@ -475,42 +303,17 @@ def main():
     p.add_argument("--url", help="YouTube 链接（download 阶段需要）")
     p.add_argument("--start", help="截取开始时间，如 00:36:37")
     p.add_argument("--end", help="截取结束时间，如 00:40:04")
-    p.add_argument("--lang", help="演唱语言：ja / en / es ...（Qwen 识别和强制对齐用）")
     p.add_argument("--sub-lang", help="用 YouTube 官方带时间字幕作参考时的语言代码，如 ja；不填就走 Genius 歌词")
     p.add_argument("--genius-url", help="lyrics 阶段：直接指定 Genius 歌词页")
     p.add_argument("--song-title", help="lyrics 阶段：手动指定歌名（自动识别不准时）")
     p.add_argument("--artist", help="lyrics 阶段：手动指定歌手")
-    p.add_argument("--max-width", type=int, default=40, help="单句最大显示宽度（全角算 2），超过就拆")
-    p.add_argument("--align-mode", choices=["dense", "qwen", "lyrics"], default="dense",
-                   help="dense（默认）：2.5s 密集窗口 Qwen 识别定结构 + 逐句局部对齐；qwen：10~20s 分块（旧）；"
-                        "lyrics：完全按歌词顺序对齐")
-    p.add_argument("--dense-order", choices=["auto", "free"], default="auto",
-                   help="dense 对齐的顺序：auto（默认）有完整的段落歌词就按段落，否则逐窗匹配；free 一律逐窗匹配"
-                        "（演唱会缩短版 / 串烧：按段落会把只唱了一半的段补齐，输出没唱的句子）")
-    p.add_argument("--no-speech", action="store_true", help="不识别歌词之外的说话（开场白/谢幕）")
-    p.add_argument("--speech-gaps", action="store_true", help="说话识别也处理歌曲中间较长的无字幕人声段")
-    p.add_argument("--lead", type=float, default=0.12, help="字幕比开口提前出现的秒数（align 阶段）")
-    p.add_argument("--title", help="字幕首行标题，如 '《Song》 Artist'；不填就从 YouTube 标题自动提取（存 title.txt，可手改）")
-    p.add_argument("--sub-style", choices=["bzrp", "modern"], default="bzrp",
-                   help="字幕样式：bzrp=与 bzrp_v2.ass 相同（默认）；modern=1080p 画布、日文粗体、标题在顶部")
-    p.add_argument("--retranslate", action="store_true", help="translate 阶段整首重翻（忽略缓存的歌词译文）")
-    p.add_argument("--zh-file", help="不调 API，直接用这个文件里的中文翻译（每行对应一句）")
     p.add_argument("--cookies-from-browser", help="yt-dlp 需要登录时: chrome / safari / firefox")
     p.add_argument("--cookies", help="cookies.txt 路径")
-    p.add_argument("--ass", help="render 用的字幕文件，默认 posts/<name>/lyrics.ass")
-    p.add_argument("--tag", help="成品文件名后缀，用于对比不同版本，如 bzrpv2style")
-    p.add_argument("--sub-shift", type=float, default=0.0,
-                   help="渲染时字幕整体再提前的秒数（默认 0：按段落/密集窗口对齐的起点已是开口时刻，对比后选定不提前）")
-    p.add_argument("--logo", default="assets/adele-logo.png")
-    p.add_argument("--logo-scale", default="0.10")
-    p.add_argument("--crf", type=int, default=18)
-    p.add_argument("--fast", action="store_true", help="用 VideoToolbox HEVC 硬编，快很多")
     p.add_argument("--frame-format", choices=["auto", "png", "jpg"], default="auto",
                    help="中间帧格式，auto 会按磁盘余量选择")
-    p.add_argument("--keep-frames", action="store_true", help="（已是默认，保留兼容）")
     p.add_argument("--clean-frames", action="store_true",
-                   help="渲染后删除插帧帧序列（默认保留：换字幕/对齐方案时只需重新渲染，不用重新插帧）")
-    p.add_argument("--force", action="store_true", help="覆盖已存在的结果（人声、双语字幕）")
+                   help="（兼容旧参数；帧序列由 workflow_v4/render.py 渲染完删除）")
+    p.add_argument("--force", action="store_true", help="覆盖已存在的结果（人声）")
     p.add_argument("--from", dest="from_", choices=STAGES, default=STAGES[0])
     p.add_argument("--to", choices=STAGES, default=STAGES[-1])
     a = p.parse_args()

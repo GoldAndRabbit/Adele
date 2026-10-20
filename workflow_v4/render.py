@@ -8,7 +8,7 @@
     4) 渲染：4K + exp_v4/lyrics_zh2.ass（中文 v2，整体提前和审核页默认的「提前 0.8s」一致）+ 左上角 logo
        + 歌曲中间的半透明水印（和审核页预览同样的时间、位置、大小、透明度、淡入淡出、阴影）+ 原样 FLAC 48kHz/24bit
     5) 删 frames_out 和 video_1080.mp4
-成品：<歌曲目录>/post/<name> 4K60FPS Sub-WaterMark v4.mp4（不覆盖旧版成品）
+成品：posts/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4（每首只留这一个版本）
 
     .venv/bin/python -m workflow_v4.render song:shakira_madrid_2026:37_bzrp_music_sessions_53 post:lose_yourself_2009 ...
     .venv/bin/python -m workflow_v4.render --hold-changed ...   # 这次新跑的 v4 和 v3 有变化：先不渲染，记到 HOLD，最后一起给人看
@@ -27,7 +27,6 @@ LEAD_EXTRA = 0.6   # 字幕文件里已经统一提前 0.2s；审核页默认「
 LOGO = ROOT / "assets" / "adele-logo.png"
 LOGO_SCALE = 0.10  # 左上角 logo：和 make_mv.py 一样（logo 原图宽 × 0.10，离左上角 15px）
 W, H, FPS = 3840, 2160, 60
-TAG = "v4"
 JPG_FRAME = 0.6e6  # 1080p JPEG(q1) 一帧大约 0.6MB：磁盘预检用（插帧前后的帧 + 4K 成品）
 HOLD = ROOT / "concerts" / "render_v4_hold.json"   # --hold-changed 时先不渲染的歌，等人看
 
@@ -212,12 +211,12 @@ def check_disk(d, seconds):
 def one(spec, hold_changed=False):
     d, span, posts = song_of(spec)
     print(f"\n========== {d.name} ==========", flush=True)
-    out = d / "post" / f"{d.name} 4K60FPS Sub-WaterMark {TAG}.mp4"
+    out = d / "post" / f"{d.name} 4K60FPS Sub-WaterMark.mp4"
     if out.exists():
         print(f"已有成品，跳过：{out}", flush=True)
         return
     changed = ensure_v4(spec, d)
-    if hold_changed and changed:
+    if hold_changed and changed and (d / "exp_v3" / "lines.json").exists():   # 没有 v3（新歌）就没得比，不拦
         raise Skip(f"v4 和 v3 有 {changed} 行不一样，先不渲染，等人看 reports/v4_vs_v3.txt")
     ensure_watermark(spec, d)
     check_disk(d, (span[1] - span[0]) if span else float(read_json(d / "meta.json", {}).get("duration") or 400))

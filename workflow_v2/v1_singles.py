@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 把 v1 单曲（posts/<name>/）挂到审核页上：建一个虚拟场次 concerts/v1_singles/，每首歌一个目录，
-里面只放软链接（原字幕 lyrics.ass、v1 实验 exp/、v2 实验 exp_v2/、新样式封面 exp/covers/）和一个 720p 预览视频，
+里面只放软链接（原字幕 lyrics.ass、v3 / v4 结果 exp_v3/ exp_v4/、候选封面 covers/、成品 post/）和一个 720p 预览视频，
 posts/<name>/ 下原来的文件一个都不改。
 
     .venv/bin/python -m workflow_v2.v1_singles lose_yourself_2009 sara_perche_1983 ...
@@ -38,15 +38,12 @@ def build(names):
         post = json.loads((p / "post" / f"{name}.json").read_text())
         song = post.get("song") or {}
         d = c / "songs" / name
-        (d / "exp").mkdir(parents=True, exist_ok=True)
+        d.mkdir(parents=True, exist_ok=True)
         dur = round(duration(p / "source.mp4"), 2)   # 和 segments.json 同样精度，否则总览会误报「边界改过」
         # 原流程字幕、新流程结果、新样式封面：软链接
         link(d / "lyrics.ass", p / "lyrics.ass")
-        for f in ("lines.json", "lyrics.ass", "lyrics.srt"):
-            link(d / "exp" / f, p / "exp" / f)
-        link(d / "covers", p / "exp" / "covers")
-        link(d / "exp_v2", p / "exp_v2")   # v2 实验（align4.py）整个目录
-        link(d / "exp_v3", p / "exp_v3")   # v3（workflow_v3）整个目录
+        for sub in ("covers", "exp_v3", "exp_v4", "post"):
+            link(d / sub, p / sub)
         link(d / "watermark.json", p / "watermark.json")   # 中间水印计划（workflow_v3/watermark.py）
         # 预览：整首 720p（硬件编码，几十秒）
         if not (d / "preview.mp4").exists():

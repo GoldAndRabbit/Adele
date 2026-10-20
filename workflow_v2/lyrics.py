@@ -85,8 +85,7 @@ def stage_lyrics(c, a):
         for it in c.song_items():
             if sel and not ({it["name"], str(it["idx"]), f"{it['idx']:02d}"} & sel):
                 continue
-            d = c.song_dir(it)
-            d.mkdir(parents=True, exist_ok=True)
+            d = c.make_song_dir(it)
             info = read_json(d / "song.json", {})
             info.update({k: it[k] for k in ("idx", "name", "title", "artist", "parts", "notes")})
             if (d / "lyrics.txt").exists() and not a.force:

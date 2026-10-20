@@ -9,11 +9,11 @@ v2 整场演唱会流程（与 v1 的 make_mv.py 分开）。方案见 docs/desi
              lyrics    逐首 Genius 歌词
              separate  整场人声分离
              segment   字幕轨 + 歌词定位每首歌，音频精修边界 -> segments.json
-             refine    每首切音频，对齐（有直播字幕时字幕主导）/ 讲话 / 翻译 -> lyrics.ass
+             refine    每首切音频 + 预览视频，跑 v4（对齐 / 观众合唱 / 翻译 / 注释）-> exp_v4/
              preview   每首切审核用的 720p 预览视频（前后多留 10s）-> preview.mp4
              package   候选封面 + 标题介绍
   serve    审核网页（http://127.0.0.1:8160）
-  hd       只对审核通过的歌：切片 -> 插帧 60fps -> 4K + 字幕 + 水印 + FLAC（唯一会切视频的命令）
+  hd       只对审核通过的歌：v4 成品（workflow_v4/render.py：插帧 60fps -> 4K + 字幕 + logo / 水印 + FLAC）+ 封面 + 投稿信息
   status   各首状态
 
   .venv/bin/python -m workflow_v2 new shakira_madrid_2026 --source "~/Downloads/xxx.mkv" --artist Shakira \\
@@ -124,13 +124,11 @@ def main():
     r.add_argument("--to", choices=STAGES, default=STAGES[-1])
     r.add_argument("--songs", help="只处理这些歌（序号或目录名，逗号分隔），lyrics/refine/package 有效")
     r.add_argument("--force", action="store_true", help="覆盖已有结果")
-    r.add_argument("--retranslate", action="store_true", help="refine：整首重翻")
     r.set_defaults(fn=cmd_run)
 
     h = sub.add_parser("hd", help="只对审核通过的歌做高清")
     h.add_argument("slug")
     h.add_argument("--songs", help="只做这些歌（必须已通过审核）")
-    h.add_argument("--fast", action="store_true", help="VideoToolbox HEVC 硬编")
     h.add_argument("--dry-run", action="store_true", help="只列出会处理哪些歌")
     h.set_defaults(fn=cmd_hd)
 

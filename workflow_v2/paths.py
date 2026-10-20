@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CONCERTS = ROOT / "concerts"
+POSTS = ROOT / "posts"   # 每首歌的目录（单曲和演唱会里的歌都在这里，成品在 posts/<歌名>/post/）
 VENV_PY = ROOT / ".venv" / "bin" / "python"
 SEP_PY = ROOT / ".venv-sep" / "bin" / "python"
 
@@ -38,7 +39,7 @@ class Concert:
          source.mp4     无损 remux（网页预览、高清切片都用它）    captions.srt   内嵌字幕轨
          audio.flac     整场 48k/24bit                           vocals.wav     整场人声
          segments.json  每首歌的起止                              review.json    人工审核结果
-         songs/<nn>_<slug>/   每首歌（同 v1 posts/<name>/：audio.flac vocals.wav lyrics.* speech.srt covers/ post/）
+         songs/<nn>_<slug>    每首歌：指向 posts/<nn>_<slug>/ 的软链接（audio.flac vocals.wav lyrics.txt exp_v4/ covers/ post/）
     """
 
     def __init__(self, slug):
@@ -69,6 +70,16 @@ class Concert:
 
     def song_dir(self, it):
         return self.songs / it["name"]
+
+    def make_song_dir(self, it):
+        """新歌的目录建在 posts/<歌名>/，songs/<歌名> 是指过去的软链接（找成品只看 posts/）。"""
+        d = self.song_dir(it)
+        if not d.exists() and not d.is_symlink():
+            real = POSTS / it["name"]
+            real.mkdir(parents=True, exist_ok=True)
+            self.songs.mkdir(parents=True, exist_ok=True)
+            d.symlink_to(real)
+        return d
 
     def item(self, key):
         """按序号（8 / "08"）或目录名找歌单条目。"""

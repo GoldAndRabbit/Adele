@@ -155,7 +155,7 @@ async function viewSong(route) {
   // 歌词栏：v3（默认）/ v2 切换，视频上的字幕和表格一起换；都没有时退回原来的字幕
   const lyricsPane = h("div", { class: "pane lyrics-pane" });
   const exps = s.exps || {};
-  const modes = ["v4", "v3", "v2"].filter((k) => exps[k]);
+  const modes = ["v4", "v3"].filter((k) => exps[k]);
   let cur = null;
   // 视频字幕固定用中文 v2（二次翻译定稿）；没有 v2 的退回字幕文件本身
   const applyAss = async () => {
@@ -176,9 +176,9 @@ async function viewSong(route) {
     lyricsPane.replaceChildren(table);
     modeSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
   };
-  const LABELS = { v4: "v4（+观众合唱）", v3: "v3（多锚点校准）", v2: "v2" };
+  const LABELS = { v4: "v4（+观众合唱）", v3: "v3（多锚点校准）" };
   // v4 按钮一直显示：这首还没跑 v4 就是灰的
-  const modeSwitch = h("div", { class: "seg mode-switch" }, ...["v4", "v3", "v2"].filter((m) => exps[m] || m === "v4").map((m) =>
+  const modeSwitch = h("div", { class: "seg mode-switch" }, ...["v4", "v3"].filter((m) => exps[m] || m === "v4").map((m) =>
     h("button", { "data-m": m, disabled: !exps[m], title: exps[m] ? "" : "这首还没跑 v4", onclick: () => exps[m] && showLines(m) }, LABELS[m])));
   // 版本切换、视频中文切换、「所有注释」放到标题那一行
   const notesBtn = h("button", { class: "btn", onclick: () => showNotes(cur ? exps[cur] : null, player, s) }, "所有注释");

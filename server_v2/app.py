@@ -74,7 +74,7 @@ def song_summary(c, it, segs, rv):
 
 
 def exp_data(d, sub, ass_url):
-    """一份实验结果（exp/ 或 exp_v2/）给审核页：逐句表格 + 字幕文件 + 用的模型。"""
+    """一份对齐结果（exp_v3/ 或 exp_v4/）给审核页：逐句表格 + 字幕文件 + 用的模型。"""
     x = d / sub
     if not (x / "lines.json").exists():
         return None
@@ -247,8 +247,8 @@ def get_song(slug: str, name: str):
                              "strategy": "片头歌名" if x["orig"].startswith("《") else "讲话（Qwen 识别，两遍复听都对上）",
                              "speech": x["style"] != "Default"})
         rows.sort(key=lambda r: r["start_ms"])
-    # v3（exp_v3/，workflow_v3）和 v2（exp_v2/，align4.py）：审核页默认看 v3，可以切到 v2 对比；v1、v0 不再显示
-    exps = {k: exp_data(d, sub, f"/media/{slug}/songs/{name}/{sub}/lyrics.ass") for k, sub in (("v4", "exp_v4"), ("v3", "exp_v3"), ("v2", "exp_v2"))}
+    # v4（exp_v4/，workflow_v4）和 v3（exp_v3/，workflow_v3）：默认看 v4，可以切到 v3 对比；更早的版本已删
+    exps = {k: exp_data(d, sub, f"/media/{slug}/songs/{name}/{sub}/lyrics.ass") for k, sub in (("v4", "exp_v4"), ("v3", "exp_v3"))}
     exps = {k: v for k, v in exps.items() if v}
     from workflow_v2.align4 import line_lang
     main = info.get("lang") or "en"
@@ -264,9 +264,9 @@ def get_song(slug: str, name: str):
         "preview": f"/media/{slug}/songs/{name}/preview.mp4" if (d / "preview.mp4").exists() else None,
         "preview_span": info.get("preview"), "align": info.get("align"),
         # v4 成品（workflow_v4/render.py）：4K60、烧好字幕和水印、FLAC；出来了审核页预览下方直接播
-        "final": (media_url(c, name, f"post/{name} 4K60FPS Sub-WaterMark v4.mp4").replace(" ", "%20")
-                  if (d / "post" / f"{name} 4K60FPS Sub-WaterMark v4.mp4").exists() else None),
-        "final_path": str((d / "post" / f"{name} 4K60FPS Sub-WaterMark v4.mp4").resolve()),
+        "final": (media_url(c, name, f"post/{name} 4K60FPS Sub-WaterMark.mp4").replace(" ", "%20")
+                  if (d / "post" / f"{name} 4K60FPS Sub-WaterMark.mp4").exists() else None),
+        "final_path": str((d / "post" / f"{name} 4K60FPS Sub-WaterMark.mp4").resolve()),
         "lines": lines,
         "rows": rows,
         "covers": [{**x, "file": media_url(c, name, x["file"]),
@@ -409,7 +409,7 @@ def media_url(c, name, rel):
 def reveal_final(slug: str, name: str):
     """在 Finder 里定位这首的 v4 成品（只开这一个文件，审核页「在 Finder 中显示」用）。"""
     c = concert(slug)
-    f = (c.song_dir(song(c, name)) / "post" / f"{name} 4K60FPS Sub-WaterMark v4.mp4").resolve()
+    f = (c.song_dir(song(c, name)) / "post" / f"{name} 4K60FPS Sub-WaterMark.mp4").resolve()
     if not f.is_file():
         raise HTTPException(404)
     subprocess.run(["open", "-R", str(f)], check=False)
@@ -424,7 +424,7 @@ def media(slug: str, path: str):
     allowed = f.suffix in MEDIA_OK and (
         path == "source.mp4"
         or (len(parts) == 3 and parts[0] == "songs" and parts[2] in ("lyrics.ass", "preview.mp4"))
-        or (len(parts) == 4 and parts[0] == "songs" and parts[2] in ("exp", "exp_v2", "exp_v3", "exp_v4") and parts[3] in ("lyrics.ass", "lyrics_zh2.ass"))
+        or (len(parts) == 4 and parts[0] == "songs" and parts[2] in ("exp_v3", "exp_v4") and parts[3] in ("lyrics.ass", "lyrics_zh2.ass"))
         or (len(parts) >= 4 and parts[0] == "songs" and parts[2] in ("covers", "post")))
     if not allowed or ".." in parts or not f.resolve().is_file():
         raise HTTPException(404)
