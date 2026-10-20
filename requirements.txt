@@ -1,5 +1,9 @@
 # 主环境 .venv（python3.12）
 yt-dlp[default]
+# YouTube 下载：yt-dlp-ejs 解 JS 校验（不解会被限速 / 只给低画质，要 deno 或 node 在 PATH），
+# bgutil 插件从本机 4416 端口的 PO token 服务取 token（服务在 ../SubDub/tools/bgutil-pot，没起服务也不影响）
+yt-dlp-ejs==0.8.0
+bgutil-ytdlp-pot-provider==2.0.2
 requests
 beautifulsoup4
 numpy<2.3

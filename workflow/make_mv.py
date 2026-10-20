@@ -80,9 +80,15 @@ def stage_download(a, w):
     if src.exists():
         print(f"已存在 {src}，跳过下载")
         return
+    # 下载参数和 SubDub（../SubDub/subdub/pipeline.py stage_download）保持一致
     cmd = [tool("yt-dlp"), "--no-playlist",
-           "-f", "bestvideo[height<=2160]+bestaudio/best",
-           "--merge-output-format", "mp4",
+           # 画质最高到 2160p（这里和 SubDub 不同，SubDub 只要 1080p）；很多视频带 YouTube 自动配音的多语种音轨，
+           # bestaudio 可能选到德语 / 印地语，只要原声
+           "-f", "bv*[height<=2160]+ba[format_note*=original]/bv*[height<=2160]+ba[language^=en]/bv*+ba/b",
+           # 有的视频不给 PO token 只出 360p 合流：本机起了 bgutil PO token 服务时 mweb 客户端能拿到 1080p；
+           # 没起服务也不影响 default 客户端（需要 yt-dlp-ejs + deno 解 JS 校验，见 requirements.txt）
+           "--extractor-args", "youtube:player_client=default,mweb",
+           "--merge-output-format", "mp4", "--retries", "10", "--fragment-retries", "10",
            "--write-subs", "--sub-langs", "all,-live_chat", "--convert-subs", "srt",
            "-o", str(w / "source.%(ext)s")]
     if a.cookies_from_browser:
@@ -102,26 +108,38 @@ def stage_download(a, w):
         (w / "meta.json").write_text(json.dumps(keep, ensure_ascii=False, indent=2))
 
 
+def mid_size(src):
+    """中间视频的画面大小：要插帧的降到 1080p（4K 直接插帧太慢、太占盘）；
+    原片已经是 60 帧（不插帧）且高于 1080p 的，保留原分辨率（如 1440p），渲染时直接放大到 4K，不白白损失清晰度。"""
+    info = probe(src)
+    if info["fps"] >= TARGET_FPS - 0.5 and info["height"] > 1080:
+        h = min(2160, info["height"]) // 2 * 2
+        return round(h * 16 / 9) // 2 * 2, h
+    return 1920, 1080
+
+
 def make_1080(a, w):
-    """统一降到 1080p 再插帧（4K 直接插帧太慢、太占盘）；帧率保持原生，后面交给 RIFE。"""
+    """中间视频 video_1080.mp4（文件名沿用；大小见 mid_size）；帧率保持原生，后面交给 RIFE。"""
     trim = (["-ss", a.start] if a.start else []) + (["-to", a.end] if a.end else [])
     tmp = w / "video_1080.partial.mp4"
+    W, H = mid_size(w / "source.mp4")
     run(["ffmpeg", "-y", "-hide_banner", *trim, "-i", w / "source.mp4",
-         "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1",
+         "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+                f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1",
          "-an", "-c:v", "libx264", "-crf", "12", "-preset", "fast", "-pix_fmt", "yuv420p", tmp])
     tmp.replace(w / "video_1080.mp4")  # 写完整才改名：中途被停不会留下半截文件
 
 
 def video_1080_ok(a, w):
-    """1080p 中间视频存在且时长和源视频（截取后）一致。"""
+    """中间视频存在、大小对（mid_size）、时长和源视频（截取后）一致。"""
     v = w / "video_1080.mp4"
     if not v.exists():
         return False
     src = probe(w / "source.mp4")["duration"]
     if a.start or a.end:
         src = (to_seconds(a.end) if a.end else src) - (to_seconds(a.start) or 0)
-    return abs(probe(v)["duration"] - src) < 1.0
+    info = probe(v)
+    return abs(info["duration"] - src) < 1.0 and (info["width"], info["height"]) == mid_size(w / "source.mp4")
 
 
 def stage_prep(a, w):
