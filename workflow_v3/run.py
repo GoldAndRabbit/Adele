@@ -243,12 +243,6 @@ def run(d, lyrics, out_dir, meta=None):
             o["shown"] = False
     occ = [o for o in occ if o["shown"]]
     occ = fill_by_order(occ, cells, ly, y, SR)
-    # 观众合唱检测（song_crowd_workflow）：只在 v4 里开（meta["crowd"]），v3 不变
-    if meta.get("crowd"):
-        from .song_crowd_workflow import detect, place_crowd
-        crowd_segs, lrc = detect(d, out_dir, occ, ly, cells, reads, dur, y, SR, meta.get("video"), meta.get("offset", 0.0),
-                                 V2.PITCH, V2.STEREO, meta.get("title", ""), meta.get("artist", ""))
-        occ = place_crowd(occ, crowd_segs, ly, lrc, cells)
 
     # 第 4 步：歌词外的段落
     matched = {u for o in occ for u in o["cells"]}
@@ -406,9 +400,7 @@ def run(d, lyrics, out_dir, meta=None):
     for r in rows:
         o = r["occ"]
         if r["kind"] == "lyric":
-            if o.get("crowd"):
-                r["verdict"] = "crowd"
-            elif o.get("live_change"):
+            if o.get("live_change"):
                 r["verdict"] = "live"
             elif o.get("seq"):
                 r["verdict"] = "seq"
@@ -448,8 +440,7 @@ def run(d, lyrics, out_dir, meta=None):
     for r in rows:
         o = r["occ"]
         if r["kind"] == "lyric":
-            why = (f"观众合唱段：按 Genius 顺序排第 {r['k'] + 1} 行，时间按录音室版的时长比例分（识别听不清，不逐句对）"
-                   if o.get("crowd") else None) or (f"对上 Genius 第 {r['k'] + 1} 行（覆盖 {o['coverage']:.0%}，读音 {o['sim']:.2f}，{o['support']:.1f} 遍支持，"
+            why = (f"对上 Genius 第 {r['k'] + 1} 行（覆盖 {o['coverage']:.0%}，读音 {o['sim']:.2f}，{o['support']:.1f} 遍支持，"
                    f"置信度 {o['conf']:.2f}{'，锚点' if o['anchor'] else ''}）") if not o.get("filled") else \
                   (f"Genius 第 {r['k'] + 1} 行：前一句唱的是第 {r['k']} 行、后一句是第 {r['k'] + 2} 行附近，"
                    f"中间听到「{o['heard']}」没对上任何一句，按顺序填这句")
@@ -469,8 +460,6 @@ def run(d, lyrics, out_dir, meta=None):
             why = f"歌词外，没出字幕（{r.get('support', 0):.0%} 的词多遍听到，音高稳定度 {r.get('steady', 0):.2f}）"
         sty = V2.style_of({**r, "speech": r["kind"] == "talk", "score": 100 * (o["sim"] if o else 0)}, ly.main) \
             if r["kind"] != "out" else (None, None)
-        if o and o.get("crowd"):
-            sty = ("crowd_ok", None)
         table.append({
             "start_ms": round(r.get("show_s", r["s"]) * 1000), "end_ms": round(r.get("show_e", r["e"]) * 1000),
             "genius": r["genius"] if r["kind"] == "lyric" else "", "qwen": r["heard"],
@@ -593,35 +582,34 @@ def summary(name, table, prof):
           f"校准 {len(prof['rounds'])} 轮", flush=True)
 
 
-def run_song(slug, name, variant="v3"):
+def run_song(slug, name):
     import acoustic
     from workflow_v2.paths import Concert
     from workflow_v2.refine import sub_title
     c = Concert(slug)
     it = c.item(name)
     d = c.song_dir(it)
-    out = d / ("exp_v4" if variant == "v4" else "exp_v3")
+    out = d / "exp_v3"
     from workflow_v2.paths import read_json
     info = read_json(d / "song.json", {})
     sl, pv = info.get("slice") or [0, 0], info.get("preview") or [0, 0]
     artist = it.get("artist") or read_json(c.dir / "concert.json", {}).get("artist", "")
-    meta = {"video": d / "preview.mp4", "offset": sl[0] - pv[0], "title": it["title"], "artist": artist,
-            "crowd": variant == "v4"}
+    meta = {"video": d / "preview.mp4", "offset": sl[0] - pv[0], "title": it["title"], "artist": artist}
     table, prof = run(d, [t for t, _ in acoustic.section_lines(d / "lyrics.txt")], out, meta)
     from .song_translation_workflow import translate as st
     st(d, out, [t for t, _ in acoustic.section_lines(d / "lyrics.txt")], sub_title(c, it))   # 翻译（song_translation_workflow）
     summary(it["title"], table, prof)
 
 
-def run_post(name, variant="v3"):
+def run_post(name):
     from workflow_v2.paths import ROOT
     d = ROOT / "posts" / name
-    out = d / ("exp_v4" if variant == "v4" else "exp_v3")
+    out = d / "exp_v3"
     post = json.loads((d / "post" / f"{name}.json").read_text())
     song = post.get("song") or {}
     lyrics = [l.strip() for l in (d / "lyrics.txt").read_text().splitlines() if l.strip() and not l.startswith("[")]
     table, prof = run(d, lyrics, out, {"video": d / "source.mp4", "offset": 0.0, "title": song.get("title") or name,
-                                       "artist": song.get("artist") or "", "crowd": variant == "v4"})
+                                       "artist": song.get("artist") or ""})
     from .song_translation_workflow import translate as st
     st(d, out, lyrics, f"《{song.get('title') or name}》 {song.get('artist') or ''}".strip())   # 翻译（song_translation_workflow）
     summary(name, table, prof)
@@ -630,9 +618,8 @@ def run_post(name, variant="v3"):
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "workflow"))
-    variant = "v4" if "--v4" in sys.argv else "v3"   # v4 = v3 + 观众合唱检测，写到 exp_v4/
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if args[0] == "post":
-        run_post(args[1], variant)
+        run_post(args[1])
     else:
-        run_song(args[1], args[2], variant)
+        run_song(args[1], args[2])

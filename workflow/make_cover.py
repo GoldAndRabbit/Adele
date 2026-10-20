@@ -173,8 +173,9 @@ def inpaint_corners(img):
 
 
 def grab_hd(video, t, work):
-    """高清取帧：按原始分辨率截帧（含 crop-bottom）→ Real-ESRGAN x4 → Lanczos 缩到封面尺寸并居中裁切。
-    1080p 素材裁掉底部字幕后只剩 ~930 行，直接拉伸会糊。"""
+    """高清取帧：按原始分辨率截帧（含 crop-bottom）→ 不够 1080 行才 Real-ESRGAN x4 → Lanczos 缩到封面尺寸并居中裁切。
+    1080p 素材裁掉底部字幕后只剩 ~930 行，直接拉伸会糊。本来就够 1080 行的只做一次轻量锐化：
+    x4 放大到 8K 再缩回 1080 每帧 ~26 s，效果只相当于去噪 + 锐化。"""
     pre = f"crop=iw:ih*{1 - CROP_BOTTOM:.3f}:0:0" if CROP_BOTTOM > 0 else "null"
     tmp = work / "_grab.png"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
@@ -189,11 +190,16 @@ def grab_hd(video, t, work):
             mask = max(mask, PROMO_MASK)
         else:
             img = inpaint_corners(img)
-    img = upscale(img, work, force=True)
+    sharpen = img.height >= H
+    if not sharpen:
+        img = upscale(img, work, force=True)
     scale = max(W / img.width, H / img.height)
     img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
     x, y = (img.width - W) // 2, (img.height - H) // 2
-    return mask_bottom(img.crop((x, y, x + W, y + H)), mask)
+    img = img.crop((x, y, x + W, y + H))
+    if sharpen:
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=60, threshold=2))
+    return mask_bottom(img, mask)
 
 
 # ---------------------------------------------------------------- 按正脸挑帧

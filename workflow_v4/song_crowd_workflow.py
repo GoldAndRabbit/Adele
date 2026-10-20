@@ -12,7 +12,7 @@
     第 3 步 综合判定：观众合唱 / 不是 / 不确定，带置信度和每项证据
     合唱段的处理（place_crowd）：区间里该唱的句子按 Genius 顺序排进去，时间按录音室版歌词时间轴（LRC，lrclib.net）
         的时长比例分；没有 LRC 就均分。识别碎片只用来确认这里有人在唱。
-输出 exp_v3/crowd.json。
+输出 exp_v4/crowd.json。
 """
 
 import json
