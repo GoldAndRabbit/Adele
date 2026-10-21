@@ -175,8 +175,12 @@ def render(d, work, out, frames=None, t_in=0.0, enc=None):
     wm = read_json(d / "watermark.json", {}) or {}
     items = wm.get("items") or []
     ext = "jpg" if any((work / "frames_out").glob("*.jpg")) else "png"
+    if not frames and not any((work / "frames_out").glob(f"*.{ext}")):   # 原片 60 帧、没抽帧：直接读中间视频
+        frames, src_fps = ["-i", "video_1080.mp4"], f"setpts=PTS-STARTPTS,fps={FPS},"
+    else:
+        src_fps = ""
     inputs = (frames or ["-framerate", FPS, "-i", f"frames_out/%08d.{ext}"]) + ["-i", d / "audio.flac", "-i", LOGO]
-    shift = f"setpts=PTS+{t_in}/TB," if t_in else ""   # 只给抽查用：从中间某一秒开始的片段，时间对回歌曲内时间
+    shift = src_fps + (f"setpts=PTS+{t_in}/TB," if t_in else "")   # t_in 只给抽查用：从中间某一秒开始的片段，时间对回歌曲内时间
     fc = [f"[0:v]{shift}scale=3840:2160:flags=lanczos,ass=subs_v4.ass[s0]",
           f"[2:v]scale=iw*{LOGO_SCALE}:-1[logo]",
           "[s0][logo]overlay=15:15:format=auto[v0]"]
@@ -204,12 +208,12 @@ def render(d, work, out, frames=None, t_in=0.0, enc=None):
 
 
 def check_disk(d, seconds):
-    """帧序列 + 4K 成品要的空间（偏保守）。原片已经是 60 帧的不插帧，只有一份帧；要插帧的是原生帧 + 60 帧两份。"""
+    """帧序列 + 4K 成品要的空间（偏保守）。原片已经是 60 帧的不插帧也不抽帧；要插帧的是原生帧 + 60 帧两份。"""
     r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate",
                         "-of", "csv=p=0", str(d / "source.mp4")], capture_output=True, text=True).stdout.strip() or "30/1"
     num, den = (r.split("/") + ["1"])[:2]
     fps = float(num) / float(den or 1)
-    per_sec = fps if fps >= FPS - 0.5 else fps + FPS
+    per_sec = 0 if fps >= FPS - 0.5 else fps + FPS   # 60 帧的原片不抽帧，渲染直接读中间视频
     need = seconds * per_sec * JPG_FRAME * 1.3 + seconds * 7e6 + 3e9
     free = shutil.disk_usage(d).free
     if free < need:

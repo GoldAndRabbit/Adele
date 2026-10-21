@@ -266,6 +266,11 @@ def stage_interp(a, w):
     fin, fout = w / "frames_in", w / "frames_out"
     for d in (fin, fout):
         shutil.rmtree(d, ignore_errors=True)
+    if info["fps"] >= TARGET_FPS - 0.5:
+        # 不插帧就不用抽帧：渲染直接读 video_1080.mp4（帧一模一样）；1440p PNG 一秒 60MB，抽出来白占磁盘
+        print("源已经是 60fps，跳过插帧，也不抽帧（渲染直接读 video_1080.mp4）")
+        return
+    for d in (fin, fout):
         d.mkdir()
     ext = pick_frame_ext(a, video, info, w)
     q = ["-q:v", "1"] if ext == "jpg" else []
@@ -275,12 +280,6 @@ def stage_interp(a, w):
          fin / f"%08d.{ext}"])
     n_in = len(list(fin.glob(f"*.{ext}")))
     n_out = round(n_in * TARGET_FPS / info["fps"])
-
-    if info["fps"] >= TARGET_FPS - 0.5:
-        print("源已经是 60fps，跳过插帧")
-        shutil.rmtree(fout)
-        fin.rename(fout)
-        return
 
     # RIFE v4 支持任意时间步，-n 直接指定目标帧数，一步到 60fps
     print(f"RIFE: {n_in} 帧 @ {info['fps']:.3f} -> {n_out} 帧 @ {TARGET_FPS} ({ext})")
