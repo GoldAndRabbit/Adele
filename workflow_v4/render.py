@@ -5,7 +5,8 @@
     1) 还没有 exp_v4/：先把 exp_v3 的翻译缓存拷过去（没变的句子中文和审过的一样），跑 v4，和 v3 逐行比对 -> reports/v4_vs_v3.txt
     2) 水印计划 watermark.json 已有就用（审核页预览的就是它），没有才生成
     3) v1 make_mv.py 只做切片 + RIFE 插帧到 60fps（--from interp --to interp）
-    4) 渲染：4K + exp_v4/lyrics_zh2.ass（中文 v2，整体提前和审核页默认的「提前 0.8s」一致）+ 左上角 logo
+    4) 渲染：4K + exp_v4/lyrics_zh3.ass（中文诗意版，和审核页默认一致；没有才用 lyrics_zh2.ass 直译版；
+       整体提前和审核页默认的「提前 0.8s」一致）+ 左上角 logo
        + 歌曲中间的半透明水印（和审核页预览同样的时间、位置、大小、透明度、淡入淡出、阴影）+ 原样 FLAC 48kHz/24bit
     5) 删 frames_out 和 video_1080.mp4
 成品：posts/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4（每首只留这一个版本）
@@ -139,7 +140,9 @@ def ensure_watermark(spec, d):
 
 def render_ass(d, work):
     import pysubs2
-    subs = pysubs2.load(str(d / "exp_v4" / "lyrics_zh2.ass"))
+    f = d / "exp_v4" / "lyrics_zh3.ass"   # 诗意版（审核页默认）；没有就用直译版
+    subs = pysubs2.load(str(f if f.exists() else d / "exp_v4" / "lyrics_zh2.ass"))
+    print(f"{d.name}：字幕用 {'诗意版' if f.exists() else '直译版'}", flush=True)
     ms = round(LEAD_EXTRA * 1000)
     for ev in subs.events:   # 审核页预览是所有字幕一起挪（含片头、注释），这里一样
         ev.start, ev.end = max(0, ev.start - ms), max(0, ev.end - ms)
