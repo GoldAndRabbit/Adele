@@ -17,6 +17,7 @@
 
     .venv/bin/python -m workflow_v4.song_translation_workflow song shakira_madrid_2026 37_bzrp_music_sessions_53
     .venv/bin/python -m workflow_v4.song_translation_workflow post lose_yourself_2009
+    .venv/bin/python -m workflow_v4.song_translation_workflow poetic song lorde_acl2026 05_shapeshifter   # 加诗意版（中文 v3）
 """
 
 import hashlib
@@ -32,7 +33,7 @@ sys.path.insert(0, str(ROOT / "workflow"))
 MODEL = "deepseek-flash"
 EFFORT = "high"
 # 每一步各自的版本：改了哪一步的提示词，只把那一步的版本加一（它后面依赖它的步骤会因为输入变了自动重跑）
-STEP_VERSION = {"brief": "3", "draft": "3", "polish": "3", "review": "7", "garbage": "3"}
+STEP_VERSION = {"brief": "3", "draft": "3", "polish": "3", "review": "7", "garbage": "3", "poetic": "5", "title": "1"}
 GLOSSARY = Path(__file__).with_name("glossary.json")
 MAX_ZH = 18              # 中文 v2 每行最多字数（字幕可读）
 GARBAGE_KEEP = 68        # 歌词行识别文字和歌词读音相似度（partial）≥ 这个：唱走样了，不当幻听（实测走样 70~100，幻听 44~60）
@@ -79,6 +80,32 @@ P_POLISH = """你是顶尖的中文歌词译者和作词人。下面是一首歌
 - 每行简短，一般不超过 18 个汉字
 """ + COMMON + """
 输出 JSON：{"groups": [{"id": 组号, "zh": [...]}, ...]}，每组行数和原文一致；不要加 ♪，不要解释。"""
+
+P_POETIC = """你是当代中文诗人。下面是一首歌的字幕（按组）。请直接从原文出发，把它写成一首中文诗（诗意版）。
+要的是诗行，不是翻译句。示例（和这首歌无关，只看「直译」和「诗意」差在哪）：
+  I keep my secrets in the dark          直译：我把秘密藏在黑暗里           诗意：秘密，都交给了夜
+  You were the one who made me feel alive 直译：你是那个让我觉得自己活着的人  诗意：是你，让我活过来
+  We danced until the morning came        直译：我们一直跳舞跳到早上         诗意：我们跳着，跳到天光
+- 凝练：省掉多余的「的」「在」「了」「那个」，语序可以倒装、重心放到行尾；一行一个画面或一个动作
+- 节奏：原文怎么重复，中文就怎么重复，不要缩写合并（I've been the ice, I've been the flame → 「我曾是寒冰，我曾是火焰」，
+  不要写成「我曾是冰，也曾是火」）；排比、对举写出对称；副歌像副歌一样回环
+- 画面感：意象用有画面、有温度的双音词，不用单个字（冰→寒冰、火→火焰、手→掌心）；在原文意象的范围里给它颜色、温度、质地、动作，
+  让人看得见；不加原文没有的情节
+- 措辞有质感：可以少量用「曾、亦、已、独、皆」点缀，整体是现代诗，不是文言
+- 不改意思、不编内容：每行写的必须是原文这一行说的事（可以换说法、换角度），不加原文没有的情节和情绪
+- 不堆砌辞藻：不用「璀璨、斑驳、殇、阑珊、缱绻、氤氲」这类空泛的词；少用成语
+- 保持歌曲的语气（见「歌曲理解」）：冷峻的不写甜，直白的不写酸
+- 每行一般不超过 14 个汉字；纯语气词行输出空字符串；「讲话」「现场即兴」行照意思用自然口语，不写成诗
+""" + COMMON + """
+输出 JSON：{"groups": [{"id": 组号, "zh": [...]}, ...]}，每组行数和原文一致；不要加 ♪，不要解释。"""
+
+P_TITLE = """你是资深的中文歌词译者，整首歌词已经翻完，现在定这首歌的中文歌名。
+下面有原文歌名、「歌曲理解」、歌词里出现歌名（或歌名关键词）的句子和它们已经定好的中文译法。
+- 这首歌在中文世界有广为流传的通行译名（唱片公司官方中文名、主流音乐平台通用的名字）时，用通行译名
+- 没有通行译名：歌名的中文要和歌词里同一个词的译法一致（歌词里 royals 译成「皇室」，歌名就不要另译成「贵族」）；
+  译出这个词在这首歌里的真实含义，不要按字典第一个义项直译（liability 在歌里指「累赘 / 负担」，不是会计上的「负债」）
+- 像一个歌名：简短（一般 2～6 个字），不加书名号；原名是人名 / 缩写 / 拟声、或者节目名带编号（BZRP Music Sessions #53），输出原文
+输出 JSON：{"zh": "中文歌名", "why": "一句话"}"""
 
 P_GARBAGE = """下面是一首歌现场字幕里不太确定的行，每行有「识别」（语音识别听到的文字）；歌词行还有对应的「歌词」。
 现场有人群声、混响，识别有时会听出**没有意义的幻听**：乱码、不成句的词串、零散字母、和这首歌语言无关的别的语言词串
@@ -137,7 +164,10 @@ class Cache:
 def ask(prompt, user, label):
     import llm
     os.environ["TRANSLATE_MODEL"] = MODEL
-    return llm.chat_json(prompt, user, label=label, effort=EFFORT)
+    return llm.chat_json(prompt, user, label=label, effort=EFFORT, temperature=TEMPERATURE)
+
+
+TEMPERATURE = 0.3   # 翻译偏稳；诗意版那一步临时调高
 
 
 TIMES = {}   # 每一步花了多少秒（这次运行）
@@ -396,9 +426,37 @@ def translate(d, out_dir, lyrics, title):
 
     result = {"model": MODEL, "effort": EFFORT, "version": STEP_VERSION, "seconds": {k: round(v, 1) for k, v in TIMES.items()}, "title": title, "title_zh": title_zh, "brief": brief,
               "units": units, "notes": {str(k): v for k, v in notes.items()}}
+    # 第 7 步 歌名：整首翻完之后再定，和歌词里同一个词的译法一致
+    song_title(cache, result)
     (tdir / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=1))
     build_outputs(d, out_dir)
     return result
+
+
+def song_title(cache, R):
+    """中文歌名（整首翻完之后）：歌词里出现歌名的句子怎么译的，歌名就跟着；有通行译名用通行译名。
+    只改《》里的歌名，中文歌手名不动（R["title_zh"] 形如「《中文歌名》 中文歌手」）。"""
+    title, old = R.get("title") or "", R.get("title_zh") or ""
+    m = re.search(r"《([^》]*)》", title)
+    if not m:
+        return old
+    name = m.group(1)
+    keys = [w for w in re.findall(r"[^\W\d_]{3,}", name.lower())]
+    hits = [{"原文": u["orig"], "中文": u.get("v2_final") or u.get("v2", "")} for u in R["units"]
+            if u.get("type") != "讲话" and any(k in u["orig"].lower() for k in keys)]
+    seen, uniq = set(), []
+    for h in hits:
+        if h["原文"] not in seen:
+            seen.add(h["原文"])
+            uniq.append(h)
+    brief = R.get("brief") or {}
+    payload = json.dumps({"歌名": name, "整行": title, "歌曲理解": {k: brief.get(k) for k in ("theme", "voice", "tone", "core_lines")},
+                          "歌词里出现歌名的句子": uniq[:12]}, ensure_ascii=False)
+    res = cached_ask(cache, "title", P_TITLE, payload, "歌名", check=lambda r: isinstance(r, dict) and str(r.get("zh", "")).strip())
+    zh = str(res["zh"]).strip().strip("《》")
+    new = re.sub(r"《[^》]*》", f"《{zh}》", old) if "《" in old else f"《{zh}》 {old}".strip()
+    R["title_zh"], R["title_why"] = new, res.get("why", "")
+    return new
 
 
 # ---------------------------------------------------------------- 第 6 步 定稿 + 写字幕文件（审核页改了以后也只重跑这一步）
@@ -421,19 +479,23 @@ def finalize(d, units):
             u["v2_final"] = fx[_norm(u["orig"])]
         else:
             u["v2_final"] = u["v2"]
-        for k in ("v1", "v2_final"):
-            z = u[k] if k == "v1" else u["v2_final"]
+        if u.get("v3") is not None:   # 诗意版：讲话沿用 v2 的口语
+            u["v3_final"] = u["v2_final"] if u["type"] == "讲话" else u["v3"]
+        for k in ("v1", "v2_final", "v3_final"):
+            if k not in u:
+                continue
+            z = u[k]
             if u["type"] == "语气词":
                 z = ""
             z = no_dash(z)
             z = re.sub(r"[。.]$", "", z.strip())
-            u[k if k == "v1" else "v2_final"] = z
+            u[k] = z
     return units
 
 
 def build_outputs(d, out_dir):
     import pysubs2
-    from translate_ass import CJK_FONT, CJK_RE, build_ass
+    from translate_ass import CJK_FONT, build_ass
     tdir = out_dir / "translation"
     res = json.loads((tdir / "result.json").read_text())
     units = finalize(d, res["units"])
@@ -454,7 +516,10 @@ def build_outputs(d, out_dir):
     (tdir / "result.json").write_text(json.dumps(res, ensure_ascii=False, indent=1))
     lyr = [u for u in units if u["type"] != "讲话" and not u.get("dropped")]
     sp = [u for u in units if u["type"] == "讲话" and not u.get("dropped")]
-    for ver, key, fname in (("v1", "v1", "lyrics.ass"), ("v2", "v2_final", "lyrics_zh2.ass")):
+    vers = [("v1", "v1", "lyrics.ass"), ("v2", "v2_final", "lyrics_zh2.ass")]
+    if any("v3_final" in u for u in units):
+        vers.append(("v3", "v3_final", "lyrics_zh3.ass"))   # 诗意版
+    for ver, key, fname in vers:
         subs = pysubs2.SSAFile()
         for u in lyr:
             subs.events.append(pysubs2.SSAEvent(start=u["start"], end=u["end"], text=u["orig"]))
@@ -468,7 +533,7 @@ def build_outputs(d, out_dir):
             ass.events.append(pysubs2.SSAEvent(start=u["start"], end=u["end"], text=text, style="Speech"))
         # 顶部注释「原词：解释」：浅绿色半透明小字、没有描边和底色、顶住画面上边缘居中；跟着对应那句，至少 4 s
         note = ass.styles["Default"].copy()
-        note.fontname, note.fontsize = CJK_FONT, 15
+        note.fontname, note.fontsize = CJK_FONT, 18   # 2026-10-21 从 15 调大
         note.primarycolor = pysubs2.Color(170, 235, 170, 80)      # 浅绿色，约 70% 不透明（第四个数是透明度）
         note.outlinecolor = pysubs2.Color(0, 0, 0, 255)
         note.backcolor = pysubs2.Color(0, 0, 0, 255)
@@ -481,6 +546,42 @@ def build_outputs(d, out_dir):
             ass.events.append(pysubs2.SSAEvent(start=u["start"], end=max(u["end"], u["start"] + 4000), text=text, style="Note"))
         ass.events.sort(key=lambda e: e.start)
         ass.save(str(out_dir / fname))
+
+
+def poetic(d, out_dir, model=None, temperature=0.7):
+    """诗意版（中文 v3）：在已有翻译结果上加一步，直接从原文写有诗意的版本（不给初译，免得照着改几个字）；不动 v1 / v2。"""
+    tdir = out_dir / "translation"
+    R = json.loads((tdir / "result.json").read_text())
+    cache = Cache(tdir / "cache.json")
+    units = R["units"]
+    groups = make_groups(units)
+    uniq, gkey = unique_groups(groups)
+    fixed_file = d / "zh_fixed.json"
+    fixed = json.loads(fixed_file.read_text()) if fixed_file.exists() else {}
+    fixed_here = {k: v for k, v in fixed.items() if any(_norm(u["orig"]) == _norm(k) for u in units)}
+    style_file = d / "zh_style.json"
+    style = json.loads(style_file.read_text()).get("rules", []) if style_file.exists() else []
+    gloss = glossary_for(R.get("brief") or {}, fixed_here, style)
+    # 难点表只留「在这首歌里指什么」，去掉建议译法（不然整句照抄建议译法，写不出诗意）
+    gloss["难点"] = [{k: n.get(k) for k in ("src", "means")} for n in gloss.get("难点", [])]
+    ctx = context_text(R.get("brief") or {}, gloss)
+    global MODEL, TEMPERATURE
+    keep = (MODEL, TEMPERATURE)
+    MODEL, TEMPERATURE = model or MODEL, temperature
+    try:
+        v3 = by_groups(cache, "poetic", P_POETIC, uniq, ctx, "诗意")   # 不给初译：给了它就照着改几个字
+    finally:
+        MODEL, TEMPERATURE = keep
+    R["poetic_model"] = model or keep[0]
+    for g in groups:
+        gi = gkey[(g[0]["type"],) + tuple(_norm(u["orig"]) for u in g)]
+        for u, z in zip(g, v3[gi]):
+            u["v3"] = z
+    for u in units:
+        u.setdefault("v3", "")
+    (tdir / "result.json").write_text(json.dumps(R, ensure_ascii=False, indent=1))
+    build_outputs(d, out_dir)
+    return R
 
 
 def run_song(slug, name):
@@ -528,7 +629,30 @@ def run_many(specs):
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "many":
+    if sys.argv[1] == "title":   # 只重定歌名：title song <slug> <name> / title post <name>
+        if sys.argv[2] == "post":
+            dd = ROOT / "posts" / sys.argv[3]
+        else:
+            from workflow_v2.paths import Concert
+            cc = Concert(sys.argv[3])
+            dd = cc.song_dir(cc.item(sys.argv[4]))
+        tf = dd / "exp_v4" / "translation" / "result.json"
+        RR = json.loads(tf.read_text())
+        old = RR.get("title_zh")
+        song_title(Cache(tf.parent / "cache.json"), RR)
+        tf.write_text(json.dumps(RR, ensure_ascii=False, indent=1))
+        build_outputs(dd, dd / "exp_v4")
+        print(f"{dd.name}: {old} → {RR['title_zh']}（{RR.get('title_why', '')}）")
+    elif sys.argv[1] == "poetic":   # 诗意版：poetic song <slug> <name> / poetic post <name>
+        if sys.argv[2] == "post":
+            dd = ROOT / "posts" / sys.argv[3]
+        else:
+            from workflow_v2.paths import Concert
+            cc = Concert(sys.argv[3])
+            dd = cc.song_dir(cc.item(sys.argv[4]))
+        mi = sys.argv.index("--model") if "--model" in sys.argv else None
+        poetic(dd, dd / "exp_v4", model=sys.argv[mi + 1] if mi else None)
+    elif sys.argv[1] == "many":
         run_many(sys.argv[2:])
     elif sys.argv[1] == "post":
         run_post(sys.argv[2])

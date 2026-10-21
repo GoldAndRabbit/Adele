@@ -178,6 +178,13 @@ td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .cover.on { border-color: var(--accent); }
 .cover .ct { position: absolute; left: 6px; bottom: 5px; font-size: 11px; color: #fff; background: rgba(0,0,0,.55); padding: 0 5px; border-radius: 4px; }
 .cover .pick { position: absolute; right: 6px; bottom: 5px; font-size: 11px; color: #fff; background: var(--accent); padding: 0 6px; border-radius: 4px; }
+/* 算法推荐 Top3（workflow_v2/cover_rank.py）：分组标题占满一行；Top3 卡片左上角名次、图下面一行推荐理由 */
+.cover-group { grid-column: 1 / -1; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.cover.best { border-color: rgba(255, 196, 0, 0.55); }
+.cover.best.on { border-color: var(--accent); }
+.cover .rk { position: absolute; left: 6px; top: 6px; font-size: 12px; font-weight: 700; color: #111; background: #ffc400; padding: 0 6px; border-radius: 4px; }
+.cover .why { display: block; height: 24px; line-height: 24px; padding: 0 6px; font-size: 12px; color: #ddd; background: #161616; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cover.best .ct, .cover.best .pick { bottom: 29px; }
 /* 右上角下载按钮：圆形半透明，悬停变亮；下载中变暗不可再点 */
 .cover .dl {
   position: absolute; right: 6px; top: 6px; width: 28px; height: 28px; border-radius: 50%;
@@ -369,3 +376,11 @@ td.src { white-space: nowrap; }
 .toast.err { background: #a33; }
 .final-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 12px; }
 .final-path code { user-select: all; word-break: break-all; opacity: .85; }
+/* 字幕预览版标题（区别于下方的 4K 成品） */
+.pane-title { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+.pane-title .pane-sub { font-size: 12px; font-weight: 400; opacity: .6; margin-left: 8px; }
+/* 逐句表格：紧凑一点；Genius 原句可以整列收起 */
+.exp-table td, .exp-table th { padding: 5px 8px; line-height: 1.35; }
+.exp-table td.zh, .exp-table td.zh3 { min-width: 8em; }
+.table-wrap.hide-genius .gcol { display: none; }
+.btn.mini { font-size: 12px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }

@@ -574,6 +574,8 @@ def tidy(text):
         t = t[1:-1].strip()
     if t.count("(") != t.count(")"):
         t = t.replace("(", "").replace(")", "").strip()
+    if (t.count('"') + t.count("“") + t.count("”")) % 2:   # 引号跨行（Genius 一句话分两行），这一行只剩半个：去掉
+        t = t.replace('"', "").replace("“", "").replace("”", "").strip()
     return t
 
 

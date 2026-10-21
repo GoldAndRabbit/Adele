@@ -72,8 +72,19 @@ def cut_sets(cands, dur, n=PASSES):
     return sets
 
 
+MAX_WPS = 20.0   # 识别结果的语速上限（词/秒，按 10 s 一格算）：正常演唱最快约 10（Waka Waka 口号段），
+                 # 识别卡进循环时会到 100 以上（Lorde Broken Glass 第 2 遍：40 s 里同一段副歌重复了 2600 多个词）
+
+
 def recognize(y, sr, key, cache, a, b, src):
     ws = A3.asr_words(y[int(a * sr):int(b * sr)], sr, key, cache, t0=a)
+    ws = [w for w in ws if a - 0.5 <= w["s"] <= b + 0.5]   # 时间落在这段音频外面的：识别错了
+    bins = {}
+    for w in ws:
+        bins[int(w["s"] // 10)] = bins.get(int(w["s"] // 10), 0) + 1
+    if bins and max(bins.values()) > MAX_WPS * 10:
+        print(f"识别结果不可信（{a:.0f}-{b:.0f}s 有 10 s 里 {max(bins.values())} 个词，第 {src} 遍）：这一段这遍不用", flush=True)
+        return []
     for w in ws:
         w["src"] = src
     return ws

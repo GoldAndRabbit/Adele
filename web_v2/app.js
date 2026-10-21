@@ -157,12 +157,22 @@ async function viewSong(route) {
   const exps = s.exps || {};
   const modes = ["v4", "v3"].filter((k) => exps[k]);
   let cur = null;
-  // 视频字幕固定用中文 v2（二次翻译定稿）；没有 v2 的退回字幕文件本身
+  // 视频字幕默认用诗意版；可以切到直译版（中文 v2，记在本机）；这首没有诗意版时用直译版；都没有退回字幕文件本身
+  let zhMode = "v3";
+  try { zhMode = localStorage.getItem("zhMode") || "v3"; } catch (e) { /* 无痕模式 */ }
   const applyAss = async () => {
     const x = cur ? exps[cur] : null;
-    const url = x ? (x.ass_zh2 || x.ass) : s.ass;
+    const url = x ? ((zhMode === "v3" && x.ass_zh3) || x.ass_zh2 || x.ass) : s.ass;
     if (player.setAss) await player.setAss(url);
+    zhSwitch.style.display = x && x.ass_zh3 ? "" : "none";
+    zhSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.z === zhMode));
   };
+  const zhSwitch = h("div", { class: "seg", title: "视频里的中文用哪一版" }, ...[["v3", "诗意版"], ["v2", "直译版"]].map(([z, label]) =>
+    h("button", { "data-z": z, onclick: () => {
+      zhMode = z;
+      try { localStorage.setItem("zhMode", z); } catch (e) { /* 无痕模式 */ }
+      applyAss();
+    } }, label)));
   const showLines = async (mode) => {
     cur = mode;
     const refresh = async () => {   // 改了中文 / 注释：重新取这首的数据，表格和字幕一起刷新
@@ -182,7 +192,7 @@ async function viewSong(route) {
     h("button", { "data-m": m, disabled: !exps[m], title: exps[m] ? "" : "这首还没跑 v4", onclick: () => exps[m] && showLines(m) }, LABELS[m])));
   // 版本切换、视频中文切换、「所有注释」放到标题那一行
   const notesBtn = h("button", { class: "btn", onclick: () => showNotes(cur ? exps[cur] : null, player, s) }, "所有注释");
-  head.insertBefore(h("div", { class: "head-ctrls" }, modeSwitch, notesBtn), head.querySelector(".spacer"));
+  head.insertBefore(h("div", { class: "head-ctrls" }, modeSwitch, zhSwitch, notesBtn), head.querySelector(".spacer"));
   await showLines(modes[0] || null);
   const card = h("div", { class: "card" }, head,
     h("div", { class: "top" }, player.el, lyricsPane),
@@ -243,15 +253,19 @@ function coverPane(s) {
   const box = h("div", { class: "covers" });
   const draw = () => {
     box.className = `covers${st.ratio === "43" ? " r43" : ""}`;
-    box.replaceChildren(...(s.covers.length ? s.covers.map((x) => {
+    const card = (x) => {
       const src = st.ratio === "43" && x.file_4x3 ? x.file_4x3 : x.file;
+      const top = x.rank != null && x.rank <= 3;
       return h("button", {
-        class: `cover${x.id === st.chosen ? " on" : ""}`, title: `${x.id}（双击看大图）`,
+        class: `cover${x.id === st.chosen ? " on" : ""}${top ? " best" : ""}`,
+        title: `${x.id}${x.score != null ? ` · 分数 ${x.score.toFixed(2)}` : ""}${x.why ? ` · ${x.why}` : ""}（双击看大图）`,
         onclick: () => { st.chosen = x.id; draw(); },
         ondblclick: () => lightbox(src),
       }, h("img", { src, loading: "lazy" }),
+      top ? h("span", { class: "rk" }, `#${x.rank}`) : null,
       x.t != null ? h("span", { class: "ct" }, `${SHOT[x.id.split("_")[0]] || ""} ${hms(x.t)}`.trim()) : null,
       x.id === st.chosen ? h("span", { class: "pick" }, "已选") : null,
+      top && x.why ? h("span", { class: "why" }, x.why) : null,
       // 下载：16:9 + 4:3 两张 PNG 存到这首歌的 post/ 目录（按钮在 button 里面，不能再嵌 button）
       dlButton({
         class: "dl", role: "button", title: "下载到 post/（16:9 + 4:3 PNG）",
@@ -271,7 +285,15 @@ function coverPane(s) {
           }
         },
       }));
-    }) : [h("div", { class: "placeholder" }, "还没有候选封面（package 阶段）")]));
+    };
+    // 排过序（cover_rank）：算法推荐 Top3 一组，其余按分数一组；没排过就照旧按景别平铺
+    const ranked = s.covers.some((x) => x.rank != null);
+    const groups = ranked
+      ? [["算法推荐 Top3", s.covers.filter((x) => x.rank <= 3)], ["其他（按分数）", s.covers.filter((x) => !(x.rank <= 3))]]
+      : [[null, s.covers]];
+    box.replaceChildren(...(s.covers.length ? groups.flatMap(([label, xs]) =>
+      xs.length ? [label ? h("div", { class: "cover-group" }, label) : null, ...xs.map(card)].filter(Boolean) : [])
+      : [h("div", { class: "placeholder" }, "还没有候选封面（package 阶段）")]));
   };
   draw();
   const sw = h("div", { class: "seg" }, ...[["169", "16:9"], ["43", "4:3"]].map(([k, l]) =>
@@ -345,7 +367,7 @@ function tagEditor(init) {
 
 async function videoPane(c, s, at) {
   if (!s.preview || !s.preview_span) {
-    const el = h("div", { class: "pane" }, h("div", { class: "placeholder" }, "还没有预览视频（preview 阶段）"));
+    const el = h("div", { class: "pane" }, h("div", { class: "placeholder" }, "还没有字幕预览版（preview 阶段）"));
     return { el, video: null, offset: 0, setAss: null, delay: () => 0 };
   }
   // 预览视频 = 整场 [clip0, clip1]（歌的前后各多留 10s）；整场时间 = clip0 + 播放时间
@@ -420,6 +442,8 @@ async function videoPane(c, s, at) {
     } }, label)));
   applyLead();
   const el = h("div", { class: "pane" },
+    // 字幕预览版：720p 预览视频 + 网页上叠字幕（只用来核字幕和边界，不是成品；成品 4K 在下面）
+    h("div", { class: "pane-title" }, "字幕预览版", h("span", { class: "pane-sub" }, "720p · 字幕叠加预览，用来核字幕和起止点")),
     stage,
     h("div", { class: "toolbar tight" },
       leadSwitch,
@@ -480,6 +504,7 @@ function expTable(s, x, ver, video, offset, delay = () => 0, onChanged = null) {
     return td;
   };
   const hasZh2 = data.some((r) => r.zh2);
+  const hasZh3 = data.some((r) => r.zh3);   // 诗意版
   const M = x.models || { asr: "qwen-audio-3.1-asr-flash" };
   const rows = data.map((r) => h("tr", {
     class: [r.removed ? "removed" : "", r.speech ? "speech" : "", `v-${r.verdict}`].join(" ").trim(),
@@ -494,7 +519,7 @@ function expTable(s, x, ver, video, offset, delay = () => 0, onChanged = null) {
     r.start_ms != null ? fmtMs(r.start_ms + Math.round((offset || 0) * 1000)) : "–"),
   langTd(r),
   ...(ver !== "v1" ? [styleTd(r)] : []),
-  h("td", { class: "g" }, r.genius || (r.verdict === "title" || r.speech ? "" : h("span", { class: "none" }, "（Genius 没有）"))),
+  h("td", { class: "g gcol" }, r.genius || (r.verdict === "title" || r.speech ? "" : h("span", { class: "none" }, "（Genius 没有）"))),
   h("td", { class: "heard" }, r.verdict === "title" ? h("span", { class: "none" }, r.strategy) : r.qwen || ""),
   h("td", { class: "o" }, r.text || h("span", { class: "none" }, "（没有字幕）"),
     r.credit ? h("div", { class: "credit" }, r.credit) : null,
@@ -503,14 +528,17 @@ function expTable(s, x, ver, video, offset, delay = () => 0, onChanged = null) {
       h("div", { class: "seg-lines" }, h("div", { class: "seg-label" }, label),
         ...(ls.length ? ls.map((l) => h("div", {}, h("span", { class: "seg-t" }, fmtMs(Math.round((l.start + (offset || 0)) * 1000))), l.text))
           : [h("div", { class: "none" }, "（没有）")]))) : [])),
+  ...(hasZh3 ? [h("td", { class: "zh zh3" }, r.zh3 || "")] : []),
+  hasZh2 ? zh2Cell(r) : h("td", { class: "zh" }, r.zh || ""),
   h("td", { class: `vd ${VERDICT[r.verdict] ? VERDICT[r.verdict][1] : ""}`, title: r.strategy },
-    (VERDICT[r.verdict] || [""])[0]),
-  hasZh2 ? zh2Cell(r) : h("td", { class: "zh" }, r.zh || "")));
+    (VERDICT[r.verdict] || [""])[0])));
   const wrap = h("div", { class: "table-wrap" }, h("table", { class: "lines-table exp-table" },
     h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", { class: "lang" }, "语言"), ...(ver !== "v1" ? [h("th", { class: "lang" }, "唱法")] : []),
-      h("th", {}, "Genius 原句"), h("th", {}, M.asr),
-      h("th", {}, "校准字幕"), h("th", {}, "判定"),
-      h("th", { title: hasZh2 ? `翻译：${x.zh2_model || ""}（视频里用的就是这一版）` : "" }, "中文"))),
+      h("th", { class: "gcol" }, "Genius 原句"), h("th", {}, M.asr),
+      h("th", {}, "校准字幕"),
+      ...(hasZh3 ? [h("th", { title: `诗意版：${x.zh3_model || ""}` }, "诗意版")] : []),
+      h("th", { title: hasZh2 ? `翻译：${x.zh2_model || ""}` : "" }, hasZh3 ? "直译版" : "中文"),
+      h("th", {}, "判定"))),
     h("tbody", {}, ...rows)));
   if (video) {
     let last = -1;
@@ -540,7 +568,17 @@ function expTable(s, x, ver, video, offset, delay = () => 0, onChanged = null) {
     data.filter((r) => r.style === "rap").length && `说唱 ${data.filter((r) => r.style === "rap").length}`,
     data.filter((r) => r.style === "crowd").length && `观众合唱? ${data.filter((r) => r.style === "crowd").length}`,
     n("miss") && `漏 ${n("miss")}`, n("unconfirmed") && `未确认 ${n("unconfirmed")}`].filter(Boolean);
-  return h("details", { class: "lines", open: true }, h("summary", {}, bits.join(" · ")), wrap);
+  let showG = false;
+  try { showG = localStorage.getItem("showGenius") === "1"; } catch (e) { /* 无痕模式 */ }
+  wrap.classList.toggle("hide-genius", !showG);
+  const gBtn = h("button", { class: "btn mini", title: "展开 / 收起 Genius 原句这一列", onclick: (e) => {
+    e.preventDefault(); e.stopPropagation();
+    showG = !showG;
+    try { localStorage.setItem("showGenius", showG ? "1" : "0"); } catch (err) { /* 无痕模式 */ }
+    wrap.classList.toggle("hide-genius", !showG);
+    gBtn.textContent = showG ? "收起 Genius 原句" : "展开 Genius 原句";
+  } }, showG ? "收起 Genius 原句" : "展开 Genius 原句");
+  return h("details", { class: "lines", open: true }, h("summary", {}, bits.join(" · "), " ", gBtn), wrap);
 }
 
 const fmtMs = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
@@ -647,9 +685,8 @@ function toggleFullscreen(el) {
   else if (el && el.requestFullscreen) el.requestFullscreen();
 }
 
-// 侧边栏：默认收起，状态记在本机
-// 侧边栏：默认收起；展开后 4 s 自动收起（鼠标停在侧边栏上时不收，移开后重新计 4 s）
-const SIDE_AUTO_CLOSE = 4000;
+// 侧边栏：刷新后默认打开；展开后 10 分钟自动收起（鼠标停在侧边栏上时不收，移开后重新计时）
+const SIDE_AUTO_CLOSE = 10 * 60 * 1000;
 let sideTimer = null;
 function armSideClose() {
   clearTimeout(sideTimer);
@@ -662,7 +699,7 @@ function setCollapsed(v) {
   if (v) clearTimeout(sideTimer);
   else armSideClose();
 }
-setCollapsed(true);
+setCollapsed(false);
 $("#sidebar").addEventListener("mouseleave", () => { if (!$("#app").classList.contains("collapsed")) armSideClose(); });
 $("#side-toggle").addEventListener("click", () => { setCollapsed(true); $("#sidebar").classList.remove("open"); });
 $("#menu").addEventListener("click", () => {

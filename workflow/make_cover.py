@@ -14,6 +14,7 @@ python workflow/make_cover.py --name sobaniirune --title "そばにいるね" \
 
 import argparse
 import json
+import math
 import re
 import subprocess
 from pathlib import Path
@@ -172,10 +173,11 @@ def inpaint_corners(img):
     return Image.fromarray(cv2.inpaint(arr, mask, int(h * 0.012), cv2.INPAINT_TELEA))
 
 
-def grab_hd(video, t, work):
+def grab_hd(video, t, work, box=None):
     """高清取帧：按原始分辨率截帧（含 crop-bottom）→ 不够 1080 行才 Real-ESRGAN x4 → Lanczos 缩到封面尺寸并居中裁切。
     1080p 素材裁掉底部字幕后只剩 ~930 行，直接拉伸会糊。本来就够 1080 行的只做一次轻量锐化：
-    x4 放大到 8K 再缩回 1080 每帧 ~26 s，效果只相当于去噪 + 锐化。"""
+    x4 放大到 8K 再缩回 1080 每帧 ~26 s，效果只相当于去噪 + 锐化。
+    box = 重新取景的裁切框（reframe_box，占片源的比例），在修补角标之后裁。"""
     pre = f"crop=iw:ih*{1 - CROP_BOTTOM:.3f}:0:0" if CROP_BOTTOM > 0 else "null"
     tmp = work / "_grab.png"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
@@ -190,6 +192,9 @@ def grab_hd(video, t, work):
             mask = max(mask, PROMO_MASK)
         else:
             img = inpaint_corners(img)
+    if box:
+        l, t_, bw, bh = box
+        img = img.crop((round(l * img.width), round(t_ * img.height), round((l + bw) * img.width), round((t_ + bh) * img.height)))
     sharpen = img.height >= H
     if not sharpen:
         img = upscale(img, work, force=True)
@@ -243,13 +248,15 @@ def frontal_faces(det, img, level=2):
     return out, len(faces), a
 
 
-def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
+def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None, band=None, src=None, meta=None):
     want = per if isinstance(per, dict) else {k: per for k, *_ in SHOTS}   # 每个景别各几张
     """1) 每 step 秒取一帧，YuNet 找正脸，SFace 提取人脸特征；
     2) 按特征聚类：出现得多、脸又大的那几个人是演唱者（观众一般只闪过一两次），可以有多个（组合/合唱）；
     3) 只保留演唱者的正脸、且画面里人脸不超过 max_faces 张（排除观众大全景）的帧，
        按脸高/画面高分成 特写 / 半身 / 全身，每类挑 per 张（打分 = 置信度 × 脸部清晰度 × 居中，时间间隔 >= gap）；
-    4) 正脸不够时依次用 接近正脸（3/4 侧脸）的演唱者帧、和演唱者相似的结构候选补位（老电视节目常常几乎没有纯正脸）。"""
+    4) 正脸不够时依次用 接近正脸（3/4 侧脸）的演唱者帧、和演唱者相似的结构候选补位（老电视节目常常几乎没有纯正脸）。
+    band = 排字后标题块的上下沿（占画面高，text_band）、src = 片源 (宽, 高)：打分时按（重新取景后）眼睛的位置
+    乘 band_factor，眼睛会被标题盖住的帧往后排。meta 给一个 dict 时，填入每个时间点主唱脸的 (眼睛x, 眼睛y, 脸高, 人脸数)。"""
     import cv2
     det = cv2.FaceDetectorYN.create(str(YUNET), "", (960, 540), 0.8, 0.3, 50)
     rec = cv2.FaceRecognizerSF.create(str(SFACE), "")
@@ -274,7 +281,8 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
             feat = rec.feature(rec.alignCrop(bgr, f)).flatten()
             feat = feat / (np.linalg.norm(feat) + 1e-9)
             faces_all.append((float(t), h / 540, float(f[14]), sharp, 1 - abs((x + w / 2) / 960 - 0.5), feat, n,
-                              (y + h / 2) / 540, frontality(f)))
+                              (y + h / 2) / 540, frontality(f),
+                              (float(f[4]) + float(f[6])) / 2 / 960, (float(f[5]) + float(f[7])) / 2 / 540))
     if not faces_all:
         return {k: [] for k, *_ in SHOTS}
 
@@ -300,7 +308,15 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
 
     # 候选 (档位, 分数, 时间)：档位 3 = 正脸，2 = 接近正脸，1 = 结构补位；先按档位再按分数挑
     cands = {k: [] for k, *_ in SHOTS}
-    for i, (t, ratio, conf, sharp, center, _, n, cy, fl) in enumerate(faces_all):
+
+    def place(i):
+        """眼睛位置分：重新取景后眼睛落在标题块上方 1.0，盖在字里 0.25，在字下面 0.5（没给 band 就不算）。"""
+        if not band:
+            return 1.0
+        t, ratio, *_, n, _, _, ex, ey = faces_all[i]
+        return band_factor(eye_after(reframe_box(src, ex, ey, ratio, n, band), ey), band)
+
+    for i, (t, ratio, conf, sharp, center, _, n, cy, fl, *_) in enumerate(faces_all):
         for k, _, lo, hi in SHOTS:
             if not want[k] or not lo <= ratio < hi:
                 continue
@@ -310,7 +326,7 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
                     continue
             elif i not in keep or n > max_faces:  # 特写/半身：必须是识别出的演唱者
                 continue
-            cands[k].append((fl + 1, conf * np.log1p(sharp) * center, t, sharp * ratio))
+            cands[k].append((fl + 1, conf * np.log1p(sharp) * center * place(i), t, sharp * ratio))
     # 某一类识别确认的帧不够 per 张：放宽补位（脸在上半部分、人脸不超过 3 张、和某位演唱者有一定相似度，挡掉观众）
     # 和演唱者每一张确认过的大正脸逐张比（比聚类中心稳：中心会被侧脸带偏；全身镜头的小脸特征不可靠，不当参照）
     refs = np.array([faces_all[i][5] for i in keep if faces_all[i][8] == 2 and faces_all[i][1] >= 0.09]).reshape(-1, 128)
@@ -318,10 +334,10 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
         if k == "full" or not want[k] or len({c[2] for c in cands[k]}) >= want[k]:
             continue
         have = {c[2] for c in cands[k]}
-        for i, (t, ratio, conf, sharp, center, feat, n, cy, fl) in enumerate(faces_all):
+        for i, (t, ratio, conf, sharp, center, feat, n, cy, fl, *_) in enumerate(faces_all):
             like = float((refs @ feat).max()) if len(refs) else 0.0
             if lo <= ratio < hi and t not in have and cy <= 0.6 and n <= 3 and like >= 0.35:
-                cands[k].append((1, conf * np.log1p(sharp) * center, t, sharp * ratio))
+                cands[k].append((1, conf * np.log1p(sharp) * center * place(i), t, sharp * ratio))
     # 去掉糊的（动态模糊 / 失焦）：见 BLUR_REL。清晰度和片源关系很大（4K 转播特写比 2009 年的 Lose Yourself 高好几倍），
     # 只能按本首、本景别相对比。先只用清楚的挑；不够再放宽到 BLUR_RELAX 补（真糊的仍然进不来）
     def choose(k, n):
@@ -363,10 +379,231 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None):
         tier = {t: max(c[0] for c in cands[k] if c[2] == t) for t in chosen}
         print(f"  {k}: 候选 {len(cands[k])} 帧，选 {len(chosen)} 张 "
               + str([f"{x:.0f}s{'' if tier[x] == 3 else '(近正脸)' if tier[x] == 2 else '(补位)'}" for x in picked[k]]))
+    if meta is not None:   # 每个选中时间点：最大那张脸（演唱者）的眼睛位置、脸高、人脸数
+        for k, ts in picked.items():
+            for t in ts:
+                fa = max((x for x in faces_all if x[0] == t), key=lambda x: x[1])
+                meta[t] = (fa[9], fa[10], fa[1], fa[6])
     total, need = sum(len(v) for v in picked.values()), sum(want.values())
     if total < need:
         print(f"  ⚠ 一共只找到 {total} 张可靠的演唱者画面（要 {need} 张，宁缺毋滥），需要的话用 --at 手动补")
     return picked
+
+
+# ---------------------------------------------------------------- 选帧精修（方案见 docs/design/cover_ranking.md）
+# pick_faces 每 1 秒看一帧、只认正脸和清晰度，不知道眼睛睁没睁、字会不会盖住脸。精修在它挑出的「候选池」上做：
+#   1) 补挑睁眼帧：每个时间点前后 ±REFINE_SPAN 秒按 10 帧/秒细看，取脸部最清楚的一帧（避开拖影、眨眼的过渡帧）；
+#   2) 无损重新取景：片源高于 1080p 时放大（最多 REFRAME_MAX 倍、裁完不少于 1080 行），把眼睛放到标题块上方；
+#   3) Qwen-VL 初筛：候选底图按编号发给模型，看睁眼 / 表情 / 挡脸 / 吸引力，和清晰度、字的位置合起来挑最终的几张。
+
+POOL = 1.6          # 候选池是最终张数的几倍
+REFINE_SPAN = 0.4   # 补挑睁眼帧：前后各看几秒
+REFRAME_MAX = 1.5   # 重新取景最多放大几倍（4K 片源也不放太大，留一点现场感）
+SCREEN_BATCH = 18   # Qwen-VL 初筛一次发几张
+MIN_KEEP = 6        # 一个景别至少留几张：闭眼 / 挡脸的帧只在剩下的够这么多时才丢
+
+
+def video_size(video):
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                          "-of", "json", str(video)], capture_output=True, text=True, check=True)
+    s = json.loads(out.stdout)["streams"][0]
+    return int(s["width"]), int(s["height"] * (1 - CROP_BOTTOM))
+
+
+def text_band(a):
+    """排字后标题 + 副标题块的上下沿（占画面高）：在纯黑画布上排一次字，找徽章以下的白色笔画。"""
+    c = np.asarray(compose(Image.new("RGB", (W, H)), a))
+    rows = np.where((c[int(H * 0.30):].min(axis=2) >= 250).any(axis=1))[0]
+    if not len(rows):
+        return None
+    return (int(H * 0.30) + rows[0]) / H, (int(H * 0.30) + rows[-1]) / H
+
+
+def band_factor(e, band):
+    """眼睛位置（占画面高）→ 分数：在标题块上方 1.0，被字盖住 0.25，在字下面（B 站底部遮挡区附近）0.5。"""
+    if not band:
+        return 1.0
+    top, bot = band
+    return 1.0 if e <= top - 0.02 else 0.25 if e < bot + 0.02 else 0.5
+
+
+def reframe_box(src, ex, ey, fh, n, band):
+    """无损重新取景的裁切框 (左, 上, 宽, 高)，都是占片源的比例；不需要 / 做不了返回 None。
+    只在单人画面、片源高于 1080p、而且眼睛会被字盖住或脸太小时才放大：放大倍数 ≤ REFRAME_MAX、≤ 片源高 / 1080
+    （裁完不用超分），脸高放大后不超过 60%；眼睛放到标题块上沿往上一点。"""
+    if not src or not band or n > 1:
+        return None
+    zmax = min(REFRAME_MAX, src[1] / H)
+    if zmax < 1.05 or (ey < band[0] - 0.02 and fh >= 0.15):
+        return None
+    z = min(zmax, max(1.0, 0.6 / max(fh, 1e-3)))
+    if z < 1.05:
+        return None
+    b = 1 / z
+    target = min(0.26, band[0] - 0.06)
+    return (float(np.clip(ex - b / 2, 0, 1 - b)), float(np.clip(ey - target * b, 0, 1 - b)), b, b)
+
+
+def eye_after(box, ey):
+    return ey if not box else (ey - box[1]) / box[3]
+
+
+def _crop_filter(box):
+    pre = f"crop=iw:ih*{1 - CROP_BOTTOM:.3f}:0:0," if CROP_BOTTOM > 0 else ""
+    if box:
+        pre += f"crop=iw*{box[2]:.4f}:ih*{box[3]:.4f}:iw*{box[0]:.4f}:ih*{box[1]:.4f},"
+    return pre
+
+
+def grab_box(video, t, box, size=(960, 540)):
+    """低清取一帧（按裁切框），给 Qwen-VL 初筛看。"""
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
+                          "-vf", f"{_crop_filter(box)}scale={size[0]}:{size[1]}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         capture_output=True, check=True).stdout
+    return Image.frombytes("RGB", size, raw)
+
+
+def refine_moment(video, t, det, span=REFINE_SPAN, fps=10, keep=5, band=None, src=None):
+    """t 前后 ±span 秒按 fps 细看主唱的脸（最大的那张），返回几个备选：清晰度（拉普拉斯方差 × 脸高）不低于最清楚那帧
+    0.6 倍的帧里，按时间均匀取 keep 个。每个 = {t, m: (眼睛x, 眼睛y, 脸高, 人脸数), sharp, face: 脸部小图}。
+    最清楚的一帧不一定睁眼（唱歌常闭眼），挑哪个交给 pick_open_eyes。一帧都没找到脸返回 []。
+    给了 band / src 时先只留眼睛位置最好（band_factor 最高）的帧：推镜头时差 0.1 秒眼睛就可能落进标题里。"""
+    import cv2
+    t0 = max(0.0, t - span)
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t0:.3f}", "-t", f"{2 * span + 0.05:.3f}", "-i", str(video),
+                          "-vf", f"{_crop_filter(None)}fps={fps},scale=960:540", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         capture_output=True, check=True).stdout
+    det.setInputSize((960, 540))
+    found = []
+    for i in range(len(raw) // (960 * 540 * 3)):
+        rgb = np.frombuffer(raw, np.uint8, 960 * 540 * 3, i * 960 * 540 * 3).reshape(540, 960, 3)
+        a = rgb[:, :, ::-1].copy()
+        _, faces = det.detect(a)
+        faces = [f for f in (faces if faces is not None else []) if f[14] >= 0.8 and frontality(f) >= 1]
+        if not faces:
+            continue
+        f = max(faces, key=lambda f: f[3])
+        x, y, w, h = (int(v) for v in f[:4])
+        roi = cv2.cvtColor(a, cv2.COLOR_BGR2GRAY)[max(0, y): min(540, y + h), max(0, x): min(960, x + w)]
+        if roi.size < 100:
+            continue
+        m = int(0.15 * h)   # 脸部小图：上下左右各多留 15%，看得到眉眼
+        face = Image.fromarray(rgb[max(0, y - m): min(540, y + h + m), max(0, x - m): min(960, x + w + m)]).resize((160, 160))
+        found.append({"t": round(t0 + i / fps, 2), "sharp": float(cv2.Laplacian(roi.astype(np.float32), cv2.CV_32F).var()) * h / 540,
+                      "m": ((float(f[4]) + float(f[6])) / 2 / 960, (float(f[5]) + float(f[7])) / 2 / 540, h / 540, len(faces)),
+                      "face": face})
+    if not found:
+        return []
+    for x in found:
+        ex, ey, fh, n = x["m"]
+        x["place"] = band_factor(eye_after(reframe_box(src, ex, ey, fh, n, band), ey), band)
+    best_place = max(x["place"] for x in found)
+    found = [x for x in found if x["place"] == best_place]
+    top = max(x["sharp"] for x in found)
+    ok = [x for x in found if x["sharp"] >= 0.6 * top]
+    idx = np.linspace(0, len(ok) - 1, min(keep, len(ok))).round().astype(int)
+    return [ok[i] for i in dict.fromkeys(idx)]
+
+
+EYES_SYSTEM = "你在挑封面截图。只按图里看得到的判断，输出 JSON。"
+EYES_PROMPT = """上面 {n} 张图，每张是同一个人在不到 1 秒内连续几帧的脸部特写，从左到右依次是第 1、2、3……格（图前面的文字是编号和格数）。
+每张图里选出眼睛睁得最开、表情最自然好看的一格；所有格都闭眼或看不清眼睛就选 0。输出 JSON：
+{{"items": [{{"id": "图前面的编号", "best": 格号（整数，0 表示都闭眼）}}]}}"""
+
+
+def pick_open_eyes(options):
+    """options = [[备选, ...], ...]（每个候选时间点一组 refine_moment 的结果）→ 每组选中的下标。
+    每组的脸部小图拼成一条，一次请求问 Qwen-VL 哪一格眼睛睁得最开；接口失败、或模型说都闭眼，就用最清楚的那帧。"""
+    import io
+    from llm import vision_json
+    best = [max(range(len(o)), key=lambda i: o[i]["sharp"]) for o in options]
+    multi = [j for j, o in enumerate(options) if len(o) > 1]
+    for s in range(0, len(multi), 24):
+        batch = multi[s: s + 24]
+        payload = []
+        for n, j in enumerate(batch, 1):
+            strip = Image.new("RGB", (160 * len(options[j]), 160))
+            for i, x in enumerate(options[j]):
+                strip.paste(x["face"], (160 * i, 0))
+            b = io.BytesIO()
+            strip.save(b, "JPEG", quality=88)
+            payload.append((f"图{n}（{len(options[j])} 格）", b.getvalue()))
+        try:
+            res = vision_json(EYES_SYSTEM, EYES_PROMPT.format(n=len(batch)), payload, label=f"挑睁眼帧 {s // 24 + 1}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  挑睁眼帧失败（{e}），用最清楚的那帧")
+            continue
+        for x in res.get("items") or []:
+            k, g = str(x.get("id", "")).replace("图", "").strip(), x.get("best")
+            if k.isdigit() and 1 <= int(k) <= len(batch) and isinstance(g, int) and 1 <= g <= len(options[batch[int(k) - 1]]):
+                best[batch[int(k) - 1]] = g - 1
+    return best
+
+
+SCREEN_SYSTEM = ("你是 YouTube 和 B 站音乐频道的封面编辑，从现场演出截图里挑做封面的底图。观众在手机信息流里只看到很小的缩略图："
+                 "要一眼认出歌手、脸清楚、眼睛睁开、表情有感染力。只按图里看得到的评判，不要编造。输出 JSON。")
+SCREEN_PROMPT = """上面 {n} 张是同一首歌现场演出的截图（还没排标题字），编号见每张图前面的文字。逐张判断，输出 JSON：
+{{"items": [{{"id": "图前面的编号", "eyes": "主唱的眼睛：open / half / closed / unseen",
+  "expression": 表情和演唱状态的感染力 1~10, "blocked": 主唱的脸是否被话筒、手、头发、别人挡住一半左右或更多（true / false）,
+  "appeal": 作为封面底图的吸引力 1~10（主唱清楚、有表情、光线好看、有现场氛围）}}]}}
+注意：唱歌时张嘴是正常的；闭眼、半闭眼、眼神涣散、表情扭曲、模糊、脸太暗都要扣分。"""
+EYES = {"open": 1.0, "half": 0.55, "closed": 0.25, "unseen": 0.45}
+
+
+def screen_frames(imgs):
+    """Qwen-VL 初筛：imgs = [(key, PIL 图)] → {key: {eyes, expression, blocked, appeal}}；接口失败的批次没有结果。"""
+    import io
+    from llm import vision_json
+    out = {}
+    for s in range(0, len(imgs), SCREEN_BATCH):
+        batch = imgs[s: s + SCREEN_BATCH]
+        payload = []
+        for i, (_, im) in enumerate(batch, 1):
+            b = io.BytesIO()
+            im.save(b, "JPEG", quality=85)
+            payload.append((f"图{i}", b.getvalue()))
+        try:
+            res = vision_json(SCREEN_SYSTEM, SCREEN_PROMPT.format(n=len(batch)), payload, label=f"封面初筛 {s // SCREEN_BATCH + 1}")
+        except Exception as e:  # noqa: BLE001 接口挂了就只按清晰度和位置挑
+            print(f"  封面初筛失败（{e}），这一批只按清晰度和字的位置挑")
+            continue
+        for x in res.get("items") or []:
+            k = str(x.get("id", "")).replace("图", "").strip()
+            if k.isdigit() and 1 <= int(k) <= len(batch):
+                out[batch[int(k) - 1][0]] = x
+    return out
+
+
+def select_final(pool, want, gap=2.5):
+    """pool = {景别: [{t, box, sharp, place, vlm}]} → {景别: [(t, box)]}。
+    分数 = (0.5 吸引力 + 0.2 表情 + 0.3 清晰度百分位) × 睁眼系数 × 挡脸系数 × 字的位置；同一景别里隔开 gap 秒。"""
+    out = {}
+    for k, xs in pool.items():
+        sharps = sorted(x["sharp"] for x in xs)
+        for x in xs:
+            pct = np.searchsorted(sharps, x["sharp"], side="right") / max(1, len(sharps))
+            v = x.get("vlm")
+            if v:
+                s = (0.5 * float(v.get("appeal") or 5) + 0.2 * float(v.get("expression") or 5)) / 10 + 0.3 * pct
+                s *= EYES.get(v.get("eyes"), 0.6) * (0.6 if v.get("blocked") in (True, "true") else 1.0)
+            else:
+                s = 0.4 + 0.6 * pct
+            x["final"] = s * x["place"]
+        # 宁缺毋滥：闭眼、脸被挡的不凑数（剩下的够 MIN_KEEP 张才丢）
+        bad = [x for x in xs if (x.get("vlm") or {}).get("eyes") == "closed" or (x.get("vlm") or {}).get("blocked") in (True, "true")]
+        if len(xs) - len(bad) >= min(MIN_KEEP, want.get(k, 0)):
+            xs = [x for x in xs if x not in bad]
+        chosen = []
+        for g in (gap, 0.0):
+            for x in sorted(xs, key=lambda x: -x["final"]):
+                if len(chosen) < want.get(k, 0) and x not in chosen and all(abs(x["t"] - c["t"]) >= g for c in chosen):
+                    chosen.append(x)
+        out[k] = sorted(chosen, key=lambda x: x["t"])
+        if xs:
+            print(f"  {k}: 精修后从 {len(xs)} 张里留 {len(chosen)} 张 "
+                  + str([f"{x['t']:.1f}s{'(放大)' if x['box'] else ''}{'' if not x.get('vlm') else ' ' + str(x['vlm'].get('eyes'))}"
+                         for x in out[k]]))
+    return out
 
 
 def score(img):
@@ -591,7 +828,29 @@ def paste_with_shadow(canvas, img, xy, blur=8, offset=(3, 5), alpha=150):
 def crop_ratio(img, ratio):
     """从 16:9 底图裁出指定宽高比（4:3 封面用）。裁切窗口放在细节最多的位置（人脸/主体通常最清晰），
     而不是固定居中，避免把偏在一侧的人物裁掉半张脸。"""
+    x, w = crop_window(img, ratio)
+    return img.crop((x, 0, x + w, img.height))
+
+
+_DET = None
+
+
+def crop_window(img, ratio):
+    """crop_ratio 的裁切窗口 (左边 x, 宽)；封面排序（workflow_v2/cover_rank.py）按它判断 4:3 有没有裁到脸。
+    画面里有清楚的脸就以最大的那张脸为中心；没有再按画面细节找。"""
+    import cv2
+    global _DET
     w = int(img.height * ratio)
+    if _DET is None:
+        _DET = cv2.FaceDetectorYN.create(str(YUNET), "", (960, 540), 0.8, 0.3, 50)
+    sw, sh = 960, round(960 * img.height / img.width)
+    _DET.setInputSize((sw, sh))
+    _, faces = _DET.detect(np.asarray(img.convert("RGB").resize((sw, sh)))[:, :, ::-1].copy())
+    faces = [f for f in (faces if faces is not None else []) if f[14] >= 0.8 and f[3] / sh >= 0.05]
+    if faces:
+        f = max(faces, key=lambda f: f[3])
+        cx = (float(f[0]) + float(f[2]) / 2) * img.width / sw
+        return int(min(max(cx - w / 2, 0), img.width - w)), w
     g = np.asarray(img.convert("L").resize((img.width // 4, img.height // 4)), dtype=np.float32)
     lap = np.abs(g[1:-1, 1:-1] * 4 - g[:-2, 1:-1] - g[2:, 1:-1] - g[1:-1, :-2] - g[1:-1, 2:])
     col = np.pad(lap[: lap.shape[0] * 2 // 3].sum(axis=0), (1, 1))  # 只看上 2/3，下方会被标题盖住
@@ -601,8 +860,7 @@ def crop_ratio(img, ratio):
     # 偏好居中：细节差不多时不乱跑
     bias = 1 - 0.15 * np.abs(np.arange(len(sums)) * 4 - center) / max(center, 1)
     x = int(np.argmax(sums * bias)) * 4
-    x = min(max(x, 0), img.width - w)
-    return img.crop((x, 0, x + w, img.height))
+    return min(max(x, 0), img.width - w), w
 
 
 def compose(frame, a):
@@ -673,7 +931,11 @@ def compose(frame, a):
             # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
             sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.68))
             tracking = max(0.0, (title_w - ink_width(a.subtitle, sf)) / max(1, len(a.subtitle) - 1))
-        return tf, sf, tracking, sub_y - int(sf.size * 1.12)
+        # 标题基线：默认在副标题上方 1.12 个字号；标题有下伸笔画（Liability 的 y、Girl 的 g）时，
+        # 按「副标题字顶 + 描边」和「标题下伸 + 描边」实际算，再留一点空，免得压到第二行
+        sub_top = -sf.getbbox(a.subtitle, anchor="ls")[1] + max(2, int(sf.size * 0.08))
+        title_desc = max(0, tf.getbbox(a.title, anchor="ls")[3]) + max(2, int(tf.size * 0.06))
+        return tf, sf, tracking, min(sub_y - int(sf.size * 1.12), sub_y - sub_top - title_desc - int(ch * 0.012))
 
     # 标题撑满宽度，必然横跨左上角的 logo + 4K 徽章：字顶不能高过徽章底边，太高就缩小字号（底边位置不变）
     top_limit = badge_bottom + int(ch * 0.03)
@@ -719,6 +981,9 @@ def main():
     p.add_argument("--per", type=int, default=4, help="faces 模式每个景别几张")
     p.add_argument("--closeup-min", type=float, default=0.22,
                    help="特写的脸高下限（占画面高），默认 0.22；演唱会转播大特写少，可降到 0.14（半身的上限跟着变）")
+    p.add_argument("--no-refine", dest="refine", action="store_false",
+                   help="faces 模式不做选帧精修（补挑睁眼帧、重新取景、Qwen-VL 初筛），只用 pick_faces 的结果")
+    p.add_argument("--no-screen", dest="screen", action="store_false", help="选帧精修不调 Qwen-VL 初筛（只按清晰度和字的位置挑）")
     p.add_argument("--per-shot", help="faces 模式按景别指定张数，如 closeup=6,half=3,full=3（覆盖 --per）")
     p.add_argument("--n", type=int, default=6, help="sharp 模式候选数量")
     p.add_argument("--at", type=float, action="append", help="指定取帧时间（秒），可多次")
@@ -802,16 +1067,43 @@ def main():
             if "=" in kv:
                 k, v = kv.split("=")
                 per[k.strip()] = int(v)
-        picked = pick_faces(video, per, t0=a.start, t1=a.end)
+        if a.refine:   # 选帧精修：多挑一池 → 补挑睁眼帧 → 重新取景 → Qwen-VL 初筛 → 留 per 张（见「选帧精修」）
+            import cv2
+            band, src, meta = text_band(a), video_size(video), {}
+            print(f"  标题块 {band[0]:.2f}~{band[1]:.2f}（占画面高），片源 {src[0]}x{src[1]}" if band else "  没有标题块")
+            picked = pick_faces(video, {k: math.ceil(v * POOL) if v else 0 for k, v in per.items()},
+                                t0=a.start, t1=a.end, band=band, src=src, meta=meta)
+            det = cv2.FaceDetectorYN.create(str(YUNET), "", (960, 540), 0.8, 0.3, 50)
+            pool, opts = {}, {}
+            for k, ts in picked.items():
+                opts[k] = [refine_moment(video, t, det, band=band, src=src) or [{"t": t, "m": meta[t], "sharp": 0.0}] for t in ts]
+            flat = [(k, i) for k in opts for i in range(len(opts[k]))]
+            sel = pick_open_eyes([opts[k][i] for k, i in flat]) if a.screen else \
+                [max(range(len(opts[k][i])), key=lambda j: opts[k][i][j]["sharp"]) for k, i in flat]
+            for (k, i), j in zip(flat, sel):
+                x = opts[k][i][j]
+                ex, ey, fh, n = x["m"]
+                box = reframe_box(src, ex, ey, fh, n, band)
+                pool.setdefault(k, []).append({"t": x["t"], "box": box, "sharp": x["sharp"],
+                                               "place": band_factor(eye_after(box, ey), band)})
+            if a.screen:
+                keys = [(k, i) for k, xs in pool.items() for i in range(len(xs))]
+                res = screen_frames([(f"{k}:{i}", grab_box(video, pool[k][i]["t"], pool[k][i]["box"])) for k, i in keys])
+                for k, i in keys:
+                    pool[k][i]["vlm"] = res.get(f"{k}:{i}")
+            final = select_final(pool, per)
+            (out / "pick.json").write_text(json.dumps({"band": band, "src": src, "pool": pool}, ensure_ascii=False, indent=1))
+        else:
+            final = {k: [{"t": t, "box": None} for t in ts] for k, ts in pick_faces(video, per, t0=a.start, t1=a.end).items()}
         for k, *_ in SHOTS:  # 清掉上一轮的同类产物，免得张数变少时残留旧图
             for f in [*out.glob(f"{k}_*.jpg"), *out.glob(f"frame_{k}_*.jpg")]:
                 f.unlink()
         sheets, sheets43 = [], []
         for k, label, *_ in SHOTS:
             row, row43 = [], []
-            for i, t in enumerate(picked[k], 1):
-                t2 = clean_time(video, t) if a.avoid_subs else t
-                img = grab_hd(video, t2, out) if a.sr else grab(video, t2)
+            for i, x in enumerate(final.get(k, []), 1):
+                t2 = clean_time(video, x["t"]) if a.avoid_subs else x["t"]
+                img = grab_hd(video, t2, out, x["box"]) if a.sr else grab(video, t2)
                 c, c43 = compose(img, a), compose(crop_ratio(img, 4 / 3), a)
                 c.save(out / f"{k}_{i:02d}.jpg", quality=95)
                 c43.save(out / f"{k}_{i:02d}_4x3.jpg", quality=95)

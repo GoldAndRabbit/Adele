@@ -62,8 +62,9 @@ SYSTEM_PROMPT = f"""你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。
 def build_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs):
     """投稿标题（固定格式，代码拼，不让模型写）：
     [4K60帧/Hi-Res] {艺人中文} 《{歌名原文}》{艺人英文} {歌名中文} {演出中文名} {演出英文名} 中x字幕
-    B 站上限 80 字，超了依次去掉：英文演出名里的年份 → 英文演出名 → 英文艺人名 → 中文演出名里的年份 → 中文演出名 → 歌名中文。
-    （中文歌手、中文歌名、中文演出名优先留着：观众看的是中文）"""
+    B 站上限 80 字，超了依次去掉：英文演出名里的年份 → 中文演出名里的年份（年份留在英文名里）→ 两边的年份
+    → 英文演出名 → 英文艺人名 → 中文演出名 → 歌名中文。
+    （中英文演出名都要尽量留着；中文歌手、中文歌名、中文演出名最后才动：观众看的是中文）"""
     import re
     no_year = lambda x: re.sub(r"\s*\(?\d{4}\)?$", "", x or "").strip()
     zh, en = (artist_zh or "").strip(), (artist_en or "").strip()
@@ -74,7 +75,8 @@ def build_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs):
         ez, ee = (re.sub(rf"^{re.escape(a)}\s*", "", x).strip() for x in (ez, ee))
     title = ""
     short = [zh or en, f"《{song}》"]   # 不带英文艺人名
-    for parts in (head + [sz, ez, ee], head + [sz, ez, no_year(ee)], head + [sz, ez], short + [sz, ez],
+    for parts in (head + [sz, ez, ee], head + [sz, ez, no_year(ee)], head + [sz, no_year(ez), ee],
+                  head + [sz, no_year(ez), no_year(ee)], head + [sz, ez], short + [sz, ez],
                   short + [sz, no_year(ez)], short + [sz], short):   # 艺人名 / 歌名太长（串烧、合作）：先去英文，最后才去中文
         title = " ".join([TITLE_PREFIX, *[x for x in dict.fromkeys(parts) if x], subs]).strip()
         if len(title) <= TITLE_MAX:

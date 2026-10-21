@@ -147,7 +147,7 @@ flowchart LR
 - 副标题「夏奇拉 Shakira · 中西字幕」（中文名来自 `concert.json` 的 `artist_zh`）用 `--sub-fit natural`：字号最大到标题的 0.72（至少画布高的 11.5%，但不超过标题的 0.85），宽度最多到标题宽的 88% / 画布宽的 85%，正常字距、居中，不拉宽到和标题等宽。文字样式改了用 `make_cover.py --recompose`（`package.recompose_covers`）在已有高清帧上重排，几秒一首
 - 特写的脸高下限从 0.22 降到 0.14（`--closeup-min`）：转播里大特写很少（GIRL LIKE ME 只有 6 帧候选），近景也算特写，才凑得够 6 张
 - 转播画面右下角有「amazon music REPLAY」台标、底部会弹二维码推广条：封面用 `--mask-bottom 0.17` 把底部模糊压暗（`concert.json` 的 `cover_mask_bottom`；0.12 盖不住推广条上沿）
-- **标题**：固定格式，不让模型写（`package.post_title`）：`[4K60帧/Hi-Res] {歌手中文} 《{歌名原文}》{歌手英文} {歌名中文} {演唱会中文名} {演唱会英文名} 中x字幕`，例：`[4K60帧/Hi-Res] 夏奇拉 《La fuerte》Shakira 马德里演唱会2026 Live from Madrid 2026 中西字幕`。演唱会名都去掉歌手名（`concert.json` 的 `title_zh` / `title`），英文名代替「Live 现场」；歌名中文取字幕片头那行的翻译（`zh_cache.json` 的 `__title__`，和原文一样就不写）。B 站标题上限 80 字，超长时依次去掉：英文名里的年份 → 中文名里的年份 → 歌名中文 → 英文名
+- **标题**：固定格式，不让模型写（`package.post_title`）：`[4K60帧/Hi-Res] {歌手中文} 《{歌名原文}》{歌手英文} {歌名中文} {演唱会中文名} {演唱会英文名} 中x字幕`，例：`[4K60帧/Hi-Res] 夏奇拉 《La fuerte》Shakira 马德里演唱会2026 Live from Madrid 2026 中西字幕`。演唱会中文名、英文名都必须有（`concert.json` 的 `title_zh` / `title_en`，没有 `title_en` 才用 `title`；正式英文名太长就在 `title_en` 写简称，如 Lorde 的 `ACL Festival 2026`），都去掉歌手名，英文名代替「Live 现场」；歌名中文取字幕片头那行的翻译（`zh_cache.json` 的 `__title__`，和原文一样就不写）。B 站标题上限 80 字，超长时依次去掉：英文名里的年份 → 中文名里的年份（年份留在英文名里）→ 两边的年份 → 英文名 → 中文名。封面第二行带演唱会简称（`concert.json` 的 `title_short`，没有就用 `title_zh`）：`洛德 Lorde · ACL音乐节2026 · 中英字幕`
 - **简介**：复用 `make_meta.py` 的提示词，事实材料换成：场次、巡演名、本场第几首、歌单备注、转播信息，以及 Genius 的发行日期和合作艺人；歌曲介绍、演出介绍各 300~400 字（太短重写一次），合成一段、空行分开（`post_draft.json` 的 `intro_text`）。审核页里是一个文本框，保存为 `review.json` 的 `intro`
 - **标签**：审核页按一个个 tag 显示，× 删除、回车或逗号添加
 

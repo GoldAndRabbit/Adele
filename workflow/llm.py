@@ -71,7 +71,8 @@ def chat_json(system, user, temperature=0.3, label="LLM", effort=None):
 
 
 def vision_json(system, text, images, label="看图", model=None):
-    """看图（阿里百炼 Qwen-VL，OpenAI 兼容接口）：images 是 JPEG bytes 列表，要求模型返回 JSON 对象。"""
+    """看图（阿里百炼 Qwen-VL，OpenAI 兼容接口）：images 是 JPEG bytes 列表，要求模型返回 JSON 对象。
+    元素也可以是 (标签, bytes)：标签作为文字放在那张图前面（多图打分时让模型按编号对上）。"""
     import base64
     import time
     from openai import OpenAI
@@ -83,8 +84,13 @@ def vision_json(system, text, images, label="看图", model=None):
     client = OpenAI(base_url=base_url, api_key=os.environ[key_var])
     model = model or os.environ.get("VISION_MODEL", "qwen3-vl-plus")
     print(f"{label}: aliyun / {model}（{len(images)} 张图）")
-    content = [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(b).decode()}}
-               for b in images] + [{"type": "text", "text": text}]
+    content = []
+    for b in images:
+        if isinstance(b, tuple):
+            content.append({"type": "text", "text": b[0]})
+            b = b[1]
+        content.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(b).decode()}})
+    content.append({"type": "text", "text": text})
     last = None
     for attempt in range(3):
         try:
@@ -94,6 +100,8 @@ def vision_json(system, text, images, label="看图", model=None):
                 return json.loads(resp.choices[0].message.content)
             last = "空响应"
         except Exception as e:  # noqa: BLE001
+            if "DataInspectionFailed" in str(e):   # 内容审核拦图：重发同样的图结果一样，直接交给调用方处理
+                raise RuntimeError(f"{label}: DataInspectionFailed（内容审核拦下了图片）") from e
             last = str(e)[:120]
         print(f"  {label} 第 {attempt + 1} 次失败（{last}），重试")
         time.sleep(3 * (attempt + 1))

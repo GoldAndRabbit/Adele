@@ -574,6 +574,17 @@ def run_exp(slug, name):
     print(f"{it['title']}: {len(table) - len(gaps)} 行（一致 {ok}，标黄 {warn}，标红 {bad}），漏掉的段落 {len(gaps)} 处 -> {out}")
 
 
+def single_event(post):
+    """v1 单曲封面第二行的演出名：投稿 JSON 的 performance.event_short（简称），没有就用 event_zh，去掉开头的艺人名（HKT48 7周年公演2018 -> 7周年公演2018）。"""
+    import re
+    perf = post.get("performance") or {}
+    song, ev = post.get("song") or {}, (perf.get("event_short") or perf.get("event_zh") or "").strip()
+    for a in (song.get("artist_zh"), song.get("artist")):
+        if a:
+            ev = re.sub(rf"^{re.escape(a)}\s*", "", ev).strip()
+    return ev
+
+
 def run_post(name, lang, covers=True):
     """v1 单曲（posts/<name>/）跑新流程：字幕 -> exp/lyrics.srt / lyrics.ass，新样式封面 -> exp/covers/，
     原来的字幕和封面（lyrics.ass、post/cover/）不动。"""
@@ -600,7 +611,7 @@ def run_post(name, lang, covers=True):
     import make_meta
     zh = song.get("artist_zh") or ""
     who = f"{zh} {artist}" if zh and zh != artist else artist
-    sub = f"{who} · {make_meta.subs_tag(post.get('subtitles') or [])}".strip(" ·")
+    sub = " · ".join(x for x in (who, single_event(post), make_meta.subs_tag(post.get("subtitles") or [])) if x)
     from .package import PER_SHOT, TEXT_LIFT, CLOSEUP_MIN
     log = out / "covers.log"
     with log.open("w") as fh:

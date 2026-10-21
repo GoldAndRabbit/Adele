@@ -43,7 +43,16 @@ def cover_candidates(d):
             out.append({"id": cid, "file": f"covers/{f.name}", "file_4x3": f"covers/{f43.name}" if f43.exists() else None,
                         "t": times.get(cid)})
     order = {"closeup": 0, "half": 1, "full": 2, "cover": 3}   # 特写、半身、全身，按清晰度补的放最后
-    return sorted(out, key=lambda x: (order.get(x["id"].split("_")[0], 9), x["id"]))
+    out.sort(key=lambda x: (order.get(x["id"].split("_")[0], 9), x["id"]))
+    # 排过序（cover_rank.py 的 rank.json）就按名次排：前三是算法推荐，审核页单独一组
+    ranked = {x["id"]: x for x in (read_json(cdir / "rank.json", {}) or {}).get("items", [])}
+    if ranked:
+        for x in out:
+            r = ranked.get(x["id"])
+            if r:
+                x.update(rank=r["rank"], score=r["score"], why=r.get("why"), eyes=r.get("eyes"))
+        out.sort(key=lambda x: x.get("rank") or 999)
+    return out
 
 
 def subtitle_line(c, it):
@@ -52,7 +61,17 @@ def subtitle_line(c, it):
     langs = song.get("langs") or [song.get("lang", "en")]
     zh = info.get("artist_zh") or (read_json(c.song_dir(it) / "post_draft.json", {}).get("song") or {}).get("artist_zh")
     who = f"{zh} {info.get('artist', '')}" if zh and zh != info.get("artist") else info.get("artist", "")
-    return f"{who} · 中{''.join(LANG_ZH.get(x, '外')[0] for x in langs)}字幕"
+    # 第二行带演唱会简称（title_short，没有就用中文名）：洛德 Lorde · ACL音乐节2026 · 中英字幕
+    event = info.get("title_short") or concert_names(info)[0]
+    return " · ".join(x for x in (who, event, f"中{''.join(LANG_ZH.get(x, '外')[0] for x in langs)}字幕") if x)
+
+
+def concert_names(info):
+    """演唱会中文名 / 英文名，都去掉歌手名。英文名优先用 title_en（正式名太长时的简称，如 ACL Festival 2026）。"""
+    zh, en = info.get("artist_zh") or info["artist"], info["artist"]
+    c_zh = (info.get("title_zh") or "").replace(zh, "", 1).strip()
+    c_en = re.sub(rf"^{re.escape(en)}\s+", "", info.get("title_en") or info.get("title") or "").strip()
+    return c_zh, c_en
 
 
 def make_covers(c, it, seg, a):
@@ -96,8 +115,7 @@ def post_title(c, it):
     song = read_json(c.song_dir(it) / "song.json", {})
     langs = song.get("langs") or [song.get("lang", "en")]
     zh, en = info.get("artist_zh") or info["artist"], info["artist"]
-    c_zh = (info.get("title_zh") or "").replace(zh, "", 1).strip()
-    c_en = re.sub(rf"^{re.escape(en)}\s+", "", info.get("title") or "").strip()
+    c_zh, c_en = concert_names(info)
     return make_meta.build_title(zh, en, it["title"], song_title_zh(c, it), c_zh, c_en,
                                  make_meta.subs_tag([LANG_ZH.get(x, "外语") for x in langs]))
 
@@ -169,6 +187,11 @@ def package_one(c, it, seg, a):
     try:
         draft_meta(c, it, seg, a)
         make_covers(c, it, seg, a)
+        try:   # 候选排序：算法推荐 Top3（cover_rank.py，Qwen-VL 一首一次调用）；失败不影响封面本身
+            from .cover_rank import rank
+            rank(c.song_dir(it).resolve(), force=a.force)
+        except Exception as e:  # noqa: BLE001
+            print(f"{it['idx']:>2} {it['title']}: 封面排序失败（{e}）", flush=True)
         n = len(cover_candidates(c.song_dir(it)))
         print(f"{it['idx']:>2} {it['title']}: 封面候选 {n} 张，介绍草稿 ✓", flush=True)
         return True

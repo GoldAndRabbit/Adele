@@ -330,10 +330,10 @@ def run(d, lyrics, out_dir, meta=None):
             lyr_in = [r for r in blk if r.get("occ")]
             mostly_weak = bool(lyr_in) and sum(1 for r in lyr_in if not r["occ"]["anchor"]) > len(lyr_in) / 2
             for r in blk:
-                # 开关 talk_block_heard（歌曲目录 align_options.json，默认关）：对话段里只是勉强对上的歌词行
+                # 开关 talk_block_heard（默认开；歌曲目录 align_options.json 可以关）：对话段里只是勉强对上的歌词行
                 # （不是锚点）显示识别到的原话，不显示没唱的歌词（Antología 开头介绍 Dua Lipa 被对成了歌词）
                 o = r.get("occ")
-                if opts.get("talk_block_heard") and mostly_weak and r["kind"] == "lyric" and o and not o["anchor"] and r.get("heard"):
+                if opts.get("talk_block_heard", True) and mostly_weak and r["kind"] == "lyric" and o and not o["anchor"] and r.get("heard"):
                     h = r["heard"]
                     r.update({"text": h[:1].upper() + h[1:], "genius": "", "talk_heard": True})
                 r["kind"] = "talk"
@@ -343,7 +343,7 @@ def run(d, lyrics, out_dir, meta=None):
             lyr_in = [r for r in blk if r.get("occ")]
             weak = sum(1 for r in lyr_in if not r["occ"]["anchor"])
             mostly_weak = bool(lyr_in) and weak > len(lyr_in) / 2
-            if opts.get("talk_block_heard") and mostly_weak:
+            if opts.get("talk_block_heard", True) and mostly_weak:
                 # 整段对话重新切：取一遍识别在这一段里的完整原话，按停顿（≥ 0.6 s）/ 8 个词重新分行，
                 # 代替按「对错的歌词行」切出来的碎片（「Por」「Lo que」）
                 s0, e0 = blk[0]["s"], blk[-1]["e"]

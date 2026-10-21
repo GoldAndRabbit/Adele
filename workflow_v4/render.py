@@ -19,7 +19,6 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 from workflow_v2.paths import ROOT, VENV_PY, Concert, read_json
 
@@ -202,7 +201,13 @@ def render(d, work, out, frames=None, t_in=0.0, enc=None):
 
 
 def check_disk(d, seconds):
-    need = seconds * (30 + FPS) * JPG_FRAME * 1.3 + seconds * 7e6 + 3e9
+    """帧序列 + 4K 成品要的空间（偏保守）。原片已经是 60 帧的不插帧，只有一份帧；要插帧的是原生帧 + 60 帧两份。"""
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate",
+                        "-of", "csv=p=0", str(d / "source.mp4")], capture_output=True, text=True).stdout.strip() or "30/1"
+    num, den = (r.split("/") + ["1"])[:2]
+    fps = float(num) / float(den or 1)
+    per_sec = fps if fps >= FPS - 0.5 else fps + FPS
+    need = seconds * per_sec * JPG_FRAME * 1.3 + seconds * 7e6 + 3e9
     free = shutil.disk_usage(d).free
     if free < need:
         sys.exit(f"磁盘不够：{d.name} 至少要 {need / 1e9:.0f}GB，剩余 {free / 1e9:.0f}GB。清理后重跑，已完成的会跳过")
@@ -219,9 +224,9 @@ def one(spec, hold_changed=False):
     if hold_changed and changed and (d / "exp_v3" / "lines.json").exists():   # 没有 v3（新歌）就没得比，不拦
         raise Skip(f"v4 和 v3 有 {changed} 行不一样，先不渲染，等人看 reports/v4_vs_v3.txt")
     ensure_watermark(spec, d)
-    check_disk(d, (span[1] - span[0]) if span else float(read_json(d / "meta.json", {}).get("duration") or 400))
     if span and not (d / "source.mp4").exists():   # 整场演唱会的歌：从整场视频切
         (d / "source.mp4").symlink_to(Concert(spec.split(":")[1]).source)
+    check_disk(d, (span[1] - span[0]) if span else float(read_json(d / "meta.json", {}).get("duration") or 400))
     env = dict(os.environ, **({"ADELE_POSTS": str(posts)} if posts else {}))
     cmd = [VENV_PY, ROOT / "workflow" / "make_mv.py", "--name", d.name, "--from", "interp", "--to", "interp"]
     if span:

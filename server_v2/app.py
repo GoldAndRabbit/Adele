@@ -142,7 +142,8 @@ def exp_data(d, sub, ass_url):
             m = next((u for u in tr["units"] if abs(u["start"] - (r["start_ms"] or 0)) < 60 and u["orig"] == rt), None)
             if m:
                 r.update({"zh": m.get("v1", r.get("zh", "")), "zh2": m.get("v2_final", m.get("v2", "")), "zh_issues": m.get("issues", []),
-                          "zh_locked": m.get("locked", False), "unit": m["i"], "note": notes.get(m["i"], "")})
+                          "zh_locked": m.get("locked", False), "unit": m["i"], "note": notes.get(m["i"], ""),
+                          "zh3": m.get("v3_final", "")})
                 if m.get("dropped"):   # 幻听：不出字幕，表格里也不显示翻译
                     r.update({"removed": True, "verdict": "unconfirmed", "strategy": m["dropped"], "zh": "", "zh2": "", "note": ""})
     elif z2.get("items"):
@@ -151,8 +152,10 @@ def exp_data(d, sub, ass_url):
             if m:
                 r["zh2"] = m["zh2"]
     zh2_ass = ass_url.replace("lyrics.ass", "lyrics_zh2.ass") if (x / "lyrics_zh2.ass").exists() else None
+    zh3_ass = ass_url.replace("lyrics.ass", "lyrics_zh3.ass") if (x / "lyrics_zh3.ass").exists() else None   # 诗意版
     brief = tr.get("brief") or {}
-    return {"rows": xrows, "ass": ass_url if (x / "lyrics.ass").exists() else None, "ass_zh2": zh2_ass,
+    return {"rows": xrows, "ass": ass_url if (x / "lyrics.ass").exists() else None, "ass_zh2": zh2_ass, "ass_zh3": zh3_ass,
+            "zh3_model": tr.get("poetic_model"),
             "zh2_model": model, "profile": prof or None, "editable_zh": bool(tr.get("units")),
             "brief": {k: brief.get(k) for k in ("theme", "voice", "tone", "core_lines", "notes")} if brief else None,
             "models": {"asr": align3.MODEL, "verify": qwen_asr.MODEL}}
@@ -424,7 +427,7 @@ def media(slug: str, path: str):
     allowed = f.suffix in MEDIA_OK and (
         path == "source.mp4"
         or (len(parts) == 3 and parts[0] == "songs" and parts[2] in ("lyrics.ass", "preview.mp4"))
-        or (len(parts) == 4 and parts[0] == "songs" and parts[2] in ("exp_v3", "exp_v4") and parts[3] in ("lyrics.ass", "lyrics_zh2.ass"))
+        or (len(parts) == 4 and parts[0] == "songs" and parts[2] in ("exp_v3", "exp_v4") and parts[3] in ("lyrics.ass", "lyrics_zh2.ass", "lyrics_zh3.ass"))
         or (len(parts) >= 4 and parts[0] == "songs" and parts[2] in ("covers", "post")))
     if not allowed or ".." in parts or not f.resolve().is_file():
         raise HTTPException(404)
