@@ -836,7 +836,7 @@ _DET = None
 
 
 def crop_window(img, ratio):
-    """crop_ratio 的裁切窗口 (左边 x, 宽)；封面排序（workflow_v2/cover_rank.py）按它判断 4:3 有没有裁到脸。
+    """crop_ratio 的裁切窗口 (左边 x, 宽)；封面排序（workflow/live/cover_rank.py）按它判断 4:3 有没有裁到脸。
     画面里有清楚的脸就以最大的那张脸为中心；没有再按画面细节找。"""
     import cv2
     global _DET
@@ -1098,7 +1098,7 @@ def main():
         for k, *_ in SHOTS:  # 清掉上一轮的同类产物，免得张数变少时残留旧图
             for f in [*out.glob(f"{k}_*.jpg"), *out.glob(f"frame_{k}_*.jpg")]:
                 f.unlink()
-        sheets, sheets43 = [], []
+        _sheets, _sheets43 = [], []
         for k, label, *_ in SHOTS:
             row, row43 = [], []
             for i, x in enumerate(final.get(k, []), 1):

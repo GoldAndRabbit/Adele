@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / "workflow"
-POSTS = Path(os.environ.get("ADELE_POSTS") or ROOT / "posts")  # v2 把每首歌的目录放在 concerts/<场次>/songs/ 下
+POSTS = Path(os.environ.get("ADELE_POSTS") or ROOT / "posts")  # 演唱会流程调 make_mv 时指到 concerts/<场次>/songs/（指向 posts/<场次>/ 的软链接）
 MODELS = ROOT / "models"
 ASSETS = ROOT / "assets"
 BIN = ROOT / "bin"

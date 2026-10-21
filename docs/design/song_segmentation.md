@@ -41,7 +41,7 @@
 
 - Shakira 马德里场的 25 首边界都人工审过：拿新算法算一遍，逐个和人工边界比，差 > 3 s 的列出来看是谁对。
 - Lorde 这场：你指出的两处（Broken Glass、Current Affairs）+ 19 个边界逐个列出「音乐停 / 掌声 / 讲话 / 前奏」的时间给你看。
-- 两场都对得上之后，才改代码（workflow_v2/segment.py 的精修部分），再重切 Lorde、重跑 v4、重新渲染。
+- 两场都对得上之后，才改代码（workflow/live/segment.py 的精修部分），再重切 Lorde、重跑 v4、重新渲染。
 
 ## 待定（需要你定）
 

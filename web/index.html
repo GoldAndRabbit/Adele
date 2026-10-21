@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>演唱会审核</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="logo">A</span>
+        <div>
+          <div class="brand-name" id="brand-name">演唱会审核</div>
+          <div class="brand-sub" id="brand-sub">整场拆单曲 · 双语字幕</div>
+        </div>
+        <button class="side-toggle" id="side-toggle" title="收起侧边栏" aria-label="收起侧边栏">«</button>
+      </div>
+      <nav class="nav" id="concerts"></nav>
+      <div class="side-title">歌单</div>
+      <ul class="jobs" id="songs"></ul>
+      <div class="side-foot">审核通过后再跑 <code>python -m workflow.live hd &lt;场次&gt;</code></div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <button class="menu" id="menu" title="展开侧边栏" aria-label="展开侧边栏">☰</button>
+      </header>
+      <section id="view"></section>
+    </main>
+  </div>
+  <script src="subs.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

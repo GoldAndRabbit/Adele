@@ -11,7 +11,7 @@
 - 排字以后标题会不会正好压在脸上（脸在画面 40%~75% 高度的帧，标题一定盖住嘴或眼睛）；
 - 表情、构图好不好看。
 
-## 排序（`workflow_v2/cover_rank.py`）
+## 排序（`workflow/live/cover_rank.py`）
 
 候选出来以后再打一次分，结果写 `covers/rank.json`，审核页分两组：「算法推荐 Top3」和「其他（按分数）」。
 
@@ -38,7 +38,7 @@
 
 缓存：候选和成品封面的文件名 + 修改时间没变就直接用 `rank.json`；重新排字（`--recompose`）以后会重新打分。
 
-接入：`package` 阶段做完封面自动排；单独跑 `python -m workflow_v2.cover_rank <slug> [歌名 ...] [--force] [--no-vlm]`。
+接入：`package` 阶段做完封面自动排；单独跑 `python -m workflow.live.cover_rank <slug> [歌名 ...] [--force] [--no-vlm]`。
 
 ## 选帧精修（`make_cover.py` faces 模式，默认开）
 

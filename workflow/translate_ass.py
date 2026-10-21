@@ -176,7 +176,6 @@ def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None, speech_start=
     for e, z in zip(subs.events, zh):
         text = no_period(e.plaintext.replace("\n", " ").strip())
         z = no_period(z) if z else z
-        orig = text
         if z and z != text:
             text += r" \N♪ " + z + " ♪"
         # 整行歌词不拆，长行由渲染器自动换行；字号统一，不按长度缩小（一行大一行小观感差）

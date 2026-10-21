@@ -1,31 +1,89 @@
-# Adele：歌曲视频 → 4K60 双语字幕成品
+# Adele：歌曲 / 演唱会视频 → 4K60 双语字幕成品
 
-给一个 YouTube 歌曲链接，产出 B 站投稿用的整套素材：
+给一首歌的视频，或者一整场演唱会，产出 B 站投稿用的整套素材：4K60 成品视频（双语字幕 + logo / 水印 + FLAC Hi-Res）、
+16:9 / 4:3 封面、投稿标题 / 简介 / 标签。演唱会先在审核网页上逐首人工审核，通过的才出 4K。
 
-- `posts/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4`：3840×2160、60 帧（RIFE 插帧）、左上角水印、原文 + 中文双语字幕、FLAC 48kHz/24bit 音轨（B 站 Hi-Res 无损标）
-- `posts/<name>/post/cover/cover_01.jpg`（16:9）、`cover_01_4x3.jpg`（4:3）
-- `posts/<name>/post/<name>.json`：投稿标题、歌曲介绍、演出介绍、标签
-
-详细规则和注意事项见 [skills/song-mv/SKILL.md](skills/song-mv/SKILL.md)。
-
-## 目录
+## 项目结构
 
 ```
-workflow/   所有脚本（入口 make_mv.py / make_cover.py / make_meta.py / get_ytb_lyrics_from_link.py；路径约定 paths.py）
-skills/     Claude Code skill（.claude/skills/song-mv 是它的软链接）
-assets/     水印 adele-logo.png、4K60 徽章
-bin/        rife-ncnn-vulkan、realesrgan-ncnn-vulkan
-models/     所有模型：rife-v4.6（插帧）、realesrgan/（封面高清化）、melband_roformer/（人声分离：权重 + mss 模型代码）、yunet/（封面选帧：人脸检测 + 识别）
-tests/
-workflow_v2/  v2：整场演唱会流程（见下文「v2：整场演唱会」）    server_v2/ web_v2/  v2 审核网页
-docs/design/  方案文档
-posts/<name>/   一首歌一个目录（不入 git）
-    lyrics.txt / official.srt   参考歌词（Genius / 官方带时间字幕）
-    lyrics.srt → lyrics.ass     对齐后的原文字幕 → 双语字幕
-    source.mp4 video_1080.mp4 audio.flac vocals.wav reports/ frames_*/ zh_cache.json …   中间文件
-    logs/                       每次运行的日志（make_mv 自动写入）
-    cover_art.png               （可选）做封面用的外部图片，如专辑图
-    post/                       成品：<name> 4K60FPS Sub-WaterMark.mp4、<name>.json、cover/
+adele/
+├── workflow/                 所有代码
+│   ├── make_mv.py              单曲：下载 → 截取 / 降采样 → 歌词 → 人声分离 → 插帧（--from/--to 分阶段）
+│   ├── make_cover.py           候选封面（正脸特写 / 半身 / 全身，16:9 + 4:3）
+│   ├── make_meta.py            投稿标题（≤80 字）/ 简介（≤2000 字）/ 标签
+│   ├── get_ytb_lyrics_from_link.py   YouTube 链接 → Genius 歌词
+│   ├── translate_ass.py        双语 ASS 样式、歌名翻译
+│   ├── qwen_asr.py  refine_timing.py  acoustic.py  textnorm.py   识别 / MMS 强制对齐 / 读音
+│   ├── separate_roformer.py    Mel-Band RoFormer 人声分离（.venv-sep）
+│   ├── llm.py  paths.py
+│   │
+│   ├── live/                   整场演唱会流程（python -m workflow.live）
+│   │   ├── __main__.py           new / run / serve / hd / status
+│   │   ├── ingest  setlist  lyrics  separate  segment  refine  preview  package   各阶段
+│   │   ├── music_edges.py        按伴奏起停切单曲边界
+│   │   ├── cover_rank.py         候选封面排序（Qwen-VL）
+│   │   ├── review.py  hd.py      审核状态 / 只对通过的歌出成品
+│   │   ├── singles.py            把单曲挂到审核页（虚拟场次 singles）
+│   │   └── text_match  asr_match  line_match  concert_align  gap_fill   对齐用的工具函数
+│   │
+│   └── song/                   每首歌的字幕和成品（演唱会和单曲共用）
+│       ├── listen.py  align.py  run.py   多遍识别 → 整首对齐 → 锚点校准 → 讲话 / 时间（入口 run.py）
+│       ├── song_crowd_workflow.py        观众合唱检测
+│       ├── song_translation_workflow.py  初译 → 直译版 → 审校 → 诗意版 → 歌名
+│       ├── song_note_workflow.py         顶部注释
+│       ├── watermark.py  render.py       水印计划 / 4K60 成品
+│       └── reslice.py                    改边界后字幕按整场时间重新分配
+│
+├── server/app.py             审核页后端（FastAPI，:8160）
+├── web/                      审核页前端（纯 JS：app.js  subs.js  style.css）
+├── tests/                    回归检查（审核时指出过的问题）
+├── docs/design/              方案文档
+├── skills/song-mv/           Claude Code skill（单曲流程说明）
+├── assets/  bin/  models/    logo / 字体，rife / realesrgan，各模型权重
+│
+│  ── 以下是数据，不入 git ──
+├── concerts/<场次>/     整场文件：source.mp4 audio.flac vocals.wav setlist.json segments.json review.json
+│   └── songs/<歌名> ──→ 软链接到 posts/<场次>/<歌名>
+└── posts/
+    ├── <场次>/<歌名>/   演唱会里的一首（如 posts/lorde_acl2026/01_royals/）
+    └── <歌名>/          单曲（和场次目录同一级）
+        ├── audio.flac  vocals.wav  lyrics.txt  preview.mp4  watermark.json  post_draft.json
+        ├── subs/          字幕结果：lines.json  lyrics.ass  lyrics_literal.ass（直译版）
+        │                  lyrics_poetic.ass（诗意版，成品用）  translation/result.json
+        ├── covers/        候选封面
+        ├── reports/  logs/
+        └── post/          成品：<歌名> 4K60FPS Sub-WaterMark.mp4、封面、投稿 json
+```
+
+## 数据流
+
+```
+ 单曲 YouTube 链接                                   整场演唱会视频
+       │                                                   │
+ workflow/make_mv.py --to separate              python -m workflow.live run <场次>
+ （下载 / 歌词 / 人声）                          ingest → setlist → lyrics → separate → segment
+       │                                         （music_edges：按伴奏切边界）
+ workflow/make_meta.py（投稿信息）                         │
+       │                                         refine：每首切音频 + 720p 预览
+       ▼                                                   │
+       └──────────────────────┬────────────────────────────┘
+                              ▼
+               workflow/song/run.py：多遍识别 → 对齐 → 观众合唱 → 讲话
+               workflow/song/song_translation_workflow.py：直译版 + 诗意版 + 注释
+                              │  → posts/…/subs/
+                              ▼
+               workflow/live/package.py（演唱会）：候选封面 + 标题 / 简介 / 标签
+                              │
+                              ▼
+               审核页 python -m workflow.live serve（http://127.0.0.1:8160）
+               只看不改：修改走对话，改定稿表 zh_fixed.json 等
+                              │  通过
+                              ▼
+               workflow/song/render.py：插帧 60fps（原片 60 帧则跳过）→ 4K + 诗意版字幕
+                               + logo / 水印 + FLAC 48k/24bit
+                              │
+                              ▼
+               posts/…/post/<歌名> 4K60FPS Sub-WaterMark.mp4
 ```
 
 ## 安装
@@ -54,52 +112,45 @@ cp .env.example .env   # 填 DEEPSEEK_API_KEY（翻译/元数据）、ALIYUN_BAI
 
 ## 用法
 
-```bash
-# 一条命令跑完视频（Genius 歌词作参考）
-.venv/bin/python workflow/make_mv.py --name X --url "https://www.youtube.com/watch?v=..." \
-    --lang ja --title "《歌名》 歌手"
-
-# 视频自带官方带时间字幕时，用它作参考（时间轴更准）
-.venv/bin/python workflow/make_mv.py --name X --url "..." --lang ja --sub-lang ja --title "..."
-
-# 封面、投稿信息
-.venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕"   # 正脸特写/半身/全身各 4 张候选
-.venv/bin/python workflow/make_meta.py --name X --subtitle-langs "日语,中文" --note "演出名称、日期、场地"
-```
-
-阶段：`download → prep → lyrics → separate → align → translate → interp → render`，可用 `--from` / `--to` 断点续跑。
-
-### 单独取歌词
+### 单曲
 
 ```bash
-.venv/bin/python workflow/get_ytb_lyrics_from_link.py "YOUTUBE_URL" --name X
-.venv/bin/python workflow/get_ytb_lyrics_from_link.py "YOUTUBE_URL" --genius-url "https://genius.com/..." --name X
+.venv/bin/python workflow/make_mv.py --name X --url "https://www.youtube.com/watch?v=..." --to separate
+.venv/bin/python workflow/make_meta.py --name X --subtitle-langs "英语,中文" --note "演出名称、日期、场地"
+.venv/bin/python -m workflow.song.run post X        # 字幕：对齐 / 观众合唱 / 翻译 / 注释 → posts/X/subs/
+.venv/bin/python -m workflow.live.singles X        # 挂到审核页
+.venv/bin/python -m workflow.song.render post:X     # 4K60 成品
+.venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中英字幕"
 ```
 
-自动识别歌名、歌手，在 Genius 找原版歌词，保存到 `posts/X/lyrics.txt`（默认去掉 `[Verse]` 等标签，`--keep-sections` 保留）。识别不准时用 `--title` / `--artist` 或 `--genius-url` 指定；已有文件默认不覆盖（`--overwrite`）。设置 `GENIUS_ACCESS_TOKEN` 可改用官方 API 搜索。
+视频自带官方人工字幕时加 `--sub-lang ja`，用它作参考歌词。单独取歌词：
+`workflow/get_ytb_lyrics_from_link.py "YOUTUBE_URL" --name X [--genius-url ...]`。详细规则见 [skills/song-mv/SKILL.md](skills/song-mv/SKILL.md)。
 
-## v2：整场演唱会
+### 整场演唱会
 
-整场演唱会 → 按歌单拆成单曲 → 每首出双语字幕、候选封面、介绍 → 网页人工审核 → 只对通过的歌做 4K60。和上面的单曲流程（v1）分开，数据在 `concerts/<场次>/`（不入 git）。方案见 [docs/design/v2_concert_pipeline.md](docs/design/v2_concert_pipeline.md)。
+数据在 `concerts/<场次>/` 和 `posts/<场次>/`。方案见 [docs/design/concert_pipeline.md](docs/design/concert_pipeline.md)。
 
 ```bash
 # 建场次（title-box：转播画面上歌名字幕的位置，有就填，定位最准）
-.venv/bin/python -m workflow_v2 new shakira_madrid_2026 --source "~/Downloads/xxx.mkv" --artist Shakira \
+.venv/bin/python -m workflow.live new shakira_madrid_2026 --source "~/Downloads/xxx.mkv" --artist Shakira \
     --date 2026-10-03 --city Madrid --venue "Estadio Shakira" --title-box 40,976,660,56 --cover-mask-bottom 0.12
 # 歌单：.env 里有 SETLISTFM_API_KEY 时加 --setlist-url 自动拉取；否则手写 concerts/<场次>/setlist.txt
-# 审核前的全部阶段（ingest setlist lyrics separate segment refine preview package），不切视频成品、不抽帧
-# refine = v1 对齐（--dense-order free）+ v1 逐句 Qwen 复核 + 讲话 + 翻译；preview = 每首切 720p 审核预览
-.venv/bin/python -m workflow_v2 run shakira_madrid_2026
-.venv/bin/python -m workflow_v2 run shakira_madrid_2026 --from refine --songs 8,9   # 只重跑某几首
-# 审核网页 http://127.0.0.1:8160
-.venv/bin/python -m workflow_v2 serve
-# 审核通过后：唯一会切视频 / 插帧 / 加水印的命令，只处理通过且之后没改过的歌
-.venv/bin/python -m workflow_v2 hd shakira_madrid_2026 --dry-run
-.venv/bin/python -m workflow_v2 hd shakira_madrid_2026
+# 审核前的全部阶段（ingest setlist lyrics separate segment refine preview package），不出成品
+.venv/bin/python -m workflow.live run shakira_madrid_2026
+.venv/bin/python -m workflow.live run shakira_madrid_2026 --from refine --songs 8,9   # 只重跑某几首
+# 按伴奏重切边界，字幕按整场时间重新分到各首（不重跑识别）
+.venv/bin/python -m workflow.live.music_edges lorde_acl2026 --write
+.venv/bin/python -m workflow.song.reslice lorde_acl2026 concerts/lorde_acl2026/reports/music_edges.json
+# 审核网页
+.venv/bin/python -m workflow.live serve
+# 审核通过后出成品（只处理通过且之后没改过的歌）
+.venv/bin/python -m workflow.live hd shakira_madrid_2026 --dry-run
+.venv/bin/python -m workflow.live hd shakira_madrid_2026
 ```
 
 ## 测试
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
+.venv/bin/python tests/regression_shakira.py          # 审核时指出过的问题，逐条检查现在的字幕
+.venv/bin/python tests/regression_shakira.py 32_dai_dai
 ```

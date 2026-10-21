@@ -11,8 +11,8 @@
   separate   Mel-Band RoFormer 人声分离（.venv-sep）    -> posts/<name>/vocals.wav
   interp     原生帧率抽帧 + RIFE 一步插到 60fps          -> posts/<name>/frames_out/
 
-字幕对齐、翻译、注释走 v4（.venv/bin/python -m workflow_v4.run post <name>），
-4K 渲染（字幕 + logo + 水印 + FLAC）走 .venv/bin/python -m workflow_v4.render post:<name>（它调本脚本的 interp）。
+字幕对齐、翻译、注释走 workflow/song/（.venv/bin/python -m workflow.song.run post <name>），
+4K 渲染（字幕 + logo + 水印 + FLAC）走 .venv/bin/python -m workflow.song.render post:<name>（它调本脚本的 interp）。
 
 用法:
   .venv/bin/python workflow/make_mv.py --name X --url "https://..." --to separate
@@ -188,7 +188,7 @@ def stage_lyrics(a, w):
                 e.start = max(e.start, 0)
         shutil.copy(sub, Song(a.name).official_srt)
         subs.save(str(p["srt"]))
-        p["txt"].write_text("\n".join(e.plaintext.replace("\n", " ").strip() for e in subs.events if e.plaintext.strip()) + "\n")   # v4 读歌词文本
+        p["txt"].write_text("\n".join(e.plaintext.replace("\n", " ").strip() for e in subs.events if e.plaintext.strip()) + "\n")   # 字幕流程读歌词文本
         p["source"].write_text("official")
         return
     if not p["txt"].exists():
@@ -329,7 +329,7 @@ def main():
     p.add_argument("--frame-format", choices=["auto", "png", "jpg"], default="auto",
                    help="中间帧格式，auto 会按磁盘余量选择")
     p.add_argument("--clean-frames", action="store_true",
-                   help="（兼容旧参数；帧序列由 workflow_v4/render.py 渲染完删除）")
+                   help="（兼容旧参数；帧序列由 workflow/song/render.py 渲染完删除）")
     p.add_argument("--force", action="store_true", help="覆盖已存在的结果（人声）")
     p.add_argument("--from", dest="from_", choices=STAGES, default=STAGES[0])
     p.add_argument("--to", choices=STAGES, default=STAGES[-1])

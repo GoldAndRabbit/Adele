@@ -6,20 +6,17 @@ Qwen3-ASR-Flash 识别（阿里云百炼，支持歌唱识别、抗背景音乐�
 注意：不要把歌词作为上下文传进去，模型会原样照抄上下文。
 """
 
-import argparse
 import base64
 import io
 import json
 import os
 import sys
 import wave
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import llm  # noqa: E402
 
 ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 MODEL = "qwen3-asr-flash"
@@ -40,8 +37,8 @@ _CACHE, _CACHE_LOCK = {}, __import__("threading").Lock()
 
 
 def _cache():
-    """环境变量 QWEN_CACHE=<json 路径> 时启用识别缓存（v2 精校用）：同一段音频 + 同一语言只识别一次，
-    重跑结果不再每次不一样。没设置时（v1 默认）照旧每次都调接口。"""
+    """环境变量 QWEN_CACHE=<json 路径> 时启用识别缓存（字幕流程用）：同一段音频 + 同一语言只识别一次，
+    重跑结果不再每次不一样。没设置时照旧每次都调接口。"""
     path = os.environ.get("QWEN_CACHE")
     if not path:
         return None, None
@@ -64,7 +61,7 @@ def transcribe(client, y, lang):
             with _CACHE_LOCK:
                 cache[key] = text
                 f = Path(path)
-                if f.exists():   # 别的进程（v2 精校里的 verify 子进程）写进去的条目合并进来，不覆盖
+                if f.exists():   # 别的进程（并行的识别子进程）写进去的条目合并进来，不覆盖
                     for k, v in json.loads(f.read_text()).items():
                         cache.setdefault(k, v)
                 tmp = f.with_suffix(f".{os.getpid()}.tmp")

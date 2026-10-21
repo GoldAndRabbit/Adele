@@ -22,9 +22,10 @@ from llm import chat_json, vision_json  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 TITLE_PREFIX = "[4K60帧/Hi-Res]"
 TITLE_MAX = 80  # B 站标题上限
+INTRO_MAX = 2000  # B 站简介上限（三段加空行一起算）
 
-SYSTEM_PROMPT = f"""你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。根据给出的原视频信息，输出 JSON：
-{{
+SYSTEM_PROMPT = """你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。根据给出的原视频信息，输出 JSON：
+{
   "artist_zh": "艺人常用中文名（没有通行译名就用原名）",
   "artist_en": "艺人英文/罗马字名",
   "song_title": "歌名（保持原文）",
@@ -38,7 +39,7 @@ SYSTEM_PROMPT = f"""你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。
   "intro_performance": "演出介绍",
   "intro_lyrics": "歌词介绍",
   "tags": ["标签", ...]
-}}
+}
 
 介绍要求：
 - 简体中文，口吻自然，像 UP 主写给观众的简介；intro_song、intro_performance 各 150~300 字，intro_lyrics 300~500 字
@@ -61,20 +62,20 @@ SYSTEM_PROMPT = f"""你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。
 
 def build_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs):
     """投稿标题（固定格式，代码拼，不让模型写）：
-    [4K60帧/Hi-Res] {艺人中文} 《{歌名原文}》{艺人英文} {歌名中文} {演出中文名} {演出英文名} 中x字幕
+    [4K60帧/Hi-Res] {艺人中文}《{歌名原文}》{艺人英文} {歌名中文} {演出中文名} {演出英文名} 中x字幕
     B 站上限 80 字，超了依次去掉：英文演出名里的年份 → 中文演出名里的年份（年份留在英文名里）→ 两边的年份
     → 英文演出名 → 英文艺人名 → 中文演出名 → 歌名中文。
     （中英文演出名都要尽量留着；中文歌手、中文歌名、中文演出名最后才动：观众看的是中文）"""
     import re
     no_year = lambda x: re.sub(r"\s*\(?\d{4}\)?$", "", x or "").strip()
     zh, en = (artist_zh or "").strip(), (artist_en or "").strip()
-    head = [zh or en, f"《{song}》{en if en and en != zh else ''}".strip()]
+    head = [f"{zh or en}《{song}》{en if en and en != zh else ''}".strip()]   # 艺人名和《》之间不空格
     sz = "" if not song_zh or song_zh.strip().lower() == song.strip().lower() else song_zh.strip()
     ez, ee = (event_zh or "").strip(), (event_en or "").strip()
     for a in {zh, en} - {""}:   # 演出名不带艺人名（HKT48 7周年公演2018 -> 7周年公演2018）
         ez, ee = (re.sub(rf"^{re.escape(a)}\s*", "", x).strip() for x in (ez, ee))
     title = ""
-    short = [zh or en, f"《{song}》"]   # 不带英文艺人名
+    short = [f"{zh or en}《{song}》"]   # 不带英文艺人名
     for parts in (head + [sz, ez, ee], head + [sz, ez, no_year(ee)], head + [sz, no_year(ez), ee],
                   head + [sz, no_year(ez), no_year(ee)], head + [sz, ez], short + [sz, ez],
                   short + [sz, no_year(ez)], short + [sz], short):   # 艺人名 / 歌名太长（串烧、合作）：先去英文，最后才去中文
@@ -149,6 +150,29 @@ def intro_text(gen):
     return "\n\n".join(x.strip() for x in (gen.get("intro_song"), gen.get("intro_performance"), gen.get("intro_lyrics")) if x)
 
 
+def fit_intro(gen, label=""):
+    """简介超过 2000 字：在「歌词介绍」那段里以句号为单位，从中间往两边一句句删（第一句和最后一句留着），删到不超过为止。
+    gen 用 intro_song / intro_performance / intro_lyrics 三个键，原地改并返回。"""
+    import re
+    if len(intro_text(gen)) <= INTRO_MAX or not gen.get("intro_lyrics"):
+        return gen
+    paras = [[x for x in re.split(r"(?<=[。！？])(?![”’」』）])", p) if x.strip()]
+             for p in gen["intro_lyrics"].split("\n\n")]
+    sents = [(a, b) for a, p in enumerate(paras) for b in range(len(p))]
+    mid = (len(sents) - 1) / 2
+    order = sorted(sents[1:-1], key=lambda k: abs(sents.index(k) - mid))   # 离中间最近的先删
+    drop = set()
+    text = lambda: "\n\n".join(x for x in ("".join(s for b, s in enumerate(p) if (a, b) not in drop).strip()
+                                             for a, p in enumerate(paras)) if x)
+    for k in order:
+        if len(intro_text({**gen, "intro_lyrics": text()})) <= INTRO_MAX:
+            break
+        drop.add(k)
+    gen["intro_lyrics"] = text()
+    print(f"{label} 简介超 {INTRO_MAX} 字：歌词介绍中间删了 {len(drop)} 句")
+    return gen
+
+
 def reintro(name, note=None):
     """已有投稿只重写介绍（歌曲 + 演出 + 歌词三段），标题、歌名、标签不动。"""
     d = ROOT / "posts" / name
@@ -167,7 +191,7 @@ def reintro(name, note=None):
     dur = float(meta.get("duration") or 0) or None
     notes = stage_notes(d / "source.mp4", 0.0, dur, d / "stage_notes.json") if dur and (d / "source.mp4").exists() else None
     user += media_material(notes, lyrics_material(d / "lyrics.txt", d / "zh_cache.json"))
-    gen = chat_json(SYSTEM_PROMPT, user, temperature=0.5, label=f"介绍 {name}")
+    gen = fit_intro(chat_json(SYSTEM_PROMPT, user, temperature=0.5, label=f"介绍 {name}"), name)
     post["intro"] = {"song": gen.get("intro_song"), "performance": gen.get("intro_performance"), "lyrics": gen.get("intro_lyrics")}
     dst.write_text(json.dumps(post, ensure_ascii=False, indent=2) + "\n")
     return post["intro"]
@@ -226,7 +250,7 @@ def main():
     notes = stage_notes(d / "source.mp4", 0.0, dur, d / "stage_notes.json") if dur and (d / "source.mp4").exists() else None
     user += media_material(notes, lyrics_material(d / "lyrics.txt", d / "zh_cache.json"))
 
-    gen = chat_json(SYSTEM_PROMPT, user, temperature=0.5, label="元数据")
+    gen = fit_intro(chat_json(SYSTEM_PROMPT, user, temperature=0.5, label="元数据"), a.name)
     title = build_title(gen.get("artist_zh"), gen.get("artist_en"), gen.get("song_title") or "",
                         gen.get("song_title_zh"), gen.get("event_zh"), gen.get("event_en"), subs_tag(langs))
 

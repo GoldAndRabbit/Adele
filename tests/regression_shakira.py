@@ -5,7 +5,6 @@
 
     .venv/bin/python tests/regression_shakira.py            # 4 首全查
     .venv/bin/python tests/regression_shakira.py 32_dai_dai # 只查一首
-    加 --exp 查 v1 实验（exp/），加 --v2 查 v2 实验（exp_v2/），加 --v3 查 v3（exp_v3/）
 """
 
 import re
@@ -16,6 +15,7 @@ from pathlib import Path
 import pysubs2
 
 SONGS = Path(__file__).resolve().parent.parent / "concerts" / "shakira_madrid_2026" / "songs"
+POSTS = Path(__file__).resolve().parent.parent / "posts"
 
 
 def norm(s):
@@ -23,27 +23,16 @@ def norm(s):
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", "".join(c for c in s if not unicodedata.combining(c)))).strip()
 
 
-POSTS = Path(__file__).resolve().parent.parent / "posts"
-
-
-def load(song, exp=""):
-    """exp="" 查正式字幕（v0），"exp" 查 v1 实验，"exp_v2" 查 v2 实验，"exp_v3" 查 v3。"""
-    base = (POSTS / song) if (POSTS / song).exists() and not (SONGS / song).exists() else SONGS / song
-    ass = base / exp / "lyrics.ass" if exp == "exp_v3" else None
-    if ass is not None and ass.exists():
-        # v3：查视频里实际显示的字幕文件（翻译阶段去掉的幻听、顶部注释、片头歌名都按最终结果算）
-        out = []
-        for e in pysubs2.load(str(ass)).events:
-            first = pysubs2.SSAEvent(text=e.text.replace("\\n", "\\N").split("\\N")[0]).plaintext.strip()
-            if e.style in ("Default", "Speech") and first and not first.startswith("《"):
-                out.append((e.start / 1000, e.end / 1000, first, e.style == "Speech"))
-        return sorted(out)
-    subs = pysubs2.load(str(base / (f"{exp}/lyrics.srt" if exp else "lyrics.srt")))
-    ev = [(e, False) for e in subs.events]
-    if exp and (base / exp / "speech.srt").exists():   # 讲话单独一个文件（黄色），画面上一样会出现
-        ev += [(e, True) for e in pysubs2.load(str(base / exp / "speech.srt")).events]
-    # (起, 止, 文字, 是不是讲话)
-    return sorted((e.start / 1000, e.end / 1000, e.plaintext.strip(), sp) for e, sp in ev)
+def load(song):
+    """查视频里实际显示的字幕文件 subs/lyrics.ass（翻译阶段去掉的幻听、顶部注释、片头歌名都按最终结果算）。
+    返回 [(起, 止, 文字, 是不是讲话)]。"""
+    base = SONGS / song if (SONGS / song).exists() else POSTS / song   # 单曲在 posts/<歌名>/
+    out = []
+    for e in pysubs2.load(str(base / "subs" / "lyrics.ass")).events:
+        first = pysubs2.SSAEvent(text=e.text.replace("\\n", "\\N").split("\\N")[0]).plaintext.strip()
+        if e.style in ("Default", "Speech") and first and not first.startswith("《"):
+            out.append((e.start / 1000, e.end / 1000, first, e.style == "Speech"))
+    return sorted(out)
 
 
 def find(lines, pat, lo=0, hi=1e9):
@@ -204,7 +193,7 @@ def main():
     for song, checks in CHECKS.items():
         if only and song not in only:
             continue
-        L = load(song, exp="exp_v3" if "--v3" in sys.argv else "exp_v2" if "--v2" in sys.argv else "exp" if "--exp" in sys.argv else "")
+        L = load(song)
         print(f"\n== {song}（{len(L)} 句）")
         for c in checks:
             ok, why, detail = c(L)
