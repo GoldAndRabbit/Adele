@@ -84,7 +84,10 @@ def stage_download(a, w):
     cmd = [tool("yt-dlp"), "--no-playlist",
            # 画质最高到 2160p（这里和 SubDub 不同，SubDub 只要 1080p）；很多视频带 YouTube 自动配音的多语种音轨，
            # bestaudio 可能选到德语 / 印地语，只要原声
-           "-f", "bv*[height<=2160]+ba[format_note*=original]/bv*[height<=2160]+ba[language^=en]/bv*+ba/b",
+           # HDR 视频（观众拍的 4K HDR 常见）同时有 SDR 版本：优先要 SDR，不然后面转 H.264 8 位、不做色调映射，画面发灰
+           "-f", "bv*[height<=2160][dynamic_range=SDR]+ba[format_note*=original]/bv*[height<=2160][dynamic_range=SDR]+ba[language^=en]/"
+                 "bv*[height<=2160][dynamic_range=SDR]+ba/"
+                 "bv*[height<=2160]+ba[format_note*=original]/bv*[height<=2160]+ba[language^=en]/bv*+ba/b",
            # 有的视频不给 PO token 只出 360p 合流：本机起了 bgutil PO token 服务时 mweb 客户端能拿到 1080p；
            # 没起服务也不影响 default 客户端（需要 yt-dlp-ejs + deno 解 JS 校验，见 requirements.txt）
            "--extractor-args", "youtube:player_client=default,mweb",

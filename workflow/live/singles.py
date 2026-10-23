@@ -42,15 +42,19 @@ def build(names):
         song = post.get("song") or {}
         d = c / "songs" / name
         d.mkdir(parents=True, exist_ok=True)
-        dur = round(duration(p / "source.mp4"), 2)   # 和 segments.json 同样精度，否则总览会误报「边界改过」
+        src = p / "source.mp4"
+        # 原视频删掉了（腾空间）就沿用上次记下的时长，也不重新切预览
+        dur = round(duration(src), 2) if src.exists() else (segs.get(name) or {}).get("end") or 0.0   # 和 segments.json 同样精度
         for old in ("lyrics.ass", "exp_v3", "exp_v4"):   # 早期链过的，现在不用了
             if (d / old).is_symlink():
                 (d / old).unlink()
-        for sub in ("covers", "subs", "post"):
+        for sub in ("subs", "post"):
             link(d / sub, p / sub)
+        # 候选封面：演唱会流程放在 covers/，单曲的 make_cover 默认放在 post/cover/
+        link(d / "covers", p / "covers" if (p / "covers").exists() else p / "post" / "cover")
         link(d / "watermark.json", p / "watermark.json")   # 中间水印计划（workflow/song/watermark.py）
         # 预览：整首 720p（硬件编码，几十秒）
-        if not (d / "preview.mp4").exists():
+        if not (d / "preview.mp4").exists() and src.exists():
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(p / "source.mp4"), "-vf", "scale=-2:720",
                             "-c:v", "h264_videotoolbox", "-b:v", "3500k", "-c:a", "aac", "-b:a", "160k",
                             str(d / "preview.mp4")], check=True)

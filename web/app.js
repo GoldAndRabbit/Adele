@@ -39,7 +39,7 @@ const api = async (p, body) => {
 const REVIEW = { pending: ["待审", "gray"], approved: ["已通过", "ok"], rejected: ["已打回", "bad"], stale: ["通过后有改动", "warn"] };
 const STAGE = { new: "未开始", lyrics: "只有歌词", located: "已定位", refined: "字幕已出", packaged: "可审核", hd_done: "高清已出" };
 const TITLE_MAX = 80;
-const SHOT = { closeup: "特写", half: "半身", full: "全身", cover: "补充" };
+const SHOT = { closeup: "特写", half: "半身", full: "全身", scene: "氛围 / 舞台", cover: "补充" };
 
 const state = { concerts: [], concert: null, song: null, cleanup: [] };
 
@@ -312,8 +312,8 @@ async function videoPane(c, s, at) {
   const edges = { start: s.start, end: s.end };
   const video = h("video", { src: s.preview, controls: true, preload: "auto", playsinline: true,
     controlslist: "nofullscreen", disablepictureinpicture: true });
-  // 左上角叠朝阳 Adele 的 logo（只是预览：和成品 make_mv.py 一样的比例和位置——宽度约为画面的 10.25%、离左上角 15/3840；
-  // 不改视频文件，只是一张图片叠在播放器上）
+  // 左上角叠朝阳 Adele 的 logo（只是预览：和成品 render.py 一样的比例和位置——宽度约为画面的 10.25%、离画面内容左上角 15/3840；
+  // 宽银幕片源上下有黑边，放在内容区域 s.box 里，不放在黑边上；不改视频文件，只是一张图片叠在播放器上）
   const logo = h("img", { src: "adele-logo.png", class: "preview-logo", alt: "" });
   const stage = h("div", { class: "stage" }, video, logo);
   const placeLogo = () => {
@@ -321,7 +321,8 @@ async function videoPane(c, s, at) {
     const ar = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
     const cw = Math.min(W, H * ar), ch = cw / ar;   // 画面按 contain 居中，算出实际画面区域
     const x0 = (W - cw) / 2, y0 = (H - ch) / 2;
-    Object.assign(logo.style, { left: `${x0 + cw * 15 / 3840}px`, top: `${y0 + ch * 15 / 2160}px`, width: `${cw * 0.1025}px` });
+    const b = s.box || { x: 0, y: 0 };
+    Object.assign(logo.style, { left: `${x0 + cw * (b.x + 15 / 3840)}px`, top: `${y0 + ch * (b.y + 15 / 2160)}px`, width: `${cw * 0.1025}px` });
   };
   new ResizeObserver(placeLogo).observe(video);
   video.addEventListener("loadedmetadata", placeLogo);

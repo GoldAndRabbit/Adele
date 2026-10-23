@@ -34,12 +34,13 @@ adele/
 │       ├── watermark.py  render.py       水印计划 / 4K60 成品
 │       └── reslice.py                    改边界后字幕按整场时间重新分配
 │
+├── post_bili/               B 站投稿：upload.py（检查 → --submit 上传）、install.sh（装 bin/biliup），见 post_bili/README.md
 ├── server/app.py             审核页后端（FastAPI，:8160）
 ├── web/                      审核页前端（纯 JS：app.js  subs.js  style.css）
 ├── tests/                    回归检查（审核时指出过的问题）
 ├── docs/design/              方案文档
 ├── skills/song-mv/           Claude Code skill（单曲流程说明）
-├── assets/  bin/  models/    logo / 字体，rife / realesrgan，各模型权重
+├── assets/  bin/  models/    logo / 字体，rife / realesrgan / biliup，各模型权重
 │
 │  ── 以下是数据，不入 git ──
 ├── concerts/<场次>/     整场文件：source.mp4 audio.flac vocals.wav setlist.json segments.json review.json
@@ -84,6 +85,9 @@ adele/
                               │
                               ▼
                posts/…/post/<歌名> 4K60FPS Sub-WaterMark.mp4
+                              │
+                              ▼
+               post_bili/upload.py：检查 → 确认后 --submit 投到 B 站 → post/publish.json
 ```
 
 ## 安装
@@ -106,6 +110,10 @@ curl -L -o models/yunet/face_recognition_sface_2021dec.onnx \
   https://huggingface.co/opencv/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx
 
 cp .env.example .env   # 填 DEEPSEEK_API_KEY（翻译/元数据）、ALIYUN_BAILIAN_API_KEY（Qwen3-ASR）
+
+# B 站投稿工具（bin/biliup）+ 扫码登录（凭证在 post_bili/cookies.json，不入库）
+post_bili/install.sh
+bin/biliup -u post_bili/cookies.json login
 ```
 
 `bin/realesrgan-ncnn-vulkan` 和 `models/realesrgan/realesrgan-x4plus.*`（封面高清化）不入库，需要自行放入；缺失时封面跳过高清化。
@@ -147,6 +155,15 @@ cp .env.example .env   # 填 DEEPSEEK_API_KEY（翻译/元数据）、ALIYUN_BAI
 .venv/bin/python -m workflow.live hd shakira_madrid_2026 --dry-run
 .venv/bin/python -m workflow.live hd shakira_madrid_2026
 ```
+
+### 投稿到 B 站
+
+```bash
+.venv/bin/python post_bili/upload.py posts/X                 # 只检查、打印要提交的内容
+.venv/bin/python post_bili/upload.py posts/X --only-self --submit   # 确认后上传（先仅自己可见）
+```
+
+演唱会的歌要先在 `concerts/<场次>/concert.json` 加 `source_url`（转载来源）。详见 [post_bili/README.md](post_bili/README.md)。
 
 ## 测试
 

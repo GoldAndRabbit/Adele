@@ -6,7 +6,7 @@
     2) 水印计划 watermark.json 已有就用（审核页预览的就是它），没有才生成
     3) workflow/make_mv.py 只做切片 + RIFE 插帧到 60fps（--from interp --to interp；原片已经是 60 帧的不插帧也不抽帧）
     4) 渲染：4K + subs/lyrics_poetic.ass（中文诗意版，和审核页默认一致；没有才用 lyrics_literal.ass 直译版；
-       整体提前和审核页默认的「提前 0.8s」一致）+ 左上角 logo
+       整体提前和审核页默认的「提前 0.8s」一致）+ 左上角 logo（宽银幕片源放在画面内容的左上角，不放在黑边上）
        + 歌曲中间的半透明水印（和审核页预览同样的时间、位置、大小、透明度、淡入淡出、阴影）+ 原样 FLAC 48kHz/24bit
     5) 删 frames_out 和 video_1080.mp4
 成品：posts/<场次>/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4（单曲是 posts/<name>/post/；每首只留这一个版本）
@@ -19,11 +19,12 @@ import shutil
 import subprocess
 import sys
 
+from workflow.letterbox import content_box
 from workflow.live.paths import ROOT, VENV_PY, Concert, read_json
 
 LEAD_EXTRA = 0.6   # 字幕文件里已经统一提前 0.2s；审核页默认「提前 0.8s」= 再提前 0.6s
 LOGO = ROOT / "assets" / "adele-logo.png"
-LOGO_SCALE = 0.10  # 左上角 logo：和 make_mv.py 一样（logo 原图宽 × 0.10，离左上角 15px）
+LOGO_SCALE = 0.10  # 左上角 logo：和 make_mv.py 一样（logo 原图宽 × 0.10，离画面内容左上角 15px）
 W, H, FPS = 3840, 2160, 60
 JPG_FRAME = 0.6e6  # 1080p JPEG(q1) 一帧大约 0.6MB：磁盘预检用（插帧前后的帧 + 4K 成品）
 
@@ -118,9 +119,11 @@ def render(d, work, out, frames=None, t_in=0.0, enc=None):
         src_fps = ""
     inputs = (frames or ["-framerate", FPS, "-i", f"frames_out/%08d.{ext}"]) + ["-i", d / "audio.flac", "-i", LOGO]
     shift = src_fps + (f"setpts=PTS+{t_in}/TB," if t_in else "")   # t_in 只给抽查用：从中间某一秒开始的片段，时间对回歌曲内时间
+    box = content_box(d)   # 上下黑边（宽银幕）：logo 放进画面内容里
+    lx, ly = 15 + round(W * box["x"]), 15 + round(H * box["y"])
     fc = [f"[0:v]{shift}scale=3840:2160:flags=lanczos,ass=burn.ass[s0]",
           f"[2:v]scale=iw*{LOGO_SCALE}:-1[logo]",
-          "[s0][logo]overlay=15:15:format=auto[v0]"]
+          f"[s0][logo]overlay={lx}:{ly}:format=auto[v0]"]
     last = "v0"
     if items:
         img, pad = wm_image(wm, work)

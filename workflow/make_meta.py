@@ -4,7 +4,7 @@
 投稿元数据 JSON：标题（固定格式，build_title 拼）、歌曲介绍、演出介绍、歌词介绍、标签、文件路径。
 
 事实依据：posts/<name>/meta.json 里 yt-dlp 抓到的视频标题 / 简介 / 发布日期；
-现场画面观察（stage_notes：均匀截 8 帧给 Qwen-VL，只描述看得到的造型、舞台、伴舞）；
+现场画面观察（stage_notes：均匀截 8 帧给 Qwen，只描述看得到的造型、舞台、伴舞）；
 歌词原文 + 中文翻译（lyrics_material）。模型负责整理成中文，不允许编造材料里没有的信息。
 
 python workflow/make_meta.py --name sobaniirune --cover posts/sobaniirune/post/cover/cover_01.jpg
@@ -60,6 +60,14 @@ SYSTEM_PROMPT = """你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。�
 - tags 8~12 个，中文为主，含艺人、歌名、节目名、“4K60帧”和字幕标签（字幕语言见“字幕”字段）"""
 
 
+def subs_title_zh(d):
+    """字幕片头的中文歌名（翻译流程第 7 步定的，或定稿表里的 __title__）：投稿标题以它为准，两处一致。没有就返回 None。"""
+    import re
+    f = Path(d) / "subs" / "translation" / "result.json"
+    m = re.match(r"\s*《(.+?)》", (json.loads(f.read_text()).get("title_zh") or "") if f.exists() else "")
+    return m.group(1).strip() if m else None
+
+
 def build_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs):
     """投稿标题（固定格式，代码拼，不让模型写）：
     [4K60帧/Hi-Res] {艺人中文}《{歌名原文}》{艺人英文} {歌名中文} {演出中文名} {演出英文名} 中x字幕
@@ -111,7 +119,7 @@ def lyrics_material(lyrics_txt, zh_cache=None, limit=6000):
 
 
 def stage_notes(video, t0, t1, cache_path, n=8):
-    """现场画面观察：在 [t0, t1] 里均匀截 n 帧给 Qwen-VL，只描述看得到的造型、舞台、伴舞和风格。结果缓存到 cache_path。"""
+    """现场画面观察：在 [t0, t1] 里均匀截 n 帧给 Qwen，只描述看得到的造型、舞台、伴舞和风格。结果缓存到 cache_path。"""
     cache_path = Path(cache_path)
     if cache_path.exists():
         return json.loads(cache_path.read_text())
@@ -205,7 +213,8 @@ def retitle(name):
     f = chat_json(TITLE_FIELDS_PROMPT, json.dumps(info, ensure_ascii=False, indent=2), temperature=0.2, label="标题字段")
     song = post.get("song") or {}
     perf = post.get("performance") or {}
-    song.update({"artist_zh": f.get("artist_zh") or song.get("artist_zh"), "title_zh": f.get("song_title_zh") or ""})
+    song.update({"artist_zh": f.get("artist_zh") or song.get("artist_zh"),
+                 "title_zh": subs_title_zh(ROOT / "posts" / name) or f.get("song_title_zh") or ""})
     perf.update({"event_zh": f.get("event_zh"), "event_en": f.get("event_en")})
     post["song"], post["performance"] = song, perf
     post["title"] = build_title(song.get("artist_zh"), f.get("artist_en") or song.get("artist"), song.get("title"),
@@ -252,7 +261,7 @@ def main():
 
     gen = fit_intro(chat_json(SYSTEM_PROMPT, user, temperature=0.5, label="元数据"), a.name)
     title = build_title(gen.get("artist_zh"), gen.get("artist_en"), gen.get("song_title") or "",
-                        gen.get("song_title_zh"), gen.get("event_zh"), gen.get("event_en"), subs_tag(langs))
+                        subs_title_zh(ROOT / "posts" / a.name) or gen.get("song_title_zh"), gen.get("event_zh"), gen.get("event_en"), subs_tag(langs))
 
     video = Path(a.video) if a.video else ROOT / "posts" / a.name / "post" / f"{a.name} 4K60FPS Sub-WaterMark.mp4"
     # 16:9 和 4:3 两种封面（make_cover.py 同时生成 cover_XX.jpg 和 cover_XX_4x3.jpg）
@@ -266,7 +275,7 @@ def main():
             "title": gen.get("song_title"),
             "artist": gen.get("artist_en"),
             "artist_zh": gen.get("artist_zh"),
-            "title_zh": gen.get("song_title_zh") or "",
+            "title_zh": subs_title_zh(ROOT / "posts" / a.name) or gen.get("song_title_zh") or "",
             "release_year": gen.get("release_year"),
         },
         "performance": {

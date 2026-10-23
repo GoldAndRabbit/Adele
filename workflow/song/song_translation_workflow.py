@@ -6,10 +6,12 @@
     第 2 步 术语表：你定稿的句子（只这首，歌曲目录 zh_fixed.json）> 本首风格要求（zh_style.json，如自称用「姐」）
             > 本首难点 / 专名 > 全局规则和专名（glossary.json）
     第 3 步 初译（准确）→ 中文 v1
-    第 4 步 润色（表现力）→ 中文 v2（视频默认用这版）
+    第 4 步 润色（表现力）→ 中文 v2（直译版）
     顶部注释（「原词：解释」）：单独的选注释词流程 song_note_workflow，在审校之后跑
     第 5 步 审校：另一次独立调用挑错；发现的问题（包括意思上的）自动改
     第 6 步 定稿：你定稿的句子替换、纯语气词留空、去句号、歌词加 ♪
+    第 7 步 歌名：整首翻完再定，和歌词里同一个词的译法一致
+    第 8 步 诗意版（中文 v3，deepseek-v4-pro）：成品和审核页视频默认烧这一版；你定稿的句子照样替换
     输出：subs/lyrics.ass（中文 v1）、subs/lyrics_literal.ass（中文 v2），两份都带片头歌名署名和顶部注释；
           subs/translation/result.json（每行 原文 / 类型 / v1 / v2 / 审校意见 / 是否定稿 / 注释），审核页读它
 
@@ -168,6 +170,7 @@ def ask(prompt, user, label):
 
 
 TEMPERATURE = 0.3   # 翻译偏稳；诗意版那一步临时调高
+POETIC_MODEL = "deepseek-v4-pro"   # 诗意版用 pro（flash 写得太直）
 
 
 TIMES = {}   # 每一步花了多少秒（这次运行）
@@ -427,16 +430,26 @@ def translate(d, out_dir, lyrics, title):
     result = {"model": MODEL, "effort": EFFORT, "version": STEP_VERSION, "seconds": {k: round(v, 1) for k, v in TIMES.items()}, "title": title, "title_zh": title_zh, "brief": brief,
               "units": units, "notes": {str(k): v for k, v in notes.items()}}
     # 第 7 步 歌名：整首翻完之后再定，和歌词里同一个词的译法一致
-    song_title(cache, result)
+    song_title(cache, result, d)
     (tdir / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=1))
     build_outputs(d, out_dir)
-    return result
+    # 第 8 步 诗意版（成品烧这一版）：flash 写出来太直，用 pro
+    poetic(d, out_dir, model=POETIC_MODEL)
+    return json.loads((tdir / "result.json").read_text())
 
 
-def song_title(cache, R):
+def song_title(cache, R, d=None):
     """中文歌名（整首翻完之后）：歌词里出现歌名的句子怎么译的，歌名就跟着；有通行译名用通行译名。
-    只改《》里的歌名，中文歌手名不动（R["title_zh"] 形如「《中文歌名》 中文歌手」）。"""
+    只改《》里的歌名，中文歌手名不动（R["title_zh"] 形如「《中文歌名》 中文歌手」）。
+    定稿表 zh_fixed.json 里有 "__title__"（如「臀部不会说谎」）就直接用它，不问模型（模型每次重跑给的歌名可能不一样）。
+    投稿标题（make_meta）也读这里的歌名，两处一致。"""
     title, old = R.get("title") or "", R.get("title_zh") or ""
+    fixed = (json.loads((d / "zh_fixed.json").read_text()) if d and (d / "zh_fixed.json").exists() else {}).get("__title__")
+    if fixed:
+        zh = fixed.strip().strip("《》")
+        R["title_zh"] = re.sub(r"《[^》]*》", f"《{zh}》", old) if "《" in old else f"《{zh}》 {old}".strip()
+        R["title_why"] = "定稿表里定的歌名"
+        return R["title_zh"]
     m = re.search(r"《([^》]*)》", title)
     if not m:
         return old
@@ -479,8 +492,9 @@ def finalize(d, units):
             u["v2_final"] = fx[_norm(u["orig"])]
         else:
             u["v2_final"] = u["v2"]
-        if u.get("v3") is not None:   # 诗意版：讲话沿用 v2 的口语
-            u["v3_final"] = u["v2_final"] if u["type"] == "讲话" else u["v3"]
+        if u.get("v3") is not None:   # 诗意版：讲话沿用 v2 的口语；你定稿的句子两版都用定稿
+            # 诗意版当成语气词留空、直译版有意思（「Hey," and I said, "Hey」是对话）：用直译版
+            u["v3_final"] = u["v2_final"] if u["type"] == "讲话" or u["locked"] or not u["v3"] else u["v3"]
         for k in ("v1", "v2_final", "v3_final"):
             if k not in u:
                 continue

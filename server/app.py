@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from workflow.live import review  # noqa: E402
 from workflow.live.package import cover_candidates  # noqa: E402
+from workflow.letterbox import content_box  # noqa: E402
 from workflow.live.paths import CONCERTS, Concert, read_json  # noqa: E402
 
 app = FastAPI(title="adele review")
@@ -78,10 +79,10 @@ def exp_data(d, ass_url):
         m = next((y for y in xl if abs(y["start"] - t) < 0.06 and y["orig"] == r["text"]), None) if r["text"] else None
         lang = r.get("lang") or line_lang(r.get("text") or r.get("genius") or r.get("qwen") or "", main)
         xrows.append({**r, "lang": lang, "zh": m["zh"] if m else "", "start": t, "end": (r["end_ms"] or 0) / 1000})
-    have = {(round(r["start"], 1), r["text"]) for r in xrows}
+    have = lambda y: any(abs(r["start"] - y["start"]) < 0.15 and r["text"] == y["orig"] for r in xrows)   # 2.946 / 2.950 是同一句
     xl = [y for y in xl if y["style"] != "Note"]   # 顶部注释不是字幕行（逐句表格里挂在对应那句下面）
     for y in xl:   # 片头歌名（翻译时加的）和讲话：字幕文件里有、逐句数据里没有的
-        if y["orig"].startswith("《") or (y["style"] != "Default" and (round(y["start"], 1), y["orig"]) not in have):
+        if y["orig"].startswith("《") or (y["style"] != "Default" and not have(y)):
             xrows.append({"start_ms": round(y["start"] * 1000), "end_ms": round(y["end"] * 1000), "start": y["start"],
                           "end": y["end"], "genius": "", "qwen": "", "heard": "", "text": y["orig"], "zh": y["zh"],
                           "lang": "" if y["orig"].startswith("《") else line_lang(y["orig"], main),
@@ -204,6 +205,8 @@ def get_song(slug: str, name: str):
         "draft": read_json(d / "post_draft.json", {}),
         # 歌曲中间的半透明 logo 水印计划（workflow/song/watermark.py），审核页只做预览，不改视频
         "watermark": read_json(d / "watermark.json", None),
+        # 画面内容区域（去掉宽银幕的上下黑边）：左上角 logo、水印都相对它放
+        "box": content_box(d),
         "review_entry": rv["songs"].get(name, {}),
     }
 
@@ -228,10 +231,11 @@ def post_cover_download(slug: str, name: str, body: dict = Body(...)):
     c = concert(slug)
     it = song(c, name)
     cid = body.get("id") or ""
-    if not re.fullmatch(r"(closeup|half|full|cover)_\d\d", cid):
+    if not re.fullmatch(r"(closeup|half|full|scene|cover)_\d\d", cid):
         raise HTTPException(400, "封面 id 不对")
     covers = (c.song_dir(it) / "covers").resolve()
-    base = covers.parent.parent if covers.parent.name == "exp" else covers.parent
+    # 演唱会：<歌>/covers；单曲：<歌>/post/cover（make_cover 默认）；早期：<歌>/exp/covers
+    base = covers.parent.parent if covers.parent.name in ("exp", "post") else covers.parent
     post = base / "post"
     post.mkdir(exist_ok=True)
     stamp = time.strftime("%d%H%M")

@@ -346,9 +346,36 @@ def tidy(text):
         t = t[1:-1].strip()
     if t.count("(") != t.count(")"):
         t = t.replace("(", "").replace(")", "").strip()
-    if (t.count('"') + t.count("“") + t.count("”")) % 2:   # 引号跨行（Genius 一句话分两行），这一行只剩半个：去掉
-        t = t.replace('"', "").replace("“", "").replace("”", "").strip()
-    return t
+    return _pair_quotes(t)
+
+
+def _pair_quotes(t):
+    """引号跨行（Genius 一句话分两行）：这一行开头的后引号、结尾的前引号是半个，去掉。
+    只数个数不够：「Hey," and I said, "Hey」两个引号，却是上一句的后半个和下一句的前半个。"""
+    keep, open_at = set(), None
+    for i, ch in enumerate(t):
+        if ch not in '"“”':
+            continue
+        before = t[i - 1] if i else " "
+        closing = ch == "”" or (ch == '"' and open_at is not None) or (ch == '"' and not before.isspace())
+        if closing and open_at is not None:
+            keep |= {open_at, i}
+            open_at = None
+        elif not closing:
+            open_at = i
+    chars = list(t)
+    pairs = sorted(keep)
+    for o, c in zip(pairs[::2], pairs[1::2]):   # 配对引号内侧的空格（「"Hey " Hey」）去掉
+        k = o + 1
+        while k < c and t[k].isspace():
+            chars[k] = ""
+            k += 1
+        k = c - 1
+        while k > o and t[k].isspace():
+            chars[k] = ""
+            k -= 1
+    t = "".join(ch for i, ch in enumerate(chars) if t[i] not in '"“”' or i in keep)
+    return re.sub(r"\s{2,}", " ", t).strip()
 
 
 SEQ_MAX = 4     # 两句锚点之间最多补这么多句

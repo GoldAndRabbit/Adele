@@ -5,7 +5,7 @@
       脸大小、脸部清晰度（本首内按百分位比）、脸部亮度、正脸程度、脸有没有贴边被切；
       再拿成品封面和高清帧对比找出标题 / 副标题的笔画，算眼睛 / 整张脸被字盖住多少（16:9 和 4:3 分开算），
       以及 4:3 的裁切窗口有没有把脸裁掉。
-  - 观感分（Qwen-VL 看成品 16:9 封面，一首歌一次调用）：按 YouTube / B 站缩略图的标准，
+  - 观感分（Qwen 看成品 16:9 封面，一首歌一次调用）：按 YouTube / B 站缩略图的标准，
       看眼睛、表情、清晰、字有没有挡脸、构图、整体吸引力，每张给分和一句理由。
   最终分 = 0.55 × 观感 + 0.45 × 技术，闭眼 / 字盖住眼睛（程序测，不让模型判断）再打折；Top3 互相隔开 4 秒以上（不要三张同一个镜头）。
 
@@ -86,8 +86,8 @@ def tech_metrics(cdir, cid, frame_file, det):
     import make_cover
     frame = Image.open(cdir / frame_file).convert("RGB")
     faces, bgr = _faces(det, frame)
+    faces = [f for f in faces if f[3] / 540 >= 0.05]   # 太小的脸（远景里的人）不算
     m = {"faces": len(faces)}
-    faces = [f for f in faces if f[3] / 540 >= 0.05]
     if not faces:
         return m
     c16 = cdir / f"{cid}.jpg"
@@ -138,7 +138,7 @@ def tech_score(m, sharp_pct):
 
 
 def vlm_scores(cdir, ids):
-    """Qwen-VL 给 ids 这些成品封面打分 → ({id: 打分}, 模型自己的 Top3)。
+    """Qwen 给 ids 这些成品封面打分 → ({id: 打分}, 模型自己的 Top3)。
     阿里云内容审核拦下某张图（DataInspectionFailed）时整批都会被拒：对半拆开再发，最后只有被拦的那张没有观感分。"""
     from llm import vision_json
     imgs = []
@@ -261,7 +261,7 @@ def main():
     p.add_argument("slug")
     p.add_argument("songs", nargs="*", help="歌名（目录名），不写就是整场每首")
     p.add_argument("--force", action="store_true", help="忽略缓存重新打分")
-    p.add_argument("--no-vlm", action="store_true", help="只用本地技术分，不调 Qwen-VL")
+    p.add_argument("--no-vlm", action="store_true", help="只用本地技术分，不调 Qwen")
     a = p.parse_args()
     c = Concert(a.slug)
     items = [it for it in c.song_items() if not a.songs or it["name"] in a.songs]

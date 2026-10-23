@@ -123,6 +123,17 @@ def search_song(session, title, artist, token=None):
     return ranked[0][1]
 
 
+# Genius 会在歌词里夹长得一模一样的西里尔字母（防抓取，如 necеsario 里的 е），对齐 / 识别比对时这个词就对不上
+HOMOGLYPHS = str.maketrans("аеорсухіјѕԁАВЕКМНОРСТХІЈЅ", "aeopcyxijsdABEKMHOPCTXIJS")
+
+
+def fix_homoglyphs(line):
+    """拉丁字母为主的行：夹在里面的西里尔字母换回拉丁字母（真正的俄文行不动）。"""
+    latin = sum(c.isascii() and c.isalpha() for c in line)
+    cyr = sum("\u0400" <= c <= "\u04ff" for c in line)
+    return line.translate(HOMOGLYPHS) if cyr and latin > cyr * 3 else line
+
+
 def extract_lyrics(html, keep_sections=False):
     soup = BeautifulSoup(html, "html.parser")
     for unwanted in soup.select('[data-exclude-from-selection="true"], [class*="LyricsHeader"], script, style'):
@@ -140,7 +151,7 @@ def extract_lyrics(html, keep_sections=False):
     lyrics = lyrics.replace("\r", "").replace("\u200b", "")
     if not keep_sections:
         lyrics = re.sub(r"(?m)^\s*\[[^\]\n]+\]\s*$", "", lyrics)
-    lyrics = "\n".join(line.rstrip() for line in lyrics.splitlines())
+    lyrics = "\n".join(fix_homoglyphs(line.rstrip()) for line in lyrics.splitlines())
     lyrics = re.sub(r"\n{3,}", "\n\n", lyrics).strip()
     if not lyrics:
         raise ValueError("Genius 歌词区域为空，不保存文件")

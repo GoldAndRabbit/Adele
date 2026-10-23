@@ -71,19 +71,21 @@ def chat_json(system, user, temperature=0.3, label="LLM", effort=None):
 
 
 def vision_json(system, text, images, label="看图", model=None):
-    """看图（阿里百炼 Qwen-VL，OpenAI 兼容接口）：images 是 JPEG bytes 列表，要求模型返回 JSON 对象。
+    """看图（OpenAI 兼容接口，默认阿里百炼 Qwen，模型名 deepseek 开头走 DeepSeek）：images 是 JPEG bytes 列表，要求模型返回 JSON 对象。
     元素也可以是 (标签, bytes)：标签作为文字放在那张图前面（多图打分时让模型按编号对上）。"""
     import base64
     import time
     from openai import OpenAI
 
     load_env()
-    base_url, key_var, _ = PROVIDERS["aliyun"]
+    model = model or os.environ.get("VISION_MODEL", "qwen3.8-max")
+    provider = "deepseek" if model.startswith("deepseek") else "aliyun"   # deepseek-v4-flash-vision-exp 等走 DeepSeek
+    base_url, key_var, _ = PROVIDERS[provider]
     if not os.environ.get(key_var):
         raise SystemExit(f"缺少 {key_var}（放到 {ROOT}/.env 或 export）")
     client = OpenAI(base_url=base_url, api_key=os.environ[key_var])
-    model = model or os.environ.get("VISION_MODEL", "qwen3-vl-plus")
-    print(f"{label}: aliyun / {model}（{len(images)} 张图）")
+    extra = {"thinking": {"type": "disabled"}} if provider == "deepseek" else {"enable_thinking": os.environ.get("VISION_THINKING") == "1"}
+    print(f"{label}: {provider} / {model}（{len(images)} 张图）")
     content = []
     for b in images:
         if isinstance(b, tuple):
@@ -94,7 +96,7 @@ def vision_json(system, text, images, label="看图", model=None):
     last = None
     for attempt in range(3):
         try:
-            resp = client.chat.completions.create(model=model, response_format={"type": "json_object"}, messages=[
+            resp = client.chat.completions.create(model=model, response_format={"type": "json_object"}, extra_body=extra, messages=[
                 {"role": "system", "content": system}, {"role": "user", "content": content}])
             if resp.choices and resp.choices[0].message and resp.choices[0].message.content:
                 return json.loads(resp.choices[0].message.content)

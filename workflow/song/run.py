@@ -344,11 +344,10 @@ def run(d, lyrics, out_dir, meta=None):
             weak = sum(1 for r in lyr_in if not r["occ"]["anchor"])
             mostly_weak = bool(lyr_in) and weak > len(lyr_in) / 2
             if opts.get("talk_block_heard", True) and mostly_weak:
-                # 整段对话重新切：取一遍识别在这一段里的完整原话，按停顿（≥ 0.6 s）/ 8 个词重新分行，
+                # 整段对话重新切：这一段的原话按小段在几遍识别里投票（listen.consensus），按停顿（≥ 0.6 s）/ 8 个词重新分行，
                 # 代替按「对错的歌词行」切出来的碎片（「Por」「Lo que」）
                 s0, e0 = blk[0]["s"], blk[-1]["e"]
-                per = [[w for w in ws if s0 - 0.2 <= w["s"] <= e0 + 0.2] for ws in reads]
-                one = max(per, key=len)
+                one = L.consensus(reads, s0, e0, latin=ly.main in LATIN)
                 if one:
                     rows[:] = [r for r in rows if not (s0 - 0.2 <= r["s"] <= e0 + 0.2 and r["kind"] in ("talk", "out", "lyric"))]
                     cur, parts = [], []
@@ -366,8 +365,24 @@ def run(d, lyrics, out_dir, meta=None):
                                      "starts": {}, "occ": None, "kind": "talk", "block_talk": True, "talk_heard": True})
                     rows.sort(key=lambda r: r["s"])
 
-    # 讲话行：按停顿 / 8 个词拆开（太长一屏放不下）
-    rows = split_talk(rows, cells)
+    # 讲话行、现场改词行的文字（直接用识别的原话）在几遍识别里投票（音频段相同的只算一票），不是只抄某一遍
+    for r in rows:
+        if r["kind"] in ("talk", "live") and r.get("k") is None and not r.get("block_talk"):
+            ws = L.consensus(reads, r["s"], r["e"], latin=ly.main in LATIN)
+            t = LM.AM.text_of(ws).strip() if ws else ""
+            if t and t != r["text"]:
+                r.update({"text": t[:1].upper() + t[1:], "heard": t, "voted": True})
+    # 拉丁字母的歌（西语、英语……）里，讲话 / 现场改词行大半是日文假名、汉字、韩文：识别把口号、合唱当成了别的语言（Waka Waka 开头
+    # 一长串「サミナミナ…」、Chantaje 的「なれなこび」），不出字幕
+    if ly.main in LATIN:
+        for r in rows:
+            t = r.get("text") or ""
+            if r["kind"] in ("talk", "live") and r.get("k") is None and t and \
+                    len(re.findall(r"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]", t)) > 0.5 * len(t.replace(" ", "")):
+                r["kind"] = "out"
+
+    # 讲话行：连着的讲话合成一段，按句子断成字幕（太长一屏放不下）
+    rows = split_talk(rows, cells, out_dir / "talk_sentences.json", ly.main)
 
     # 第 5 步：时间
     lyr = [r for r in rows if r["kind"] == "lyric"]
@@ -563,24 +578,86 @@ def block(rows, dur, head=True):
     return sorted(blk, key=lambda r: r["s"])
 
 
-def split_talk(rows, cells):
-    """讲话行太长时按 8 个词（日中韩 16 字）拆开，时间按词数比例分。"""
+TALK_MAX_WORDS = 10   # 讲话字幕一条最多几个词（按空格分；纯日文没有空格不拆）
+
+
+def split_talk(rows, cells, cache_file=None, lang="en"):
+    """讲话行切成字幕。连着的讲话（间隔 ≤ 1 s）先合成一段，让模型按句子 / 自然停顿断开（只给断点，词一个不改），
+    每条 ≤ TALK_MAX_WORDS 个词；每个词的时间按它原来那一行的起止插值。原来按 8 个词硬切，会把
+    「gracias mi | amor」这种切成两半，翻出来的中文读不通。模型失败就退回按词数切。歌词外不出字幕的行（out）照旧按词数切。"""
+    cache = json.loads(cache_file.read_text()) if cache_file and cache_file.exists() else {}
+    talk = lambda r: r["kind"] == "talk" and r["k"] is None
+    out, block = [], []
+
+    def flush():
+        if block:
+            out.extend(_talk_sentences(block, cache, lang) or [x for r in block for x in _split_by_count(r)])
+            block.clear()
+
+    for r in sorted(rows, key=lambda r: r["s"]):
+        if talk(r):
+            if block and r["s"] - block[-1]["e"] > 1.0:
+                flush()
+            block.append(r)
+            continue
+        flush()
+        out.extend(_split_by_count(r) if r["kind"] == "out" and r["k"] is None else [r])
+    flush()
+    if cache_file:
+        cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=1))
+    return out
+
+
+def _split_by_count(r, cap=8):
+    words = r["text"].split()
+    if len(words) <= cap:
+        return [r]
+    per = (r["e"] - r["s"]) / len(words)
+    return [{**r, "text": " ".join(words[i:i + cap]), "heard": " ".join(words[i:i + cap]),
+             "s": r["s"] + per * i, "e": r["s"] + per * min(len(words), i + cap)} for i in range(0, len(words), cap)]
+
+
+def _talk_sentences(block, cache, lang):
+    """一段讲话 → 按句子断开的字幕行；失败返回 None。"""
+    words = []   # (词, 起, 止, 原来那一行)
+    for r in block:
+        ws = r["text"].split()
+        heard = (r.get("heard") or "").split()
+        if len(heard) == len(ws) and ws and words:   # 原来每行句首自动大写过；合成一段后，句中的词用识别出来的写法（人名照旧大写）
+            ws[0] = heard[0]
+        per = (r["e"] - r["s"]) / max(1, len(ws))
+        words += [(w, r["s"] + per * i, r["s"] + per * (i + 1), r) for i, w in enumerate(ws)]
+    if len(words) <= TALK_MAX_WORDS:
+        return None if len(block) > 1 else block
+    text = " ".join(w for w, *_ in words)
+    if text not in cache:
+        try:
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            from llm import chat_json
+            numbered = " ".join(f"{i}:{w}" for i, (w, *_) in enumerate(words))
+            r = chat_json("你负责给演唱会里的讲话断句做字幕。",
+                          f"下面是一段现场讲话（语言 {lang}）的语音识别结果，没有标点，每个词前面是编号。"
+                          f"请按意思断成一条条字幕：在一句话说完的地方断；一句话不超过 {TALK_MAX_WORDS} 个词就整句放一条，不要再断；"
+                          f"句子太长才在逗号、连词这类自然停顿处断。每条尽量 6～{TALK_MAX_WORDS} 个词（太碎的字幕一闪就过，看不清），"
+                          f"相邻的短句（如「你好你好」「谢谢」）可以合成一条；不能把一个短语、一个称呼（如 mi amor）断开。"
+                          f"只给每条字幕第一个词的编号（第一条从 0 开始）。输出 JSON：{{\"starts\": [0, ...]}}\n\n{numbered}",
+                          temperature=0.1, label="讲话断句")
+            cache[text] = sorted({int(x) for x in r.get("starts", []) if 0 <= int(x) < len(words)} | {0})
+        except Exception as e:  # noqa: BLE001
+            print(f"讲话断句失败（{e}），按词数切", flush=True)
+            return None
+    starts = cache[text] + [len(words)]
     out = []
-    for r in rows:
-        if r["kind"] not in ("talk", "out") or r["k"] is not None:
-            out.append(r)
-            continue
-        words = r["text"].split()
-        cap = 8   # 按空格分的词（中英混说也按词数拆；纯日文没有空格就不拆）
-        if len(words) <= cap:
-            out.append(r)
-            continue
-        n = -(-len(words) // cap)
-        per = (r["e"] - r["s"]) / len(words)
-        for i in range(n):
-            ws = words[i * cap:(i + 1) * cap]
-            s = r["s"] + per * i * cap
-            out.append({**r, "text": " ".join(ws), "heard": " ".join(ws), "s": s, "e": s + per * len(ws)})
+    for a, b in zip(starts, starts[1:]):
+        k = -(-(b - a) // (TALK_MAX_WORDS + 2))   # 模型给的一条还是太长：平均分成 k 段（别切出只剩一个词的尾巴）
+        cuts = [a + round(i * (b - a) / k) for i in range(k)] + [b]
+        for a2, b2 in zip(cuts, cuts[1:]):
+            seg = words[a2:b2]
+            t = " ".join(w for w, *_ in seg)
+            t = t[:1].upper() + t[1:]
+            out.append({**seg[0][3], "text": t, "heard": t, "s": seg[0][1], "e": seg[-1][2]})
     return out
 
 

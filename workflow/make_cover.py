@@ -7,7 +7,7 @@
 python workflow/make_cover.py --name sobaniirune --title "そばにいるね" \
     --subtitle "青山テルマ feat. SoulJa · 中日字幕"
 # 已选好时间点:   --at 65.2 --at 130
-# 右上角加队徽:   --extra-logo cover/psg.png
+# 右上角加队徽:   --extra-logo assets/crests/fc_bayern.png（和左边 logo + 4K 徽章严格等高、上下沿对齐）
 产物: posts/<name>/post/cover/cover_XX.jpg（16:9，1920x1080）、cover_XX_4x3.jpg（4:3，1440x1080）、
       candidates.jpg / candidates_4x3.jpg（编号总图）
 """
@@ -52,6 +52,27 @@ def duration(video):
 
 CROP_BOTTOM = 0.0  # 先裁掉画面底部这一比例（去掉搬运视频烧进去的字幕），再放大补满（会放大画面、人脸下移）
 MASK_BOTTOM = 0.0  # 不裁切，把底部这一比例的条带模糊+压暗（盖住烧录字幕，保持原构图，人脸更靠上）
+CONTENT = None     # 宽银幕片源上下的黑边：取帧时先裁到画面内容里居中的 16:9（ffmpeg crop 滤镜，main 里按 letterbox 检测）
+
+
+def _pre():
+    """取帧前的裁切滤镜（带结尾逗号）：先去黑边，再裁底部烧录字幕。"""
+    parts = ([CONTENT] if CONTENT else []) + ([f"crop=iw:ih*{1 - CROP_BOTTOM:.3f}:0:0"] if CROP_BOTTOM > 0 else [])
+    return "".join(x + "," for x in parts)
+
+
+def content_crop(video, t0=None, t1=None):
+    """画面有黑边时返回裁切滤镜：内容区域里居中的 16:9（宽银幕裁左右、竖屏 / 4:3 裁上下），封面铺满不留黑边；没有黑边返回 None。"""
+    from letterbox import detect
+    box = detect(video, t0, t1)
+    if box["h"] >= 0.999 and box["w"] >= 0.999:
+        return None
+    vw, vh = video_size_raw(video)
+    cx, cy, cw, ch = box["x"] * vw, box["y"] * vh, box["w"] * vw, box["h"] * vh
+    w, h = min(cw, ch * W / H), min(ch, cw * H / W)
+    x, y = cx + (cw - w) / 2, cy + (ch - h) / 2
+    ev = lambda v: int(v) // 2 * 2
+    return f"crop={ev(w)}:{ev(h)}:{ev(x)}:{ev(y)}"
 
 
 def mask_bottom(img, frac):
@@ -71,7 +92,7 @@ def mask_bottom(img, frac):
 
 
 def grab(video, t):
-    pre = f"crop=iw:ih*{1 - CROP_BOTTOM:.3f}:0:0," if CROP_BOTTOM > 0 else ""
+    pre = _pre()
     raw = subprocess.run(
         ["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
          "-vf", f"{pre}scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}",
@@ -83,7 +104,7 @@ def grab(video, t):
 def has_burned_sub(video, t):
     """画面底部中间有没有烧录字幕（搬运视频常见的黑底白字条）：同时有较多纯白和纯黑像素。"""
     raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.2f}", "-i", str(video), "-frames:v", "1",
-                          "-vf", "scale=640:360", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                          "-vf", f"{CONTENT + ',' if CONTENT else ''}scale=640:360", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
                          capture_output=True, check=True).stdout
     g = np.frombuffer(raw, np.uint8).reshape(360, 640)
     band = g[int(360 * 0.88):int(360 * 0.97), int(640 * 0.10):int(640 * 0.90)].astype(int)
@@ -112,6 +133,7 @@ def clean_time(video, t, span=2.0, step=0.25):
 
 INPAINT_SUBS = False  # 只把烧录字幕的黑底白字框抹掉（OpenCV inpaint），画面其他地方不动
 INPAINT_CORNERS = False  # 转播两角的歌名 / 台标：只修补文字笔画（inpaint_corners）；有推广横幅的帧挑帧时跳过
+STATIC_MASK = None       # 固定台标的位置（static_logo_mask，--inpaint-static）：取帧后先修补掉
 PROMO_MASK = 0.17  # 已经选上的帧有推广横幅（--regrab 时）：退回整条模糊压暗
 
 
@@ -173,12 +195,49 @@ def inpaint_corners(img):
     return Image.fromarray(cv2.inpaint(arr, mask, int(h * 0.012), cv2.INPAINT_TELEA))
 
 
+def static_logo_mask(video, n=48):
+    """频道台标（FC BAYERN.TV、FCB.tv 这类）在整个视频里位置固定、颜色不变，画面却一直在变：
+    均匀抽 n 帧，各帧几乎一样（标准差小）又偏亮、偏灰白的像素是实心台标；半透明的台标像素会跟着画面变，
+    但文字轮廓的边缘每帧都在同一处（≥ 60% 的帧是边缘），边缘附近偏亮的像素也算。只看画面四个角（上下各 22%、左右各 32%）。
+    返回原始分辨率的 0/255 掩码（外扩几像素），没有就 None。"""
+    import cv2
+    import tempfile
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
+                               capture_output=True, text=True).stdout.strip() or 0)
+    if dur <= 0:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-vf", f"fps={n / dur:.5f}", "-frames:v", str(n),
+                        str(Path(tmp) / "%03d.png")], check=True)
+        frames = [cv2.imread(str(f)) for f in sorted(Path(tmp).glob("*.png"))]
+    if len(frames) < 8:
+        return None
+    stack = np.stack([cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32) for f in frames])
+    sat = np.median(np.stack([cv2.cvtColor(f, cv2.COLOR_BGR2HSV)[..., 1] for f in frames]), axis=0)
+    std, med = stack.std(axis=0), np.median(stack, axis=0)
+    solid = (std < 18) & (med > 130) & (sat < 70)   # 实心白字：各帧几乎不变
+    # 半透明的台标压在变化的画面上，像素会跟着变，但文字轮廓的边缘每帧都在同一个地方
+    edges = np.mean([cv2.Canny(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), 40, 120) > 0 for f in frames], axis=0)
+    ring = cv2.dilate((edges > 0.6).astype(np.uint8), np.ones((5, 5), np.uint8))
+    m = (solid | ((ring > 0) & (med > 90) & (sat < 90))).astype(np.uint8)
+    h, w = m.shape
+    corner = np.zeros_like(m)
+    for ys in (slice(0, int(h * 0.22)), slice(int(h * 0.78), h)):
+        for xs in (slice(0, int(w * 0.32)), slice(int(w * 0.68), w)):
+            corner[ys, xs] = 1
+    m = cv2.morphologyEx(m * corner, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))   # 去掉零星噪点
+    if m.sum() < h * w * 0.0003:
+        return None
+    k = max(3, int(h * 0.006)) | 1
+    return cv2.dilate(m * 255, np.ones((k, k), np.uint8), iterations=2)
+
+
 def grab_hd(video, t, work, box=None):
     """高清取帧：按原始分辨率截帧（含 crop-bottom）→ 不够 1080 行才 Real-ESRGAN x4 → Lanczos 缩到封面尺寸并居中裁切。
     1080p 素材裁掉底部字幕后只剩 ~930 行，直接拉伸会糊。本来就够 1080 行的只做一次轻量锐化：
     x4 放大到 8K 再缩回 1080 每帧 ~26 s，效果只相当于去噪 + 锐化。
     box = 重新取景的裁切框（reframe_box，占片源的比例），在修补角标之后裁。"""
-    pre = f"crop=iw:ih*{1 - CROP_BOTTOM:.3f}:0:0" if CROP_BOTTOM > 0 else "null"
+    pre = _pre().rstrip(",") or "null"
     tmp = work / "_grab.png"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
                     "-vf", pre, str(tmp)], check=True)
@@ -186,6 +245,9 @@ def grab_hd(video, t, work, box=None):
     tmp.unlink()
     if INPAINT_SUBS:
         img = inpaint_subs(img)
+    if STATIC_MASK is not None and STATIC_MASK.shape[:2] == (img.height, img.width):
+        import cv2
+        img = Image.fromarray(cv2.inpaint(np.asarray(img), STATIC_MASK, max(3, int(img.height * 0.012)), cv2.INPAINT_TELEA))
     mask = MASK_BOTTOM
     if INPAINT_CORNERS:
         if has_promo(img):
@@ -394,20 +456,28 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None, b
 # pick_faces 每 1 秒看一帧、只认正脸和清晰度，不知道眼睛睁没睁、字会不会盖住脸。精修在它挑出的「候选池」上做：
 #   1) 补挑睁眼帧：每个时间点前后 ±REFINE_SPAN 秒按 10 帧/秒细看，取脸部最清楚的一帧（避开拖影、眨眼的过渡帧）；
 #   2) 无损重新取景：片源高于 1080p 时放大（最多 REFRAME_MAX 倍、裁完不少于 1080 行），把眼睛放到标题块上方；
-#   3) Qwen-VL 初筛：候选底图按编号发给模型，看睁眼 / 表情 / 挡脸 / 吸引力，和清晰度、字的位置合起来挑最终的几张。
+#   3) Qwen 初筛：候选底图按编号发给模型，看睁眼 / 表情 / 挡脸 / 吸引力，和清晰度、字的位置合起来挑最终的几张。
 
 POOL = 1.6          # 候选池是最终张数的几倍
 REFINE_SPAN = 0.4   # 补挑睁眼帧：前后各看几秒
 REFRAME_MAX = 1.5   # 重新取景最多放大几倍（4K 片源也不放太大，留一点现场感）
-SCREEN_BATCH = 18   # Qwen-VL 初筛一次发几张
+SCREEN_BATCH = 18   # Qwen 初筛一次发几张
 MIN_KEEP = 6        # 一个景别至少留几张：闭眼 / 挡脸的帧只在剩下的够这么多时才丢
 
 
-def video_size(video):
+def video_size_raw(video):
     out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
                           "-of", "json", str(video)], capture_output=True, text=True, check=True)
     s = json.loads(out.stdout)["streams"][0]
-    return int(s["width"]), int(s["height"] * (1 - CROP_BOTTOM))
+    return int(s["width"]), int(s["height"])
+
+
+def video_size(video):
+    """取帧用的片源尺寸（去黑边、裁底部之后）。"""
+    w, h = video_size_raw(video)
+    if CONTENT:
+        w, h = (int(v) for v in CONTENT[5:].split(":")[:2])
+    return w, int(h * (1 - CROP_BOTTOM))
 
 
 def text_band(a):
@@ -449,14 +519,14 @@ def eye_after(box, ey):
 
 
 def _crop_filter(box):
-    pre = f"crop=iw:ih*{1 - CROP_BOTTOM:.3f}:0:0," if CROP_BOTTOM > 0 else ""
+    pre = _pre()
     if box:
         pre += f"crop=iw*{box[2]:.4f}:ih*{box[3]:.4f}:iw*{box[0]:.4f}:ih*{box[1]:.4f},"
     return pre
 
 
 def grab_box(video, t, box, size=(960, 540)):
-    """低清取一帧（按裁切框），给 Qwen-VL 初筛看。"""
+    """低清取一帧（按裁切框），给 Qwen 初筛看。"""
     raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
                           "-vf", f"{_crop_filter(box)}scale={size[0]}:{size[1]}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                          capture_output=True, check=True).stdout
@@ -513,7 +583,7 @@ EYES_PROMPT = """上面 {n} 张图，每张是同一个人在不到 1 秒内连�
 
 def pick_open_eyes(options):
     """options = [[备选, ...], ...]（每个候选时间点一组 refine_moment 的结果）→ 每组选中的下标。
-    每组的脸部小图拼成一条，一次请求问 Qwen-VL 哪一格眼睛睁得最开；接口失败、或模型说都闭眼，就用最清楚的那帧。"""
+    每组的脸部小图拼成一条，一次请求问 Qwen 哪一格眼睛睁得最开；接口失败、或模型说都闭眼，就用最清楚的那帧。"""
     import io
     from llm import vision_json
     best = [max(range(len(o)), key=lambda i: o[i]["sharp"]) for o in options]
@@ -551,7 +621,7 @@ EYES = {"open": 1.0, "half": 0.55, "closed": 0.25, "unseen": 0.45}
 
 
 def screen_frames(imgs):
-    """Qwen-VL 初筛：imgs = [(key, PIL 图)] → {key: {eyes, expression, blocked, appeal}}；接口失败的批次没有结果。"""
+    """Qwen 初筛：imgs = [(key, PIL 图)] → {key: {eyes, expression, blocked, appeal}}；接口失败的批次没有结果。"""
     import io
     from llm import vision_json
     out = {}
@@ -572,6 +642,95 @@ def screen_frames(imgs):
             if k.isdigit() and 1 <= int(k) <= len(batch):
                 out[batch[int(k) - 1][0]] = x
     return out
+
+
+SCENE_SYSTEM = "你是音乐和体育视频的封面编辑，负责从视频截图里挑最有气势、最有画面感的一张做封面。"
+SCENE_KINDS = {   # --scene 选哪种画面
+    "fans": ("球迷氛围", "下面 {n} 张截图（图1、图2……）来自一首球队队歌的视频。按「适合做封面」给每张打 0~10 分。"
+             "最想要的是球迷氛围：看台上的大型 TIFO 拼图、成片的旗帜和围巾、烟火、一起高唱的人群、整座球场的全景、夺冠庆祝；"
+             "画面要清楚、有气势、色彩鲜明。人脸特写、单个人物采访、字幕或台标占画面主体、模糊、转场、黑屏都打低分。"),
+    "stage": ("舞台效果", "下面 {n} 张截图（图1、图2……）来自一场演唱会 / 音乐录影带。按「适合做封面」给每张打 0~10 分。"
+              "这一组不要普通的人脸特写，要有画面感的舞台和造型：大场面的灯光和光束、烟火 / 喷火 / 彩带、舞美布景和大屏、"
+              "逆光剪影、有造型感的动作和姿态、舞者阵型、歌手和整个舞台一起入画的全景、和观众的互动；"
+              "画面要清楚、有冲击力、色彩或光影鲜明，歌手（如果在画面里）不能被挡、不能糊。"
+              "普通近景大头照、空舞台、观众后脑勺、字幕或台标占主体、模糊、转场、黑屏都打低分。"),
+}
+SCENE_JSON = '输出 JSON：{{"items": [{{"id": "图1", "score": 8, "why": "一句话"}}]}}'
+
+
+def pick_scenes(video, n, step=1.0, gap=5.0, t0=None, t1=None, max_screen=72, kind="fans"):
+    """球迷氛围选帧（队歌这类视频不从人脸出发）：每 step 秒抽一帧，去掉模糊 / 太暗 / 几乎重复的，
+    剩下的（最多 max_screen 张，按时间均匀取最清楚的）交给 Qwen 按「看台、TIFO、旗帜、烟火、人群、球场全景」打分，
+    取分最高、彼此隔开 gap 秒的 n 张。返回 [(t, 分, 理由)]。"""
+    import io
+    import tempfile
+    from llm import vision_json
+    lo, hi = t0 or 0.0, t1 or duration(video)
+    if t1 is None and hi - lo > 60:
+        hi -= 20   # YouTube 视频最后十几秒常是片尾推荐 / 订阅按钮
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{lo:.2f}", "-to", f"{hi:.2f}", "-i", str(video),
+                        "-vf", f"{_pre()}fps={1 / step},scale=480:270", str(Path(tmp) / "%05d.jpg")], check=True)
+        frames = [(lo + i * step, Image.open(f).convert("RGB")) for i, f in enumerate(sorted(Path(tmp).glob("*.jpg")))]
+    frames = [(t, im) for t, im in frames if lo + 1.0 <= t <= hi - 1.0]
+    scored, prev = [], None
+    for t, im in frames:
+        g = np.asarray(im.convert("L"), dtype=np.float32)
+        if prev is not None and np.abs(g - prev).mean() < 4:   # 和上一帧几乎一样（同一个静止镜头）
+            prev = g
+            continue
+        prev = g
+        scored.append((score(im), t, im))
+    if not scored:
+        return []
+    cut = np.percentile([x[0] for x in scored], 30)   # 最糊、最暗的 30% 不要
+    good = [x for x in scored if x[0] >= cut]
+    if len(good) > max_screen:   # 按时间分段，每段留最清楚的一张
+        good = sorted(good, key=lambda x: x[1])
+        edges = np.linspace(0, len(good), max_screen + 1).astype(int)
+        good = [max(good[i:j], key=lambda x: x[0]) for i, j in zip(edges, edges[1:]) if j > i]
+    res = {}
+    for s0 in range(0, len(good), SCREEN_BATCH):
+        batch = good[s0:s0 + SCREEN_BATCH]
+        payload = []
+        for i, (_, _, im) in enumerate(batch, 1):
+            b = io.BytesIO()
+            im.save(b, "JPEG", quality=85)
+            payload.append((f"图{i}", b.getvalue()))
+        try:
+            r = vision_json(SCENE_SYSTEM, (SCENE_KINDS[kind][1] + SCENE_JSON).format(n=len(batch)), payload,
+                            label=f"{SCENE_KINDS[kind][0]}选帧 {s0 // SCREEN_BATCH + 1}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  氛围选帧这一批失败（{e}），按清晰度算")
+            continue
+        for x in r.get("items") or []:
+            k = str(x.get("id", "")).replace("图", "").strip()
+            if k.isdigit() and 1 <= int(k) <= len(batch):
+                res[batch[int(k) - 1][1]] = (float(x.get("score") or 0), x.get("why") or "")
+    sharps = sorted(x[0] for x in good)
+    ranked = sorted(good, key=lambda x: -(res.get(x[1], (5, ""))[0] + 2 * np.searchsorted(sharps, x[0]) / len(sharps)))
+    chosen = []
+    for sc, t, thumb in ranked:
+        if len(chosen) >= n or any(abs(t - c[0]) < gap for c in chosen):
+            continue
+        t2 = same_shot(video, t, thumb)   # 打分的缩略图和真正取的帧要是同一个镜头（差零点几秒可能跨过镜头切换）
+        if t2 is not None:
+            chosen.append((t2, *res.get(t, (0.0, "（没打上分，按清晰度）"))))
+    return sorted(chosen)
+
+
+def same_shot(video, t, thumb, tol=18.0):
+    """在 t 前后一秒内找和缩略图最像的一帧（灰度平均差 < tol），找不到返回 None。"""
+    ref = np.asarray(thumb.convert("L").resize((240, 135)), dtype=np.float32)
+    best = None
+    for dt in (0.0, -0.25, 0.25, -0.5, 0.5, -1.0, 1.0):
+        g = np.asarray(grab(video, max(0.0, t + dt)).convert("L").resize((240, 135)), dtype=np.float32)
+        d = float(np.abs(g - ref).mean())
+        if d < tol:
+            return t + dt
+        best = d if best is None else min(best, d)
+    print(f"  {t:.1f}s 附近取不到和打分时同一个镜头（差 {best:.0f}），不要这张")
+    return None
 
 
 def select_final(pool, want, gap=2.5):
@@ -894,14 +1053,19 @@ def compose(frame, a):
     badge_bottom = 34 + logo.height + 10 + b.height
     paste_with_shadow(canvas, b, (60 + (lw - b.width) // 2, 34 + logo.height + 10))
 
-    # 右上: 额外 logo（队徽等）
-    x = cw - 50
+    # 右上: 额外 logo（队徽等）：和左边「logo + 4K 徽章」这一整块严格等高——上沿对齐 logo 看得见的上沿、
+    # 下沿对齐徽章看得见的下沿（透明留边不算）；右边距和左边 logo 看得见的左边距一样
+    lb = logo.getchannel("A").getbbox() or (0, 0, logo.width, logo.height)
+    bb = b.getchannel("A").getbbox() or (0, 0, b.width, b.height)
+    top, bottom = 34 + lb[1], 34 + logo.height + 10 + bb[3]
+    x = cw - (60 + lb[0])
     for p in a.extra_logo or []:
         ex = Image.open(p).convert("RGBA")
-        eh = int(ch * 0.2)
-        ex = ex.resize((int(ex.width * eh / ex.height), eh), Image.LANCZOS)
+        ex = ex.crop(ex.getchannel("A").getbbox() or (0, 0, ex.width, ex.height))   # 去掉透明留边
+        eh = bottom - top
+        ex = ex.resize((round(ex.width * eh / ex.height), eh), Image.LANCZOS)
         x -= ex.width
-        canvas.alpha_composite(ex, (x, 40))
+        paste_with_shadow(canvas, ex, (x, top))
         x -= 20
 
     # 标题 + 副标题，整体底边在安全线以上
@@ -976,16 +1140,20 @@ def main():
     p.add_argument("--title", required=True, help="大标题，一般是歌名")
     p.add_argument("--subtitle", help="副标题，如 'Lorde · 中英字幕'")
     p.add_argument("--video", help="取帧的视频，默认 posts/<name>/source.mp4（原始 4K）")
-    p.add_argument("--select", choices=["faces", "sharp"], default="faces",
-                   help="faces（默认）：正脸特写/半身/全身各 --per 张；sharp：按清晰度挑 --n 张（旧）")
+    p.add_argument("--scene", choices=list(SCENE_KINDS), default="fans",
+                   help="--select scene 时挑哪种画面：fans 球迷氛围（看台、TIFO、旗帜、球场全景，队歌用）；"
+                        "stage 舞台效果（灯光、烟火、舞美、剪影、造型，演唱会 / MV 用）")
+    p.add_argument("--select", choices=["faces", "scene", "sharp"], default="faces",
+                   help="faces（默认）：正脸特写/半身/全身各 --per 张；scene：球迷氛围（看台、TIFO、旗帜、球场全景，队歌用）挑 --n 张；"
+                        "sharp：按清晰度挑 --n 张（旧）")
     p.add_argument("--per", type=int, default=4, help="faces 模式每个景别几张")
     p.add_argument("--closeup-min", type=float, default=0.22,
                    help="特写的脸高下限（占画面高），默认 0.22；演唱会转播大特写少，可降到 0.14（半身的上限跟着变）")
     p.add_argument("--no-refine", dest="refine", action="store_false",
-                   help="faces 模式不做选帧精修（补挑睁眼帧、重新取景、Qwen-VL 初筛），只用 pick_faces 的结果")
-    p.add_argument("--no-screen", dest="screen", action="store_false", help="选帧精修不调 Qwen-VL 初筛（只按清晰度和字的位置挑）")
+                   help="faces 模式不做选帧精修（补挑睁眼帧、重新取景、Qwen 初筛），只用 pick_faces 的结果")
+    p.add_argument("--no-screen", dest="screen", action="store_false", help="选帧精修不调 Qwen 初筛（只按清晰度和字的位置挑）")
     p.add_argument("--per-shot", help="faces 模式按景别指定张数，如 closeup=6,half=3,full=3（覆盖 --per）")
-    p.add_argument("--n", type=int, default=6, help="sharp 模式候选数量")
+    p.add_argument("--n", type=int, default=6, help="scene / sharp 模式候选数量")
     p.add_argument("--at", type=float, action="append", help="指定取帧时间（秒），可多次")
     p.add_argument("--image", action="append", help="用外部图片（专辑封面等）代替视频帧，可多次")
     p.add_argument("--start", type=float, help="只在视频的这一段里挑帧（秒），整场演唱会按单曲取封面用")
@@ -999,6 +1167,8 @@ def main():
                    help=f"副标题基线占画面高度的比例，越小越靠上（默认 {TEXT_Y}）")
     p.add_argument("--no-sr", dest="sr", action="store_false",
                    help="不做 Real-ESRGAN 高清化（默认对选中的帧做 x4 超分再缩到封面尺寸）")
+    p.add_argument("--inpaint-static", action="store_true",
+                   help="视频里位置固定的频道台标（四个角，半透明的也行）：自动找出来，取帧后修补掉")
     p.add_argument("--inpaint-corners", action="store_true",
                    help="转播画面两角的歌名 / 台标：只修补文字笔画，不整条压暗；有推广横幅的帧不选")
     p.add_argument("--regrab", action="store_true",
@@ -1009,6 +1179,8 @@ def main():
                    help="画面有烧录字幕时，在每个时间点前后 2s 内找没字幕的那一帧（两句之间的空档），不用遮挡（推荐）")
     p.add_argument("--mask-bottom", type=float, default=0.0,
                    help="不裁切，把底部这一比例（如 0.14）模糊压暗来盖住烧录字幕；保持原构图，标题更容易放高（推荐）")
+    p.add_argument("--keep-bars", action="store_true",
+                   help="保留画面的黑边（默认：宽银幕片源上下有黑边时，取帧先裁到画面内容里居中的 16:9，封面铺满）")
     p.add_argument("--crop-bottom", type=float, default=0.0,
                    help="取帧时先裁掉底部这一比例（如 0.14），用于画面里烧了字幕的搬运视频")
     p.add_argument("--title-width", type=float, default=0.94,
@@ -1018,7 +1190,7 @@ def main():
                    help="副标题：stretch（默认）拉开字距和标题等宽；natural 正常字距、不刻意拉宽")
     p.add_argument("--recompose", action="store_true",
                    help="只重排文字：用 out-dir 里已有的高清帧（frame_*.jpg）重新生成封面，不重新挑帧、不重新高清化")
-    p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png），可多次")
+    p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png，如 assets/crests/fc_bayern.png），和左上 logo + 4K 徽章等高对齐，可多次")
     p.add_argument("--logo", default="assets/adele-logo.png")
     p.add_argument("--badge", default="assets/4K60-logo.jpg", help="4K60 徽章图，不存在时用代码画的徽章")
     a = p.parse_args()
@@ -1026,9 +1198,16 @@ def main():
     video = Path(a.video) if a.video else ROOT / "posts" / a.name / "source.mp4"
     a.fill = a.fill or ["extend", "blur"]
     globals()["CROP_BOTTOM"] = a.crop_bottom
+    if not a.keep_bars and not a.image and not a.recompose:
+        globals()["CONTENT"] = content_crop(video, a.start, a.end)
+        if CONTENT:
+            print(f"画面有黑边：取帧先裁到画面内容 {CONTENT}", flush=True)
     globals()["MASK_BOTTOM"] = a.mask_bottom
     globals()["INPAINT_SUBS"] = a.inpaint_subs
     globals()["INPAINT_CORNERS"] = a.inpaint_corners
+    if a.inpaint_static:
+        globals()["STATIC_MASK"] = static_logo_mask(video)
+        print("固定台标：" + ("找到了，取帧后修补掉" if STATIC_MASK is not None else "没找到"), flush=True)
     out = Path(a.out_dir) if a.out_dir else ROOT / "posts" / a.name / "post" / "cover"
     out.mkdir(parents=True, exist_ok=True)
 
@@ -1047,7 +1226,7 @@ def main():
 
     if a.recompose:
         for f in sorted(out.glob("frame_*.jpg")):
-            m = re.match(r"frame_(?:(closeup|half|full)_)?(\d\d)_", f.name)
+            m = re.match(r"frame_(?:(closeup|half|full|scene)_)?(\d\d)_", f.name)
             if not m:
                 continue
             k = m[1] or "cover"
@@ -1055,6 +1234,27 @@ def main():
             compose(img, a).save(out / f"{k}_{m[2]}.jpg", quality=95)
             compose(crop_ratio(img, 4 / 3), a).save(out / f"{k}_{m[2]}_4x3.jpg", quality=95)
             print(f"{k}_{m[2]}.jpg + 4x3  <- {f.name}")
+        return
+
+    if not a.image and not a.at and a.select == "scene":
+        # 球迷氛围（队歌）：Qwen 按看台 / TIFO / 旗帜 / 烟火 / 人群 / 球场全景挑 --n 张
+        for f in [*out.glob("scene_*.jpg"), *out.glob("frame_scene_*.jpg")]:
+            f.unlink()
+        row, row43 = [], []
+        label = SCENE_KINDS[a.scene][0]
+        for i, (t, sc, why) in enumerate(pick_scenes(video, a.n, t0=a.start, t1=a.end, kind=a.scene), 1):
+            img = grab_hd(video, t, out) if a.sr else grab(video, t)
+            c, c43 = compose(img, a), compose(crop_ratio(img, 4 / 3), a)
+            c.save(out / f"scene_{i:02d}.jpg", quality=95)
+            c43.save(out / f"scene_{i:02d}_4x3.jpg", quality=95)
+            img.save(out / f"frame_scene_{i:02d}_{t:.1f}s.jpg", quality=95)
+            row.append(c)
+            row43.append(c43)
+            print(f"scene_{i:02d}.jpg + 4x3  <- {t:.1f}s（{label} {sc:.0f} 分：{why}）")
+        if row:
+            contact_sheet(row, cols=4).save(out / "candidates_scene.jpg", quality=92)
+            contact_sheet(row43, cols=4).save(out / "candidates_scene_4x3.jpg", quality=92)
+        print(f"候选总图: {out}/candidates_scene(.jpg / _4x3.jpg)")
         return
 
     if not a.image and not a.at and a.select == "faces":
@@ -1067,7 +1267,7 @@ def main():
             if "=" in kv:
                 k, v = kv.split("=")
                 per[k.strip()] = int(v)
-        if a.refine:   # 选帧精修：多挑一池 → 补挑睁眼帧 → 重新取景 → Qwen-VL 初筛 → 留 per 张（见「选帧精修」）
+        if a.refine:   # 选帧精修：多挑一池 → 补挑睁眼帧 → 重新取景 → Qwen 初筛 → 留 per 张（见「选帧精修」）
             import cv2
             band, src, meta = text_band(a), video_size(video), {}
             print(f"  标题块 {band[0]:.2f}~{band[1]:.2f}（占画面高），片源 {src[0]}x{src[1]}" if band else "  没有标题块")

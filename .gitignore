@@ -15,3 +15,7 @@ models/melband_roformer/
 models/realesrgan/
 bin/realesrgan-ncnn-vulkan
 models/yunet/
+
+# B 站投稿：登录凭证（等于账号密码）、post_bili/install.sh 下载的 biliup
+post_bili/cookies.json
+bin/biliup

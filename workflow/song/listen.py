@@ -9,6 +9,8 @@
 所以切点一定落在停顿上，几遍的切法一定互不相同。
 """
 
+import re
+
 import numpy as np
 
 from workflow.live import asr_match as AM
@@ -18,6 +20,7 @@ CHUNK = (25.0, 60.0)  # 每块的长度范围
 LENGTHS = (50.0, 38.0, 56.0, 30.0, 44.0, 34.0, 58.0)   # 每组偏好的块长，各组不同，切点自然错开
 PAUSE_MIN = 0.4       # 人声停顿至少这么长才算候选切点
 SECTION = 4.0         # 连续这么久没人声算段落边界
+SAME_START = 10.0     # 起点相同的几段识别，起点之后这么多秒内的结果几乎一样（模型对起点极敏感），只算一票
 
 
 def pauses(y, sr, pitch, beats=None):
@@ -87,8 +90,69 @@ def recognize(y, sr, key, cache, a, b, src):
         return []
     for w in ws:
         w["src"] = src
+        w["seg"] = [round(a, 2), round(b, 2)]   # 这个词是从哪段音频识别出来的（计票时判断几遍是不是独立）
     return ws
 
+
+def independent(reads):
+    """（讲话文字投票用）去掉不独立的重复：送进识别的那段音频（起点、终点）完全一样，结果就一模一样——那是同一个结果重复几次，
+    不是几遍互相印证（Agua 开头第 1～4 遍挑中了同一个停顿当切点，都是 0～59.8 s，4 票「mi ya」压过了另一段听对的）。
+    按顺序看每一遍，音频段和前面某一遍完全相同的，这一段的词去掉（这一遍在这里算没有证据）。
+    只是起点相同、终点不同的不算重复（结果会不一样）。没有 seg 信息的词（旧缓存）原样保留。"""
+    seen, out, dropped = set(), [], 0
+    for ws in reads:
+        keep = [w for w in ws if not (w.get("seg") and tuple(w["seg"]) in seen)]
+        dropped += len(ws) - len(keep)
+        out.append(keep)
+        seen |= {tuple(w["seg"]) for w in ws if w.get("seg")}
+    if dropped:
+        print(f"计票去重：和前面某一遍音频段完全相同的 {dropped} 个词不再重复计票", flush=True)
+    return out
+
+
+def consensus(reads, s0, e0, gap=0.6, cap=8, latin=None):
+    """一段讲话的原话按小段投票：拿词最多的那一遍按停顿（≥ gap）/ cap 个词分小段，每个小段看各遍（已去重）听到什么，
+    相似的（≥ 85）算一伙，取人数最多的一伙；一样多时依次比：音频段不是刚在这里切进来的（切口后 1.5 s 常漏词）、
+    听到的词多、音频段短（模型在长段里容易把含糊的话压缩、丢掉）。
+    返回选中的词（带各自的时间）。"""
+    from rapidfuzz import fuzz
+    # 音频段完全相同的几遍只算一票（independent）；只用在这里，不动对齐用的识别结果——对齐的门槛是按「几遍互相印证」调的，
+    # 整体去重会让很多地方只剩一遍证据（试过：Agua 讲话被对成了歌词）
+    per = [[w for w in ws if s0 - 0.2 <= w["s"] <= e0 + 0.2] for ws in independent(reads)]
+    skel = max(per, key=len)
+    if not skel:
+        return []
+    parts, cur = [], []
+    for w in skel:
+        if cur and (w["s"] - cur[-1]["e"] >= gap or len(cur) >= cap):
+            parts.append(cur)
+            cur = []
+        cur.append(w)
+    parts.append(cur)
+    text = lambda ws: " ".join(AM.text_of(ws).lower().split())
+    span = lambda ws: min(((w["seg"][1] - w["seg"][0]) for w in ws if w.get("seg")), default=999.0)
+    out = []
+    for part in parts:
+        a, b = part[0]["s"] - 0.15, part[-1]["e"] + 0.15
+        cands = [ws for ws in ([w for w in r if a <= w["s"] <= b] for r in per) if ws]
+        groups = []
+        for c in cands:
+            g = next((g for g in groups if fuzz.ratio(text(g[0]), text(c)) >= 85), None)
+            (g.append(c) if g else groups.append([c]))
+        # 刚切进来的头 1.5 s 模型常漏词（Agua 29.7 s 切进来，漏了紧接着的「y yo creo que deberíamos」）：
+        # 音频段起点就在这一小段前 1.5 s 以内的算「切口」（歌曲开头从 0 切的不算，前面本来就没声音）
+        clean = lambda c: all(not w.get("seg") or w["seg"][0] == 0 or w["seg"][0] <= a - 1.5 for w in c)
+        # 书写系统和这首歌对不上的（西语歌里冒出一串日文假名）排最后
+        script_ok = lambda c: latin is None or (not re.search(r"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]", text(c))) == latin
+        rank = lambda c: (script_ok(c), clean(c), len(c), -span(c))
+        if not groups:
+            continue
+        best = max(groups, key=lambda g: (any(script_ok(c) for c in g), len(g), max(rank(c) for c in g)))
+        pick = max(best, key=rank)
+        if out:   # 相邻小段取自不同的识别：交界处两边都有的词只留前一段的（不然「a traer a traer」）
+            pick = [w for w in pick if w["s"] >= out[-1]["e"] - 0.08]
+        out += pick
+    return out
 
 def listen(y, sr, key, cache, pitch, beats=None, n=PASSES):
     """n 遍识别（切法互不相同）。返回 (reads, cands, sets)。"""

@@ -20,8 +20,8 @@ PER_SHOT = "closeup=16,half=16,full=0"   # 正脸特写 16 张、半身 16 张�
 CLOSEUP_MIN = 0.14  # 脸高占画面 14% 以上算特写：转播里 22% 以上的大特写很少（GIRL LIKE ME 只有 6 帧候选），凑不够 6 张
 TEXT_LIFT = 0.08   # 标题 + 副标题整体上移画面高度的 8%（0.82 -> 0.74）：底部 17% 压暗遮挡转播的推广条，字压在上面太靠下
 LANG_ZH = {"es": "西班牙语", "en": "英语", "it": "意大利语", "ja": "日语", "pt": "葡萄牙语", "fr": "法语"}
-COVER_RE = re.compile(r"^(closeup|half|full|cover)_(\d\d)\.jpg$")
-FRAME_RE = re.compile(r"^frame_(?:(closeup|half|full)_)?(\d\d)_([\d.]+)s\.jpg$")
+COVER_RE = re.compile(r"^(closeup|half|full|scene|cover)_(\d\d)\.jpg$")
+FRAME_RE = re.compile(r"^frame_(?:(closeup|half|full|scene)_)?(\d\d)_([\d.]+)s\.jpg$")
 
 
 def cover_candidates(d):
@@ -185,7 +185,7 @@ def package_one(c, it, seg, a):
     try:
         draft_meta(c, it, seg, a)
         make_covers(c, it, seg, a)
-        try:   # 候选排序：算法推荐 Top3（cover_rank.py，Qwen-VL 一首一次调用）；失败不影响封面本身
+        try:   # 候选排序：算法推荐 Top3（cover_rank.py，Qwen 一首一次调用）；失败不影响封面本身
             from .cover_rank import rank
             rank(c.song_dir(it).resolve(), force=a.force)
         except Exception as e:  # noqa: BLE001
