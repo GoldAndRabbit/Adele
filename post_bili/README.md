@@ -25,27 +25,52 @@ bin/biliup -u post_bili/cookies.json login    # 选扫码登录，用 B 站 App 
 
 ## 投一首
 
-```bash
-# 1. 检查：不上传，只打印标题 / 简介 / 标签 / 封面 / 成品规格，有问题标 ✗
-.venv/bin/python post_bili/upload.py posts/agua_madrid_official          # 单曲
-.venv/bin/python post_bili/upload.py posts/lorde_acl2026/01_royals       # 演唱会里的一首
+分两步，中间只看一个完整的投稿 JSON：`post/bili_upload.json`（审核页「投稿信息」里显示的就是它）。
 
-# 2. 看过没问题再加 --submit
-.venv/bin/python post_bili/upload.py posts/agua_madrid_official --submit
+```bash
+# 1. 生成：从投稿草稿 + 成品 + 审核页选的封面拼出 post/bili_upload.json，并检查；不上传
+.venv/bin/python post_bili/upload.py posts/dualipa_mexico2025/06_levitating
+# 2. 看过 JSON 没问题再上传：只读 bili_upload.json，原样提交
+.venv/bin/python post_bili/upload.py posts/dualipa_mexico2025/06_levitating --submit
 ```
 
-常用选项：
+已经有 `bili_upload.json` 时第 1 步不覆盖（可能手改过），按草稿重新生成加 `--rebuild`。
+
+`bili_upload.json` 的 key 是 B 站投稿页上的名称，值也是投稿页上的说法，要改哪项直接改这个文件：
+
+```json
+{
+  "视频文件": "posts/<场次>/<歌>/post/<歌> 4K60FPS Sub-WaterMark.mp4",
+  "封面": "posts/<场次>/<歌>/post/<歌>_cover_picked_<时间>.png",
+  "标题": "…（1~80 字）",
+  "类型": "转载",            // 自制 / 转载（转载必须填转载来源）
+  "转载来源": "",
+  "分区": 29,                // 音乐 > 音乐现场（旧版分区号）
+  "新版分区": null,          // 登录后 --types 查；null 不提交
+  "标签": ["…"],             // 最多 12 个，每个不超过 20 字
+  "简介": "…（1~2000 字）",
+  "定时发布": "",            // "YYYY-MM-DD HH:MM"，空 = 审核通过后立即；至少晚于提交 4 小时
+  "可见范围": "公开",        // 公开 / 仅自己可见
+  "Hi-Res无损": true,
+  "杜比音效": true,
+  "UP主水印": false,
+  "禁止转载": false,
+  "充电": false
+}
+```
+
+生成时的选项（写进 JSON；上传时只看 JSON）：
 
 | 选项 | 作用 |
 |---|---|
-| `--only-self` | 仅自己可见。第一次投或改了流程时用，先在 B 站上看实际效果，没问题再去创作中心改成公开 |
-| `--at "2026-10-25 20:00"` | 定时发布（本机时间），至少晚于提交 4 小时，B 站规定 |
-| `--source URL` | 转载来源，覆盖 JSON 里的 |
+| `--only-self` | 可见范围写「仅自己可见」 |
+| `--at "2026-10-25 20:00"` | 定时发布（本机时间） |
+| `--source URL` | 转载来源，覆盖投稿草稿里的 |
 | `--cover 图片` | 换封面，覆盖审核页选的 |
-| `--tid N` / `--tid-v2 N` | 投稿分区，默认见下面「投稿参数」 |
-| `--types` | 查 B 站的分区表（要先登录），不用给歌曲目录 |
-| `--line 线路` | 上传线路，默认自动选；传得慢可以换（`bin/biliup upload --help` 里有列表） |
-| `--again` | 已经投过（有 `post/publish.json`）还要再投 |
+| `--tid N` / `--tid-v2 N` | 投稿分区 |
+| `--rebuild` | 已有 bili_upload.json 也按草稿重新生成 |
+
+其他：`--types` 查 B 站的分区表（要先登录）；`--line 线路` 换上传线路；`--again` 已经投过（有 `post/publish.json`）还要再投。
 
 ## upload.py 读什么、查什么
 
@@ -65,7 +90,7 @@ B 站投稿页上的每一项、我们的默认值和来源。固定选项集中
 |---|---|---|---|
 | 视频文件 | — | `post/<名> 4K60FPS Sub-WaterMark.mp4` | render.py 的成品 |
 | 封面（16:9） | `cover` | 审核页选的最新一张 | `--cover` |
-| 封面（4:3） | — | 不提交 | biliup 不支持，需要的话去网页补 |
+| 封面（4:3） | `cover43` | 审核页选的最新一张 | biliup 没有参数：upload.py 先用网页传封面的接口传上去，地址走 `--extra-fields`（第一次投后在创作中心核对） |
 | 标题 | `title` | 投稿 JSON | make_meta.py / package.py |
 | 类型 | `copyright` | 2 转载 | `DEFAULTS` |
 | 转载来源 | `source` | 原视频链接 | `--source` |
@@ -88,7 +113,7 @@ B 站投稿页上的每一项、我们的默认值和来源。固定选项集中
 
 有两项第一次试投后要在创作中心核对：
 - **杜比**：B 站的杜比音效一般要求音轨本身是杜比格式，我们的音轨是 FLAC 立体声。勾上之后 B 站是忽略、拒绝还是正常标，要看第一次的结果。
-- **水印**：`watermark` 是网页投稿接口的字段，biliup 默认走客户端接口，不确定会不会被采纳。不生效的话改走网页接口（biliup upload 的 `--submit web`，要在 upload.py 里加上），或者把创作中心「投稿设置」里的默认水印关掉。
+- **水印、4:3 封面**：`watermark`、`cover43` 都是网页投稿接口的字段，upload.py 用 `--submit web` 走网页接口提交。不生效的话水印去创作中心「投稿设置」里关默认水印，4:3 封面去网页补。
 
 ## 提交前检查
 
@@ -104,7 +129,7 @@ B 站投稿页上的每一项、我们的默认值和来源。固定选项集中
 - `logs/publish_<时间>.log`：biliup 的完整输出，失败时先看这里。
 - 投完先进审核，审核通过才算发布。状态可以用 `bin/biliup -u post_bili/cookies.json list --is-pubing` 查，
   或者 `show <BV号>` 看单个稿件。
-- 4:3 封面、合集这几项 upload.py 不管，需要的话去创作中心网页补。
+- 合集 upload.py 不管，需要的话去创作中心网页补。
   合集也可以用 `bin/biliup -u post_bili/cookies.json season ...` 管，见 `season --help`。
 
 ## 注意

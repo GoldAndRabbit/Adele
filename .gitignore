@@ -18,4 +18,5 @@ models/yunet/
 
 # B 站投稿：登录凭证（等于账号密码）、post_bili/install.sh 下载的 biliup
 post_bili/cookies.json
+qrcode.png   # biliup login 扫码时生成的二维码
 bin/biliup

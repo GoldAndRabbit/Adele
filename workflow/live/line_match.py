@@ -340,12 +340,16 @@ BLOCK_GAP = 6.0  # 和后面隔着这么久没字幕，才算单独一块
 
 
 def tidy(text):
-    """显示用：整行包在括号里的去掉外层括号；括号不配对（逗号前半句切出来的「(Pa' tipos como tú」）去掉括号。"""
+    """显示用：整行包在括号里的去掉外层括号；括号不配对（逗号前半句切出来的「(Pa' tipos como tú」）去掉括号；行尾括号里的和声去掉。"""
     t = text.strip()
     if t.startswith("(") and t.endswith(")") and t.count("(") == 1:
         t = t[1:-1].strip()
     if t.count("(") != t.count(")"):
         t = t.replace("(", "").replace(")", "").strip()
+    # 行尾括号里的和声（Genius 标的录音室版 backing vocals，现场多半是观众在唱）：英文太长折成两行，诗意版又不翻，去掉
+    m = re.match(r"^(.*\S)\s*\([^()]*\)$", t)
+    if m and re.search(r"\w", m[1]):
+        t = m[1].strip()
     return _pair_quotes(t)
 
 

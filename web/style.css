@@ -199,8 +199,6 @@ td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .cover .dl.busy { opacity: 0.4; cursor: default; }
 .form { display: flex; flex-direction: column; gap: 10px; }
 .form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-.form label .cnt { float: right; }
-.form label .cnt.over { color: var(--bad); }
 .form input, .form textarea {
   font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; resize: vertical;
 }
@@ -263,7 +261,7 @@ td.cs.low { color: var(--bad); font-weight: 600; }
 @media (max-width: 1100px) { .bottom { grid-template-columns: 1fr; } .lyrics-pane .table-wrap { height: 420px; flex: none; } }
 
 /* 视频窄一点，歌词表宽一点：字幕和实际听到并列 */
-.top { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.3fr); }
+.top, .finals { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.3fr); }
 td.heard { color: var(--muted); font-style: italic; }
 
 .spk.genius { background: transparent; color: var(--muted); border: 1px solid var(--line); }
@@ -357,7 +355,9 @@ td.src { white-space: nowrap; }
 .notes-list tr:hover td { background: rgba(255,255,255,.04); cursor: pointer; }
 .notes-list td.note { color: #aaebaa; }
 /* 成品播放器（预览下方） */
-.final-wrap { margin-top: 12px; }
+.finals { display: grid; gap: 18px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+@media (max-width: 1100px) { .finals { grid-template-columns: 1fr; } }
+.final-wrap { min-width: 0; }
 .final-title { font-size: 13px; opacity: .75; margin: 0 0 6px; }
 .final-video { width: 100%; display: block; background: #000; border-radius: 6px; }
 /* 合唱检测行：排进去的合唱字幕 */
@@ -372,7 +372,8 @@ td.src { white-space: nowrap; }
 }
 .toast.err { background: #a33; }
 .final-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 12px; }
-.final-path code { user-select: all; word-break: break-all; opacity: .85; }
+.final-path code { flex-basis: 100%; user-select: all; word-break: break-all; opacity: .85; }
+.final-path code[hidden] { display: none; }
 /* 字幕预览版标题（区别于下方的 4K 成品） */
 .pane-title { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
 .pane-title .pane-sub { font-size: 12px; font-weight: 400; opacity: .6; margin-left: 8px; }
@@ -381,5 +382,8 @@ td.src { white-space: nowrap; }
 .exp-table td.zh, .exp-table td.zh3 { min-width: 8em; }
 .table-wrap.hide-genius .gcol { display: none; }
 .btn.mini { font-size: 12px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
-.form .tags-row { display: flex; gap: 8px; align-items: center; }
-.form .tags-row .tags-line { flex: 1; min-width: 0; }
+/* B 站投稿 JSON：只读，完整显示（太长时框内滚动） */
+.bili-json { display: flex; flex-direction: column; gap: 6px; }
+.bili-json .json-label { display: flex; align-items: center; justify-content: space-between; font-size: 13px; opacity: .85; }
+.json-view { margin: 0; max-height: 520px; overflow: auto; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; user-select: text; }

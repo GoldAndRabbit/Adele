@@ -38,7 +38,6 @@ const api = async (p, body) => {
 
 const REVIEW = { pending: ["待审", "gray"], approved: ["已通过", "ok"], rejected: ["已打回", "bad"], stale: ["通过后有改动", "warn"] };
 const STAGE = { new: "未开始", lyrics: "只有歌词", located: "已定位", refined: "字幕已出", packaged: "可审核", hd_done: "高清已出" };
-const TITLE_MAX = 80;
 const SHOT = { closeup: "特写", half: "半身", full: "全身", scene: "氛围 / 舞台", cover: "补充" };
 
 const state = { concerts: [], concert: null, song: null, cleanup: [] };
@@ -141,6 +140,7 @@ async function viewSong(route) {
     h("a", { class: "notes-link", href: "javascript:void 0", onclick: () => showNotes(x, player, s) }, `注释 ${nNotes}`));
   const card = h("div", { class: "card" }, head,
     h("div", { class: "top" }, player.el, lyricsPane),
+    player.finals,
     h("div", { class: "bottom" }, covers.el, form));
   $("#view").replaceChildren(card);
 }
@@ -249,35 +249,19 @@ function coverPane(s) {
 }
 
 function formPane(c, s, covers) {
+  // 投稿信息只看 B 站投稿 JSON（post/bili_upload.json，放在成品右边）；要改哪项走对话，由我改 JSON
   const entry = s.review_entry || {};
-  const draft = s.draft || {};
-  const title = h("input", { value: entry.title ?? draft.title ?? "" });
-  const cnt = h("span", { class: "cnt" });
-  const upd = () => { cnt.textContent = `${title.value.length}/${TITLE_MAX}`; cnt.classList.toggle("over", title.value.length > TITLE_MAX); };
-  title.addEventListener("input", upd);
-  upd();
-  const d = draft.intro || {};
-  const oldIntro = [entry.intro_song, entry.intro_performance].filter(Boolean).join("\n\n");
-  const intro = h("textarea", { rows: 14 },
-    entry.intro ?? (oldIntro || draft.intro_text || [d.song, d.performance, d.lyrics].filter(Boolean).join("\n\n")));
-  const tags = tagEditor(entry.tags ?? draft.tags ?? []);
   const note = h("input", { value: entry.note || "" });
   const msg = h("span", { class: "hint" }, entry.updated_at ? `上次保存 ${entry.updated_at}` : "");
   const save = async (status) => {
     try {
-      const r = await api(`/api/concerts/${c.slug}/songs/${s.name}/review`, {
-        status, cover: covers.state.chosen, title: title.value.trim(), intro: intro.value.trim(),
-        note: note.value.trim(), tags: tags.values(),
-      });
+      const r = await api(`/api/concerts/${c.slug}/songs/${s.name}/review`, { status, cover: covers.state.chosen, note: note.value.trim() });
       msg.textContent = `已保存 ${r.entry.updated_at}${status === "approved" ? " · 已通过" : status === "rejected" ? " · 已打回" : ""}`;
       await refreshConcert();
     } catch (err) { msg.textContent = `保存失败：${err.message}`; }
   };
   return h("div", { class: "form" },
-    h("div", { class: "section-label" }, "投稿信息"),
-    h("label", {}, h("span", {}, "投稿标题 ", cnt), title),
-    h("label", {}, "简介（歌曲介绍 + 演出介绍 + 歌词介绍）", intro),
-    h("label", {}, h("span", {}, "标签（下划线分隔，整行复制）"), tags.el),
+    h("div", { class: "section-label" }, "审核"),
     h("div", { class: "actions" },
       h("label", { class: "grow" }, "备注（打回原因等）", note),
       h("button", { class: "btn", onclick: () => save(undefined) }, "保存"),
@@ -286,17 +270,16 @@ function formPane(c, s, covers) {
       msg));
 }
 
-// 标签：一行字符串，下划线分隔（标签内部的空格保留），右边一键复制
-function tagEditor(init) {
-  const line = h("input", { class: "tags-line", readonly: true,
-    value: [...new Set(init.map((x) => String(x).trim()).filter(Boolean))].join("_") });
+// B 站投稿 JSON（post/bili_upload.json）：上传时原样提交的全部字段，只展示（要改走对话）
+function biliJson(s) {
+  const label = h("div", { class: "json-label" }, "B 站投稿 JSON（上传时原样提交，要改跟我说）");
   const btn = h("button", { class: "btn mini", onclick: async (e) => {
     e.preventDefault();
-    try { await navigator.clipboard.writeText(line.value); } catch (err) { line.select(); document.execCommand("copy"); }
-    btn.textContent = "已复制";
+    try { await navigator.clipboard.writeText(s.bili_upload); btn.textContent = "已复制"; } catch (err) { btn.textContent = "复制失败"; }
     setTimeout(() => { btn.textContent = "复制"; }, 1500);
   } }, "复制");
-  return { el: h("div", { class: "tags-row" }, line, btn), values: () => line.value.split("_").map((x) => x.trim()).filter(Boolean) };
+  label.append(btn);
+  return h("div", { class: "bili-json" }, label, h("div", { class: "hint" }, s.bili_upload_path), h("pre", { class: "json-view" }, s.bili_upload));
 }
 
 async function videoPane(c, s, at) {
@@ -381,21 +364,36 @@ async function videoPane(c, s, at) {
       h("div", { class: "spacer" }),
       subSwitch,
       h("button", { class: "btn", onclick: () => toggleFullscreen(stage) }, "⛶")));
-  // 成品（4K60、字幕和水印已经烧进画面）：放在预览下方直接播；两个视频同时只播一个
-  if (s.final) {
-    const fin = h("video", { src: s.final, controls: true, preload: "metadata", playsinline: true, class: "final-video" });
-    fin.addEventListener("play", () => video.pause());
-    video.addEventListener("play", () => fin.pause());
+  // 成品（4K60、字幕和水印已经烧进画面）：放在预览下方直接播；成品目录里有别的编码版本（对比用）也各放一个播放器。
+  // 所有视频同时只播一个
+  const players = [video];
+  // 整行横跨页面，一行两列：成品视频 + 右边的 B 站投稿 JSON
+  const finals = (s.finals || []).length || s.bili_upload ? h("div", { class: "finals" }) : null;
+  const solo = (v) => v.addEventListener("play", () => players.forEach((x) => x !== v && x.pause()));
+  solo(video);
+  for (const f of s.finals || []) {
+    const fin = h("video", { src: f.url, controls: true, preload: "metadata", playsinline: true, class: "final-video" });
+    players.push(fin);
+    solo(fin);
     // 成品在本机的完整路径：可以复制，或者直接在 Finder 里定位到这个文件
     const copyBtn = h("button", { class: "btn", onclick: async () => {
-      try { await navigator.clipboard.writeText(s.final_path); copyBtn.textContent = "已复制"; } catch (e) { copyBtn.textContent = "复制失败"; }
+      try { await navigator.clipboard.writeText(f.path); copyBtn.textContent = "已复制"; } catch (e) { copyBtn.textContent = "复制失败"; }
       setTimeout(() => { copyBtn.textContent = "复制路径"; }, 1500);
     } }, "复制路径");
-    const revealBtn = h("button", { class: "btn", onclick: () => fetch(`/api/concerts/${c.slug}/songs/${s.name}/reveal_final`, { method: "POST" }) },
+    const revealBtn = h("button", { class: "btn", onclick: () =>
+      fetch(`/api/concerts/${c.slug}/songs/${s.name}/reveal_final?file=${encodeURIComponent(f.file)}`, { method: "POST" }) },
       "在 Finder 中显示");
-    el.append(h("div", { class: "final-wrap" }, h("div", { class: "final-title" }, "成品 4K60（字幕和水印已烧进画面）"),
-      h("div", { class: "final-path" }, h("code", {}, s.final_path), copyBtn, revealBtn), fin));
+    // 完整路径默认隐藏（长路径会折行，两列视频就对不齐了），点「显示路径」再展开
+    const pathCode = h("code", { hidden: true }, f.path);
+    const pathBtn = h("button", { class: "btn", onclick: () => {
+      pathCode.hidden = !pathCode.hidden;
+      pathBtn.textContent = pathCode.hidden ? "显示路径" : "隐藏路径";
+    } }, "显示路径");
+    finals.append(h("div", { class: "final-wrap" }, h("div", { class: "final-title" }, `成品 4K60 · ${f.label} · ${f.gb} GB（字幕和水印已烧进画面）`),
+      h("div", { class: "final-path" }, pathBtn, copyBtn, revealBtn, pathCode), fin));
   }
+  if (finals && s.bili_upload) finals.append(biliJson(s));   // 右边：B 站投稿 JSON
+
   // 加载字幕文件，叠在预览视频上
   const setAss = async (url) => {
     if (!url) { if (overlay) { overlay.setAss({ ...overlay.ass, events: [] }); overlay.tick(); } return; }
@@ -404,7 +402,7 @@ async function videoPane(c, s, at) {
     else overlay = new SubOverlay(stage, video, ass, subOffset);
     applyLead();   // 里面会立即画一次（视频可能已经跳到位，暂停时不会再有 timeupdate）
   };
-  return { el, video, offset: subOffset, setAss, delay: () => BAKED_LEAD - lead };
+  return { el, finals, video, offset: subOffset, setAss, delay: () => BAKED_LEAD - lead };
 }
 
 // 逐句表格；每行时间怎么定的（几个来源投票）在「判定」的鼠标悬停说明里

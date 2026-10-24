@@ -199,10 +199,15 @@ def get_song(slug: str, name: str):
         "final": (media_url(c, name, f"post/{name} 4K60FPS Sub-WaterMark.mp4").replace(" ", "%20")
                   if (d / "post" / f"{name} 4K60FPS Sub-WaterMark.mp4").exists() else None),
         "final_path": str((d / "post" / f"{name} 4K60FPS Sub-WaterMark.mp4").resolve()),
+        # 成品目录里所有成品（正式成品 + 对比用的其他编码版本），审核页每个一个播放器
+        "finals": finals(c, name, d),
         "covers": [{**x, "file": media_url(c, name, x["file"]),
                     "file_4x3": media_url(c, name, x["file_4x3"]) if x["file_4x3"] else None}
                    for x in cover_candidates(d)],
         "draft": read_json(d / "post_draft.json", {}),
+        # B 站投稿 JSON（post_bili/upload.py 生成，上传时原样提交），审核页只展示
+        "bili_upload": (d / "post" / "bili_upload.json").read_text() if (d / "post" / "bili_upload.json").exists() else None,
+        "bili_upload_path": str((d / "post" / "bili_upload.json").resolve()),
         # 歌曲中间的半透明 logo 水印计划（workflow/song/watermark.py），审核页只做预览，不改视频
         "watermark": read_json(d / "watermark.json", None),
         # 画面内容区域（去掉宽银幕的上下黑边）：左上角 logo、水印都相对它放
@@ -254,6 +259,23 @@ def post_cover_download(slug: str, name: str, body: dict = Body(...)):
 MEDIA_OK = {".mp4", ".ass", ".jpg"}
 
 
+FINAL_LABELS = {"hw_videotoolbox": "硬件编码 H.264 VideoToolbox（对比版）", "hevc_videotoolbox": "硬件编码 HEVC VideoToolbox（对比版）"}
+
+
+def finals(c, name, d):
+    main = f"{name} 4K60FPS Sub-WaterMark.mp4"
+    files = sorted((d / "post").glob("*.mp4"), key=lambda f: (f.name != main, f.name))
+    out = []
+    for f in files:
+        if ".partial." in f.name:
+            continue
+        label = "软件编码 libx264（正式成品）" if f.name == main else \
+            next((v for k, v in FINAL_LABELS.items() if k in f.name), f.name)
+        out.append({"label": label, "file": f.name, "url": media_url(c, name, f"post/{f.name}").replace(" ", "%20"),
+                    "path": str(f.resolve()), "gb": round(f.stat().st_size / 1e9, 2)})
+    return out
+
+
 def media_url(c, name, rel):
     """封面会原地重新生成（文件名不变）：地址带上修改时间，换了图浏览器一定重新拉，不会用缓存里的旧图。"""
     f = c.song_dir({"name": name}) / rel
@@ -262,11 +284,12 @@ def media_url(c, name, rel):
 
 
 @app.post("/api/concerts/{slug}/songs/{name}/reveal_final")
-def reveal_final(slug: str, name: str):
-    """在 Finder 里定位这首的成品（只开这一个文件，审核页「在 Finder 中显示」用）。"""
+def reveal_final(slug: str, name: str, file: str = ""):
+    """在 Finder 里定位这首的成品（只开这一个文件，审核页「在 Finder 中显示」用）；file：成品目录里的哪个文件，默认正式成品。"""
     c = concert(slug)
-    f = (c.song_dir(song(c, name)) / "post" / f"{name} 4K60FPS Sub-WaterMark.mp4").resolve()
-    if not f.is_file():
+    post = c.song_dir(song(c, name)) / "post"
+    f = (post / (file or f"{name} 4K60FPS Sub-WaterMark.mp4")).resolve()
+    if f.parent != post.resolve() or f.suffix != ".mp4" or not f.is_file():
         raise HTTPException(404)
     subprocess.run(["open", "-R", str(f)], check=False)
     return {"ok": True}

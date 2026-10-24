@@ -12,6 +12,10 @@
 成品：posts/<场次>/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4（单曲是 posts/<name>/post/；每首只留这一个版本）
 
     .venv/bin/python -m workflow.song.render song:lorde_acl2026:01_royals post:lose_yourself_2009 ...
+    .venv/bin/python -m workflow.song.render --enc hevc_hw song:...   # 换编码器（见 ENCODERS），默认 x264
+
+编码器：默认 x264（软件，crf 18）。硬件 VideoToolbox 编码这一步快一倍（Levitating 4:24：10:39 -> 5:05），
+但插帧才是大头，整首只省约 20%；同码率下软件画质更好，所以默认不用硬件，只保留接口。
 """
 
 import os
@@ -26,6 +30,11 @@ LEAD_EXTRA = 0.6   # 字幕文件里已经统一提前 0.2s；审核页默认「
 LOGO = ROOT / "assets" / "adele-logo.png"
 LOGO_SCALE = 0.10  # 左上角 logo：和 make_mv.py 一样（logo 原图宽 × 0.10，离画面内容左上角 15px）
 W, H, FPS = 3840, 2160, 60
+ENCODERS = {   # 成品视频编码参数（--enc）；硬件的码率是和 x264 crf 18 肉眼看不出差别的取值（Levitating 实测）
+    "x264": ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-profile:v", "high", "-level", "5.2"],
+    "h264_hw": ["-c:v", "h264_videotoolbox", "-b:v", "50M", "-maxrate", "70M", "-bufsize", "100M", "-profile:v", "high", "-level", "5.2"],
+    "hevc_hw": ["-c:v", "hevc_videotoolbox", "-b:v", "35M", "-maxrate", "50M", "-bufsize", "70M", "-profile:v", "main", "-tag:v", "hvc1"],
+}
 JPG_FRAME = 0.6e6  # 1080p JPEG(q1) 一帧大约 0.6MB：磁盘预检用（插帧前后的帧 + 4K 成品）
 
 
@@ -138,7 +147,7 @@ def render(d, work, out, frames=None, t_in=0.0, enc=None):
     fc.append(f"[{last}]format=yuv420p[v]")
     tmp = out.with_suffix(".partial.mp4")
     sh(["ffmpeg", "-y", "-hide_banner", *inputs, "-filter_complex", ";".join(fc), "-map", "[v]", "-map", "1:a",
-        *(enc or ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-profile:v", "high", "-level", "5.2"]),
+        *(enc or ENCODERS["x264"]),
         "-c:a", "copy",   # FLAC 48kHz/24bit 原样放进 mp4：B 站靠它给 Hi-Res无损 标
         "-shortest", "-movflags", "+faststart", tmp], cwd=work)
     tmp.replace(out)
@@ -160,7 +169,7 @@ def check_disk(d, seconds):
         sys.exit(f"磁盘不够：{d.name} 至少要 {need / 1e9:.0f}GB，剩余 {free / 1e9:.0f}GB。清理后重跑，已完成的会跳过")
 
 
-def one(spec):
+def one(spec, enc="x264"):
     d, span, posts = song_of(spec)
     print(f"\n========== {d.name} ==========", flush=True)
     out = d / "post" / f"{d.name} 4K60FPS Sub-WaterMark.mp4"
@@ -178,7 +187,7 @@ def one(spec):
         cmd += ["--start", f"{span[0]:.3f}", "--end", f"{span[1]:.3f}"]
     sh(cmd, env=env, cwd=ROOT)
     (d / "post").mkdir(exist_ok=True)
-    render(d, d, out)
+    render(d, d, out, enc=ENCODERS[enc])
     shutil.rmtree(d / "frames_out", ignore_errors=True)   # 帧序列：做完这首就删
     (d / "video_1080.mp4").unlink(missing_ok=True)
     print(f">>> {out}", flush=True)
@@ -186,9 +195,17 @@ def one(spec):
 
 if __name__ == "__main__":
     skipped = {}
-    for spec in sys.argv[1:]:
+    args = sys.argv[1:]
+    enc = "x264"
+    if "--enc" in args:   # --enc x264 / h264_hw / hevc_hw
+        k = args.index("--enc")
+        enc = args[k + 1]
+        del args[k:k + 2]
+        if enc not in ENCODERS:
+            sys.exit(f"--enc 只能是 {' / '.join(ENCODERS)}")
+    for spec in args:
         try:
-            one(spec)
+            one(spec, enc)
         except Skip as e:
             print(f"跳过 {spec}：{e}", flush=True)
             skipped[spec] = str(e)
