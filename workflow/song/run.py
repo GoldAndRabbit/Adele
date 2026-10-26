@@ -205,6 +205,7 @@ def run(d, lyrics, out_dir, meta=None):
 
     # 第 0 步：听
     reads, cands, sets = L.listen(y, SR, key, cache, LM.PITCH, beats)
+    reads = L.drop_crammed(reads)
     log = {"cut_sets": [[round(b, 1) for _, b in s[:-1]] for s in sets], "rounds": []}
 
     # 第 1~3 步：对齐 → 锚点 → 锚点之间重新识别 → 再对齐
@@ -215,7 +216,7 @@ def run(d, lyrics, out_dir, meta=None):
                               "relistened": [[round(w[0]["s"], 1), round(w[-1]["e"], 1)] for w in added]})
         if not added:
             break
-        reads = reads + added
+        reads = L.drop_crammed(reads + added)
         cells, path, occ = run_alignment(reads, ly)
     n_reads = len(reads)
 

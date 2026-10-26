@@ -199,7 +199,7 @@ def static_logo_mask(video, n=48):
     """频道台标（FC BAYERN.TV、FCB.tv 这类）在整个视频里位置固定、颜色不变，画面却一直在变：
     均匀抽 n 帧，各帧几乎一样（标准差小）又偏亮、偏灰白的像素是实心台标；半透明的台标像素会跟着画面变，
     但文字轮廓的边缘每帧都在同一处（≥ 60% 的帧是边缘），边缘附近偏亮的像素也算。只看画面四个角（上下各 22%、左右各 32%）。
-    返回原始分辨率的 0/255 掩码（外扩几像素），没有就 None。"""
+    返回原始分辨率的 0/255 掩码（台标整块的外框），没有就 None。"""
     import cv2
     import tempfile
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
@@ -228,8 +228,18 @@ def static_logo_mask(video, n=48):
     m = cv2.morphologyEx(m * corner, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))   # 去掉零星噪点
     if m.sum() < h * w * 0.0003:
         return None
-    k = max(3, int(h * 0.006)) | 1
-    return cv2.dilate(m * 255, np.ones((k, k), np.uint8), iterations=2)
+    # 只修笔画会留残字（台标在几种样式间切换、笔画只检测到边缘：智利 Lollapalooza 的 BANCO DE CHILE STAGE）：
+    # 相邻笔画连成一块，整块的外框（四周再留 1.5%）都修补掉
+    k = max(3, int(h * 0.03)) | 1
+    blobs = cv2.dilate(m, np.ones((k, k), np.uint8))
+    n_lab, lab, stats, _ = cv2.connectedComponentsWithStats(blobs)
+    out, pad = np.zeros_like(m), int(h * 0.015)
+    for i in range(1, n_lab):
+        x, y, bw, bh, area = stats[i]
+        if m[lab == i].sum() < h * w * 0.0001:   # 零星的一小块，不是台标
+            continue
+        out[max(0, y - pad):y + bh + pad, max(0, x - pad):x + bw + pad] = 255
+    return out if out.any() else None
 
 
 def grab_hd(video, t, work, box=None):
@@ -460,6 +470,7 @@ def pick_faces(video, per=4, step=1.0, gap=6.0, max_faces=4, t0=None, t1=None, b
 
 POOL = 1.6          # 候选池是最终张数的几倍
 REFINE_SPAN = 0.4   # 补挑睁眼帧：前后各看几秒
+SUB_MIN = 0.09      # 副标题字号保底：画布高的 9%（1080 高约 97px），再小手机上看不清
 REFRAME_MAX = 1.5   # 重新取景最多放大几倍（4K 片源也不放太大，留一点现场感）
 SCREEN_BATCH = 18   # Qwen 初筛一次发几张
 MIN_KEEP = 6        # 一个景别至少留几张：闭眼 / 挡脸的帧只在剩下的够这么多时才丢
@@ -618,6 +629,7 @@ SCREEN_PROMPT = """上面 {n} 张是同一首歌现场演出的截图（还没�
   "appeal": 作为封面底图的吸引力 1~10（主唱清楚、有表情、光线好看、有现场氛围）}}]}}
 注意：唱歌时张嘴是正常的；闭眼、半闭眼、眼神涣散、表情扭曲、模糊、脸太暗都要扣分。"""
 EYES = {"open": 1.0, "half": 0.55, "closed": 0.25, "unseen": 0.45}
+WHO = None   # --who：主角是谁（合作演出时只要主角，如 Stan 摇滚名人堂版只要 Eminem、不要 Ed Sheeran）；初筛判定主体不是他的直接去掉
 
 
 def screen_frames(imgs):
@@ -633,7 +645,9 @@ def screen_frames(imgs):
             im.save(b, "JPEG", quality=85)
             payload.append((f"图{i}", b.getvalue()))
         try:
-            res = vision_json(SCREEN_SYSTEM, SCREEN_PROMPT.format(n=len(batch)), payload, label=f"封面初筛 {s // SCREEN_BATCH + 1}")
+            prompt = SCREEN_PROMPT.format(n=len(batch)) + (f"\n主唱是 {WHO}。每张再多输出一项 \"main\"：画面主体是不是这个人"
+                                                          "（true / false；画面主体是合作嘉宾、乐手的算 false）。" if WHO else "")
+            res = vision_json(SCREEN_SYSTEM, prompt, payload, label=f"封面初筛 {s // SCREEN_BATCH + 1}")
         except Exception as e:  # noqa: BLE001 接口挂了就只按清晰度和位置挑
             print(f"  封面初筛失败（{e}），这一批只按清晰度和字的位置挑")
             continue
@@ -698,7 +712,9 @@ def pick_scenes(video, n, step=1.0, gap=5.0, t0=None, t1=None, max_screen=72, ki
             im.save(b, "JPEG", quality=85)
             payload.append((f"图{i}", b.getvalue()))
         try:
-            r = vision_json(SCENE_SYSTEM, (SCENE_KINDS[kind][1] + SCENE_JSON).format(n=len(batch)), payload,
+            who = (f"\n主角是 {WHO}。画面里要能清楚看到他、且他是画面主体；没有他、或主体是嘉宾 / 乐手 / 伴舞的打低分。"
+                   if WHO else "")   # 戴头套这类认不出脸的主角（Marshmello）：不走人脸，按画面挑他
+            r = vision_json(SCENE_SYSTEM, (SCENE_KINDS[kind][1] + SCENE_JSON).format(n=len(batch)) + who, payload,
                             label=f"{SCENE_KINDS[kind][0]}选帧 {s0 // SCREEN_BATCH + 1}")
         except Exception as e:  # noqa: BLE001
             print(f"  氛围选帧这一批失败（{e}），按清晰度算")
@@ -1090,11 +1106,15 @@ def compose(frame, a):
             if sf.size < ch * 0.10:
                 # 超短标题（TQG）：字号顶到高度上限也不宽，副标题按 85% 算会小得看不清；字号保底画布高的 10%
                 # （和长标题的副标题一样大），宽度最多到画布宽的 85%，可以比标题宽
-                sf, tracking = fit_width(a.subtitle, "sub", int(cw * 0.85), int(ch * 0.10)), 0.0
+                sf, tracking = fit_width(a.subtitle, "sub", int(cw * 0.90), int(ch * 0.10)), 0.0
         else:
             # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
             sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.68))
             tracking = max(0.0, (title_w - ink_width(a.subtitle, sf)) / max(1, len(a.subtitle) - 1))
+            if sf.size < ch * SUB_MIN:
+                # 短标题（Stan、Ribs）配长副标题：按标题宽度排，副标题小得看不清（用户 2026-10-24）；
+                # 字号保底，宽度放开到画布的 85%，可以比标题宽
+                sf, tracking = fit_width(a.subtitle, "sub", int(cw * 0.90), int(ch * SUB_MIN)), 0.0
         # 标题基线：默认在副标题上方 1.12 个字号；标题有下伸笔画（Liability 的 y、Girl 的 g）时，
         # 按「副标题字顶 + 描边」和「标题下伸 + 描边」实际算，再留一点空，免得压到第二行
         sub_top = -sf.getbbox(a.subtitle, anchor="ls")[1] + max(2, int(sf.size * 0.08))
@@ -1134,7 +1154,7 @@ def contact_sheet(covers, cols=3):
     return sheet
 
 
-def main():
+def build_parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--name", required=True)
     p.add_argument("--title", required=True, help="大标题，一般是歌名")
@@ -1191,13 +1211,26 @@ def main():
     p.add_argument("--recompose", action="store_true",
                    help="只重排文字：用 out-dir 里已有的高清帧（frame_*.jpg）重新生成封面，不重新挑帧、不重新高清化")
     p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png，如 assets/crests/fc_bayern.png），和左上 logo + 4K 徽章等高对齐，可多次")
+    p.add_argument("--who", help="主角是谁（外貌描述），初筛时画面主体不是他的排到最后，如 \"Eminem（戴黑色兜帽的白人说唱歌手，不是弹吉他的红发 Ed Sheeran）\"")
     p.add_argument("--logo", default="assets/adele-logo.png")
     p.add_argument("--badge", default="assets/4K60-logo.jpg", help="4K60 徽章图，不存在时用代码画的徽章")
-    a = p.parse_args()
+    return p
+
+
+def compose_pair(frame, argv):
+    """一帧排成 16:9 和 4:3 两张封面（排版参数同命令行，如 ["--name", n, "--title", t, "--subtitle", s]）。
+    整场封面池（workflow/live/cover_pool.py）给某首歌用池里的帧时调。"""
+    a = build_parser().parse_args([str(x) for x in argv])
+    return compose(frame, a), compose(crop_ratio(frame, 4 / 3), a)
+
+
+def main():
+    a = build_parser().parse_args()
 
     video = Path(a.video) if a.video else ROOT / "posts" / a.name / "source.mp4"
     a.fill = a.fill or ["extend", "blur"]
     globals()["CROP_BOTTOM"] = a.crop_bottom
+    globals()["WHO"] = a.who
     if not a.keep_bars and not a.image and not a.recompose:
         globals()["CONTENT"] = content_crop(video, a.start, a.end)
         if CONTENT:
@@ -1206,7 +1239,16 @@ def main():
     globals()["INPAINT_SUBS"] = a.inpaint_subs
     globals()["INPAINT_CORNERS"] = a.inpaint_corners
     if a.inpaint_static:
-        globals()["STATIC_MASK"] = static_logo_mask(video)
+        # 台标位置每次都要扫整个视频（整场演唱会约 2 分钟）：存在视频旁边，同一个视频再挑封面直接用
+        cache = video.resolve().parent / f".{video.resolve().stem}_static_logo_mask.png"
+        if cache.exists():
+            import cv2
+            globals()["STATIC_MASK"] = cv2.imread(str(cache), cv2.IMREAD_GRAYSCALE)
+        else:
+            globals()["STATIC_MASK"] = static_logo_mask(video)
+            if STATIC_MASK is not None:
+                import cv2
+                cv2.imwrite(str(cache), STATIC_MASK)
         print("固定台标：" + ("找到了，取帧后修补掉" if STATIC_MASK is not None else "没找到"), flush=True)
     out = Path(a.out_dir) if a.out_dir else ROOT / "posts" / a.name / "post" / "cover"
     out.mkdir(parents=True, exist_ok=True)
@@ -1226,7 +1268,7 @@ def main():
 
     if a.recompose:
         for f in sorted(out.glob("frame_*.jpg")):
-            m = re.match(r"frame_(?:(closeup|half|full|scene)_)?(\d\d)_", f.name)
+            m = re.match(r"frame_(?:(closeup|half|full|scene|pool)_)?(\d\d)_", f.name)
             if not m:
                 continue
             k = m[1] or "cover"
@@ -1291,6 +1333,12 @@ def main():
                 res = screen_frames([(f"{k}:{i}", grab_box(video, pool[k][i]["t"], pool[k][i]["box"])) for k, i in keys])
                 for k, i in keys:
                     pool[k][i]["vlm"] = res.get(f"{k}:{i}")
+                if WHO:   # 画面主体不是主角（Stan 摇滚名人堂版的 Ed Sheeran 特写）：直接去掉，不拿来凑张数
+                    for k in pool:
+                        drop = [x for x in pool[k] if (x.get("vlm") or {}).get("main") is False]
+                        pool[k] = [x for x in pool[k] if x not in drop]
+                        if drop:
+                            print(f"  {k}: 去掉 {len(drop)} 张主体不是主角的 {[round(x['t']) for x in drop]}")
             final = select_final(pool, per)
             (out / "pick.json").write_text(json.dumps({"band": band, "src": src, "pool": pool}, ensure_ascii=False, indent=1))
         else:

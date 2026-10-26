@@ -2,7 +2,7 @@
 """歌曲中间随机出现的半透明 logo 水印：先只出「计划」（什么时候、在哪），审核页预览；人工确认后成品渲染时才加进视频。
 
 每首 2 次（歌曲 40%~60%、75%~90% 处各随机一次），每次 3 s（淡入淡出各 0.5 s），透明度 60%、带一圈淡的深色阴影，宽度约画面 8%；
-时间避开结尾 10 s 和讲话段；位置在几个候选区域里随机，避开底部字幕区、左上角固定 logo 和人脸；
+时间避开结尾 10 s 和讲话段；位置在几个候选区域里随机，避开底部字幕区、固定 logo（左上角，或 logo_corner = right 时的右上角）和人脸；
 宽银幕片源（上下有黑边）候选区域按画面内容区域换算（workflow/letterbox.py），不放在黑边上。
 随机种子按歌名固定，同一首每次结果一样。结果写到歌曲目录的 watermark.json（时间是歌曲内时间）。
 
@@ -14,7 +14,7 @@ import hashlib
 import json
 import random
 
-from workflow.letterbox import content_box
+from workflow.letterbox import content_box, logo_corner
 
 LOGO_AR = 3936 / 1256        # assets/adele-logo.png 的宽高比
 WIDTH = 0.12                 # 水印宽度 / 画面宽度（2026-10-21 从 8% 调大；左上角 logo 约 10%）
@@ -49,7 +49,7 @@ def faces_at(video, t, offset, yunet):
     return out
 
 
-def plan(name, dur, video, offset, avoid, area=None):
+def plan(name, dur, video, offset, avoid, area=None, corner="left"):
     """avoid：不出现的时间段 [(起, 止)]（讲话）；area：画面内容区域（letterbox.content_box），结果仍是占整个画面的比例。"""
     import cv2
     from workflow.live.paths import ROOT
@@ -66,7 +66,7 @@ def plan(name, dur, video, offset, avoid, area=None):
         h = WIDTH * 16 / 9 / LOGO_AR   # 水印高度 / 画面高度（按 16:9）
         pick = None
         for _ in range(40):           # 位置：候选区域里随机，不压人脸
-            (x0, x1), (y0, y1) = rnd.choice(ZONES)
+            (x0, x1), (y0, y1) = rnd.choice(ZONES[1:] if corner == "right" else ZONES)   # logo 在右上角：右上那块不用
             x, y = rnd.uniform(x0, x1), rnd.uniform(y0, y1)
             if area:
                 x, y = area["x"] + x * area["w"], area["y"] + y * area["h"]
@@ -93,7 +93,7 @@ def run_song(slug, name):
     d = c.song_dir(c.item(name))
     info = read_json(d / "song.json", {})
     sl, pv = info.get("slice") or [0, 0], info.get("preview") or [0, 0]
-    out = plan(name, sl[1] - sl[0], d / "preview.mp4", sl[0] - pv[0], speech_spans(d), content_box(d))
+    out = plan(name, sl[1] - sl[0], d / "preview.mp4", sl[0] - pv[0], speech_spans(d), content_box(d), logo_corner(d))
     (d / "watermark.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
     print(name, [(x["t"], x["x"], x["y"]) for x in out["items"]])
 
@@ -105,7 +105,7 @@ def run_post(name):
     video = d / "source.mp4"
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
                                capture_output=True, text=True).stdout.strip())
-    out = plan(name, dur, video, 0.0, speech_spans(d), content_box(d))
+    out = plan(name, dur, video, 0.0, speech_spans(d), content_box(d), logo_corner(d))
     (d / "watermark.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
     print(name, [(x["t"], x["x"], x["y"]) for x in out["items"]])
 

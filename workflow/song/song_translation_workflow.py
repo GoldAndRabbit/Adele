@@ -309,6 +309,27 @@ def by_groups(cache, step, prompt, uniq, ctx, label, extra=None):
     return out
 
 
+def load_memory(d):
+    """译文记忆：同一首歌在别的场次已经定稿的逐句译文（歌曲目录 zh_memory.json，workflow.song.reuse 生成），
+    {原文: {"v1", "v2", "v3"}}，按 _norm(原文) 查。"""
+    f = d / "zh_memory.json"
+    lines = json.loads(f.read_text()).get("lines", {}) if f.exists() else {}
+    return {_norm(k): v for k, v in lines.items()}
+
+
+def groups_with_memory(cache, step, prompt, uniq, ctx, label, mem, key, extra=None):
+    """by_groups，但整组每一句都在译文记忆里的歌词组直接用记忆（key = v1 / v2 / v3），不问模型。"""
+    hit = lambda g: g[0]["type"] == "歌词" and all(_norm(u["orig"]) in mem for u in g)
+    todo = [i for i, g in enumerate(uniq) if not hit(g)]
+    sub = by_groups(cache, step, prompt, [uniq[i] for i in todo], ctx, label,
+                    extra={j: extra[i] for j, i in enumerate(todo)} if extra else None) if todo else {}
+    out = {i: sub[j] for j, i in enumerate(todo)}
+    for i, g in enumerate(uniq):
+        if i not in out:
+            out[i] = [mem[_norm(u["orig"])].get(key, "") for u in g]
+    return out
+
+
 # ---------------------------------------------------------------- 主流程
 
 def translate(d, out_dir, lyrics, title):
@@ -331,10 +352,10 @@ def translate(d, out_dir, lyrics, title):
     style = json.loads(style_file.read_text()).get("rules", []) if style_file.exists() else []
     gloss = glossary_for(brief, fixed_here, style)
     ctx = context_text(brief, gloss)
-    # 第 3 步 初译
-    v1 = by_groups(cache, "draft", P_DRAFT, uniq, ctx, "初译")
-    # 第 4 步 润色
-    v2 = by_groups(cache, "polish", P_POLISH, uniq, ctx, "润色", extra=v1)
+    # 第 3 步 初译、第 4 步 润色：别的场次已经定稿的同一句（译文记忆）直接用，不重新翻
+    mem = load_memory(d)
+    v1 = groups_with_memory(cache, "draft", P_DRAFT, uniq, ctx, "初译", mem, "v1")
+    v2 = groups_with_memory(cache, "polish", P_POLISH, uniq, ctx, "润色", mem, "v2", extra=v1)
 
     # 展开到每一行（同样的组共用译文）
     for g in groups:
@@ -346,9 +367,10 @@ def translate(d, out_dir, lyrics, title):
         u.setdefault("v2", "")
         u["issues"] = []
         u["locked"] = False
+        u["reused"] = u["type"] == "歌词" and _norm(u["orig"]) in mem   # 用的是译文记忆：不再审校
 
     lines = [{"line": u["i"], "type": u["type"], "orig": u["orig"], "v1": u["v1"], "v2": u["v2"]} for u in units
-             if u["type"] != "语气词"]
+             if u["type"] != "语气词" and not u["reused"]]
     notes = {}
     # 第 5 步 审校（自动改，包括意思上的问题）
     # 审校按 40 行一批同时发（长歌整首一次要 40 多秒）；每批带上前后各 3 行做上下文
@@ -374,7 +396,7 @@ def translate(d, out_dir, lyrics, title):
         old = u["v2"]
         # 同一句歌词（副歌）的其它出现一起改，保持一致
         for w in units:
-            if _norm(w["orig"]) == _norm(u["orig"]) and w["type"] == u["type"]:
+            if _norm(w["orig"]) == _norm(u["orig"]) and w["type"] == u["type"] and not w.get("reused"):
                 w["issues"].append({"type": it.get("type", ""), "problem": it.get("problem", ""), "from": old, "fix": it["fix"]})
                 w["v2"] = str(it["fix"]).strip()
     # 讲话 / 现场即兴的行（Genius 里没有、来自识别）：没有意义的幻听（人群声里识别出的乱码、不成句）不出字幕
@@ -583,7 +605,8 @@ def poetic(d, out_dir, model=None, temperature=0.7):
     keep = (MODEL, TEMPERATURE)
     MODEL, TEMPERATURE = model or MODEL, temperature
     try:
-        v3 = by_groups(cache, "poetic", P_POETIC, uniq, ctx, "诗意")   # 不给初译：给了它就照着改几个字
+        # 不给初译：给了它就照着改几个字；译文记忆里的句子直接用那边定稿的诗意版
+        v3 = groups_with_memory(cache, "poetic", P_POETIC, uniq, ctx, "诗意", load_memory(d), "v3")
     finally:
         MODEL, TEMPERATURE = keep
     R["poetic_model"] = model or keep[0]

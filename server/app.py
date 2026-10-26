@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from workflow.live import review  # noqa: E402
 from workflow.live.package import cover_candidates  # noqa: E402
-from workflow.letterbox import content_box  # noqa: E402
+from workflow.letterbox import content_box, logo_corner  # noqa: E402
 from workflow.live.paths import CONCERTS, Concert, read_json  # noqa: E402
 
 app = FastAPI(title="adele review")
@@ -206,12 +206,13 @@ def get_song(slug: str, name: str):
                    for x in cover_candidates(d)],
         "draft": read_json(d / "post_draft.json", {}),
         # B 站投稿 JSON（post_bili/upload.py 生成，上传时原样提交），审核页只展示
-        "bili_upload": (d / "post" / "bili_upload.json").read_text() if (d / "post" / "bili_upload.json").exists() else None,
+        "bili_upload": bili_upload(d),
         "bili_upload_path": str((d / "post" / "bili_upload.json").resolve()),
         # 歌曲中间的半透明 logo 水印计划（workflow/song/watermark.py），审核页只做预览，不改视频
         "watermark": read_json(d / "watermark.json", None),
         # 画面内容区域（去掉宽银幕的上下黑边）：左上角 logo、水印都相对它放
         "box": content_box(d),
+        "logo_corner": logo_corner(d),   # 片源左上角有台标的场次放右上角
         "review_entry": rv["songs"].get(name, {}),
     }
 
@@ -227,36 +228,81 @@ def post_review(slug: str, name: str, body: dict = Body(...)):
     return {"entry": entry, "review": review.effective(c, it, entry)}
 
 
+@app.get("/api/concerts/{slug}/cover_pool")
+def get_cover_pool(slug: str):
+    """整场封面池（workflow/live/cover_pool.py）：每帧的地址、类别、整场时间、在哪首歌里、标没标记；要分封面的歌。"""
+    from workflow.live.cover_pool import frames, targets
+    c = concert(slug)
+    return {"frames": [{**x, "url": f"/media/{slug}/cover_pool/{x['file']}"} for x in frames(c)],
+            "songs": [it["title"] for it in targets(c)]}
+
+
+@app.post("/api/concerts/{slug}/cover_pool/mark")
+def post_cover_pool_mark(slug: str, body: dict = Body(...)):
+    """封面池里标记 / 取消标记一帧（适合做封面）；标记完由 cover_pool.assign 随机分给要做的歌。"""
+    from workflow.live.cover_pool import set_mark
+    c = concert(slug)
+    try:
+        n = set_mark(c, body.get("file") or "", bool(body.get("on")))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"marked": n}
+
+
+@app.post("/api/concerts/{slug}/cover_pool/assign")
+def post_cover_pool_assign(slug: str):
+    """标记完成：标记的画面随机分给要做的歌，每首按歌名排好 16:9 + 4:3 存成封面（cover_pool.assign）。"""
+    from workflow.live.cover_pool import assign
+    c = concert(slug)
+    try:
+        out = assign(slug)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    res = []
+    for name, x in out.items():
+        it = c.item(name)
+        res.append({"name": name, "title": it["title"], "frame": x["frame"],
+                    "file": media_url(c, name, f"covers/{x['cover']}.jpg"), "file_4x3": media_url(c, name, f"covers/{x['cover']}_4x3.jpg")})
+    return {"songs": res}
+
+
 @app.post("/api/concerts/{slug}/songs/{name}/cover_download")
 def post_cover_download(slug: str, name: str, body: dict = Body(...)):
     """候选封面「下载」：16:9 和 4:3 两张存成 PNG，放到这首歌成品视频所在的 post/ 目录：
     post/<歌>_cover_picked_<日时分>.png、post/<歌>_cover_picked_4x3_<日时分>.png。
     单曲的 covers 是软链接到 posts/<歌>/covers，成品在 posts/<歌>/post/，顺着软链接找。"""
-    from PIL import Image
+    from workflow.live.package import save_picked
     c = concert(slug)
     it = song(c, name)
     cid = body.get("id") or ""
-    if not re.fullmatch(r"(closeup|half|full|scene|cover)_\d\d", cid):
+    if not re.fullmatch(r"(closeup|half|full|scene|pool|cover)_\d\d", cid):
         raise HTTPException(400, "封面 id 不对")
-    covers = (c.song_dir(it) / "covers").resolve()
-    # 演唱会：<歌>/covers；单曲：<歌>/post/cover（make_cover 默认）；早期：<歌>/exp/covers
-    base = covers.parent.parent if covers.parent.name in ("exp", "post") else covers.parent
-    post = base / "post"
-    post.mkdir(exist_ok=True)
-    stamp = time.strftime("%d%H%M")
-    saved = []
-    for src, suffix in ((covers / f"{cid}.jpg", ""), (covers / f"{cid}_4x3.jpg", "_4x3")):
-        if not src.exists():
-            continue
-        dst = post / f"{name}_cover_picked{suffix}_{stamp}.png"
-        Image.open(src).convert("RGB").save(dst)
-        saved.append(str(dst.relative_to(ROOT)))
+    saved = save_picked(c, it, cid)
     if not saved:
         raise HTTPException(404, "没有这张封面")
     return {"saved": saved}
 
 
 MEDIA_OK = {".mp4", ".ass", ".jpg"}
+
+
+def bili_upload(d):
+    """B 站投稿 JSON：生成过（post/bili_upload.json）就读文件；没生成的按投稿信息和最新选的封面现场拼一份（不写文件），
+    做好投稿信息就能在审核页看到，换了封面也跟着变。上传前 post_bili/upload.py 会再正式生成一次。"""
+    f = d / "post" / "bili_upload.json"
+    if f.exists():
+        return f.read_text()
+    try:
+        import contextlib
+        import io
+        from argparse import Namespace
+        sys.path.insert(0, str(ROOT / "post_bili"))
+        import upload
+        a = Namespace(cover=None, source=None, at=None, tid=None, tid_v2=None, only_self=False)
+        with contextlib.redirect_stdout(io.StringIO()):   # 拼的时候打印的「标签超长去掉」之类不要
+            return upload.dump(upload.generate((d / "post").resolve().parent, a))   # 单曲的 post 是软链接：按真正的歌曲目录算
+    except (SystemExit, Exception):   # 还没有投稿信息（load_post 会 sys.exit）
+        return None
 
 
 FINAL_LABELS = {"hw_videotoolbox": "硬件编码 H.264 VideoToolbox（对比版）", "hevc_videotoolbox": "硬件编码 HEVC VideoToolbox（对比版）"}
@@ -304,7 +350,8 @@ def media(slug: str, path: str):
         path == "source.mp4"
         or (len(parts) == 3 and parts[0] == "songs" and parts[2] == "preview.mp4")
         or (len(parts) == 4 and parts[0] == "songs" and parts[2] == "subs" and parts[3] in ("lyrics.ass", "lyrics_literal.ass", "lyrics_poetic.ass"))
-        or (len(parts) >= 4 and parts[0] == "songs" and parts[2] in ("covers", "post")))
+        or (len(parts) >= 4 and parts[0] == "songs" and parts[2] in ("covers", "post"))
+        or (len(parts) == 2 and parts[0] == "cover_pool"))   # 整场封面池的原始帧
     if not allowed or ".." in parts or not f.resolve().is_file():
         raise HTTPException(404)
     # 封面 / 字幕会原地重新生成（文件名不变）：每次回源校验（ETag 没变就 304），不然浏览器按启发式缓存一直显示旧图

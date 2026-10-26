@@ -45,6 +45,9 @@ DEFAULTS = {
     "no_reprint": 0,        # 禁止转载声明：只对自制稿有意义，转载稿不开
     "charging_pay": 0,      # 充电：不开
     "is_only_self": 0,      # 仅自己可见：不开（公开）
+    # 参与话题（投稿页上带 # 的蓝色标签，只能点选，不能打字）：音乐区年度活动「音乐分享官」。
+    # 话题号 / 活动号从投稿页推荐话题的接口查（topics()）；话题名也要放进标签里
+    "topic": "音乐分享官", "topic_id": 3878, "mission_id": 4072303,
 }
 # bili_upload.json 的字段：key 是 B 站投稿页上的名称，值也写成投稿页上的说法；上传前换成接口字段（API）
 COPYRIGHT = {"自制": 1, "转载": 2}
@@ -52,14 +55,16 @@ VISIBLE = {"公开": 0, "仅自己可见": 1}
 SWITCHES = [("Hi-Res无损", "lossless_music"), ("杜比音效", "dolby"), ("UP主水印", "watermark"), ("禁止转载", "no_reprint"),
             ("充电", "charging_pay")]
 TID_NAMES = {29: "音乐 > 音乐现场"}   # 分区号 -> 投稿页上的名称（只给人看，提交用分区号）
-KEYS = ["视频文件", "封面16:9", "封面4:3", "标题", "类型", "转载来源", "分区", "分区名称", "新版分区", "标签", "简介", "定时发布", "可见范围"] + [k for k, _ in SWITCHES]
+KEYS = ["视频文件", "封面16:9", "封面4:3", "标题", "类型", "转载来源", "分区", "分区名称", "新版分区", "话题", "话题ID", "活动ID",
+        "标签", "简介", "定时发布", "可见范围"] + [k for k, _ in SWITCHES]
 
 
 def to_page(f):
     """接口字段 -> bili_upload.json（中文 key）。"""
     out = {"视频文件": f["video"], "封面16:9": f["cover"], "封面4:3": f["cover43"], "标题": f["title"],
            "类型": {v: k for k, v in COPYRIGHT.items()}[f["copyright"]], "转载来源": f["source"],
-           "分区": f["tid"], "分区名称": TID_NAMES.get(f["tid"], ""), "新版分区": f["tid_v2"], "标签": f["tag"], "简介": f["desc"],
+           "分区": f["tid"], "分区名称": TID_NAMES.get(f["tid"], ""), "新版分区": f["tid_v2"],
+           "话题": f["topic"], "话题ID": f["topic_id"], "活动ID": f["mission_id"], "标签": f["tag"], "简介": f["desc"],
            "定时发布": datetime.fromtimestamp(f["dtime"]).strftime("%Y-%m-%d %H:%M") if f["dtime"] else "",
            "可见范围": {v: k for k, v in VISIBLE.items()}[f["is_only_self"]]}
     out.update({k: bool(f[api]) for k, api in SWITCHES})
@@ -81,6 +86,7 @@ def from_page(j):
         sys.exit(f"类型只能是 {'/'.join(COPYRIGHT)}，可见范围只能是 {'/'.join(VISIBLE)}")
     f = {"video": j["视频文件"], "cover": j["封面16:9"], "cover43": j["封面4:3"], "title": j["标题"], "copyright": COPYRIGHT[j["类型"]],
          "source": j["转载来源"] or "", "tid": int(j["分区"]), "tid_v2": j["新版分区"] or None, "tag": list(j["标签"]),
+         "topic": j["话题"] or "", "topic_id": j["话题ID"] or None, "mission_id": j["活动ID"] or None,
          "desc": j["简介"], "dtime": dtime_of(j["定时发布"]) if j["定时发布"] else None, "is_only_self": VISIBLE[j["可见范围"]]}
     f.update({api: int(bool(j[k])) for k, api in SWITCHES})
     return f
@@ -191,7 +197,7 @@ def generate(d, a):
     cover = Path(a.cover).resolve() if a.cover else picked_cover(d, post)
     rel = lambda p: str(p.relative_to(ROOT)) if p else None
     f = {**DEFAULTS, "video": rel(video), "cover": rel(cover), "cover43": rel(picked_cover(d, post, r43=True)), "title": post.get("title") or "", "desc": description(post),
-         "tag": tags_of(names), "source": a.source if a.source is not None else source,
+         "tag": tags_of([*names, DEFAULTS["topic"]]), "source": a.source if a.source is not None else source,
          "dtime": int(datetime.strptime(a.at, "%Y-%m-%d %H:%M").timestamp()) if a.at else None}
     if a.tid:
         f["tid"] = a.tid
@@ -210,6 +216,8 @@ def check(f):
         errors.append(f"标题 {len(title)} 字（要 1~{TITLE_MAX} 字）")
     if not desc or len(desc) > DESC_MAX:
         errors.append(f"简介 {len(desc)} 字（要 1~{DESC_MAX} 字）")
+    if f.get("topic") and f["topic"] not in tags:
+        errors.append(f"参与了话题「{f['topic']}」，标签里也要有它")
     if len(tags) > TAG_MAX or any(len(t) > TAG_LEN for t in tags):
         errors.append(f"标签最多 {TAG_MAX} 个、每个不超过 {TAG_LEN} 字")
     if f.get("copyright") == 2 and not f.get("source"):
@@ -258,6 +266,8 @@ def command(f, line=None, cover43_url=None):
     """bili_upload.json -> biliup upload 命令。走网页投稿接口（--submit web）：4:3 封面（cover43）和
     UP 主水印（watermark）都是网页投稿页的字段，客户端接口不认；biliup 没有这两项的参数，走 --extra-fields。"""
     extra = {"watermark": {"state": f["watermark"]}}
+    if f.get("topic_id"):   # 参与话题：网页投稿页点选话题时提交的就是这两项
+        extra.update({"topic_id": f["topic_id"], "topic_detail": {"from_topic_id": f["topic_id"], "from_source": "arc.web.recommend"}})
     if cover43_url:
         extra["cover43"] = cover43_url
     cmd = [str(BILIUP), "-u", str(COOKIES), "upload", "--submit", "web",
@@ -268,6 +278,8 @@ def command(f, line=None, cover43_url=None):
            "--extra-fields", json.dumps(extra)]
     if f.get("source"):
         cmd += ["--source", f["source"]]
+    if f.get("mission_id"):
+        cmd += ["--mission-id", str(f["mission_id"])]
     if f.get("tid_v2"):
         cmd += ["--tid-v2", str(f["tid_v2"])]
     if f.get("is_only_self"):
@@ -285,6 +297,7 @@ def show(d, f, spec, errors):
     print(f"封面      16:9 {f['cover']}\n          4:3  {f['cover43']}")
     print(f"标题      ({len(f['title'])} 字) {f['title']}")
     print(f"标签      ({len(f['tag'])} 个) {'，'.join(f['tag'])}")
+    print(f"话题      {f['topic'] or '不参与'}" + (f"（话题号 {f['topic_id']}，活动号 {f['mission_id']}）" if f.get("topic_id") else ""))
     on = lambda x: "开" if x else "关"
     print(f"分区      {f['tid']} {TID_NAMES.get(f['tid'], '')}" + (f" tid_v2={f['tid_v2']}" if f["tid_v2"] else "")
           + f"   类型 {'转载' if f['copyright'] == 2 else '自制'}   来源 {f['source'] or '（空）'}")
@@ -320,6 +333,20 @@ def submit(d, fields, cmd):
     print(f"已提交 {bvid or 'av' + str(aid)}，记录在 {(d / 'post' / 'publish.json').relative_to(ROOT)}")
 
 
+def topics(keyword):
+    """按关键词查投稿页的话题（话题号 topic_id、挂着的活动号 mission_id），填进 bili_upload.json 的话题 / 话题ID / 活动ID。"""
+    import requests
+    jar = bili_cookies()
+    r = requests.get("https://member.bilibili.com/x/vupre/web/topic/search", cookies=jar, timeout=20,
+                     params={"keywords": keyword, "page_size": 20, "offset": 0},
+                     headers={"User-Agent": "Mozilla/5.0", "Referer": "https://member.bilibili.com/platform/upload/video/frame"}).json()
+    if r.get("code") != 0:
+        sys.exit(f"B 站返回 {r.get('code')}：{r.get('message')}（登录过期就 renew 或重新 login）")
+    for t in ((r.get("data") or {}).get("result") or {}).get("topics") or []:
+        print(f"{t.get('topic_name') or t.get('name')}  话题ID {t.get('topic_id') or t.get('id')}  活动ID {t.get('mission_id') or '-'}"
+              f"  {(t.get('description') or '')[:40]}")
+
+
 def types():
     """用登录凭证向 B 站要投稿分区表（投稿页用的同一个接口），打印各分区的 id；新版分区（tid_v2）如果返回了也一起打。"""
     import requests
@@ -341,6 +368,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("song", nargs="?", help="歌曲目录：posts/<名> 或 posts/<场次>/<歌>")
     p.add_argument("--types", action="store_true", help="查 B 站投稿分区表（要先登录），用来确认 tid / tid_v2")
+    p.add_argument("--topics", metavar="关键词", help="查投稿话题的话题ID / 活动ID（如 --topics 音乐4K）")
     p.add_argument("--submit", action="store_true", help="读 post/bili_upload.json 上传；不加只生成 / 检查")
     p.add_argument("--rebuild", action="store_true", help="已有 bili_upload.json 也按草稿重新生成（手改的会被覆盖）")
     p.add_argument("--only-self", action="store_true", help="生成时：仅自己可见")
@@ -354,6 +382,8 @@ def main():
     a = p.parse_args()
     if a.types:
         return types()
+    if a.topics:
+        return topics(a.topics)
     if not a.song:
         p.error("要给歌曲目录")
 

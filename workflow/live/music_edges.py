@@ -78,6 +78,8 @@ def song_rows(c):
         d = c.song_dir(it)
         b = d / "reports" / "before_reslice"
         src = b if (b / "subs" / "lines.json").exists() else d
+        if not (src / "subs" / "lines.json").exists():   # 这首没出字幕（只做部分歌的场次）
+            continue
         s0 = read_json(src / "song.json", {})["slice"][0]
         b0 = d / "reports" / "before_reslice_0"
         wsrc = b0 if (b0 / "subs").exists() else src
@@ -108,7 +110,9 @@ def lyric_owner(c, rows, fixes=None):
         raw[it["name"]] = [x for x in ls if norm(x)]
         lyr[it["name"]] = [" ".join(norm(x)) for x in raw[it["name"]]]
         b = d / "reports" / "before_reslice" / "song.json"
-        span[it["name"]] = read_json(b if b.exists() else d / "song.json", {})["slice"]
+        sl = read_json(b if b.exists() else d / "song.json", {}).get("slice")
+        if sl:   # 没出字幕的歌没有切片，不参与
+            span[it["name"]] = sl
     score = lambda t, x: fuzz.ratio(t, x) if len(x) <= len(t) + 10 else fuzz.partial_ratio(t, x)
     near = lambda t0: [n for n, (a, b) in span.items() if a - 120 <= t0 <= b + 120]
     order = [it["name"] for it in c.song_items()]
@@ -168,6 +172,8 @@ def cores(c):
         ts = [(t0, t1) for (n, t0, t1, r), o in zip(rows, own) if o == it["name"]]
         if not ts:   # 一句都对不上（不应该）：退回这首原来结果里的歌词行
             ts = [(t0, t1) for n, t0, t1, r in rows if n == it["name"] and not r.get("speech")]
+        if not ts:   # 这首没出字幕（只做部分歌的场次）
+            continue
         out.append({"name": it["name"], "title": it["title"], "a": min(a for a, _ in ts), "b": max(b for _, b in ts)})
     return out
 

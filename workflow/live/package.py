@@ -20,8 +20,27 @@ PER_SHOT = "closeup=16,half=16,full=0"   # 正脸特写 16 张、半身 16 张�
 CLOSEUP_MIN = 0.14  # 脸高占画面 14% 以上算特写：转播里 22% 以上的大特写很少（GIRL LIKE ME 只有 6 帧候选），凑不够 6 张
 TEXT_LIFT = 0.08   # 标题 + 副标题整体上移画面高度的 8%（0.82 -> 0.74）：底部 17% 压暗遮挡转播的推广条，字压在上面太靠下
 LANG_ZH = {"es": "西班牙语", "en": "英语", "it": "意大利语", "ja": "日语", "pt": "葡萄牙语", "fr": "法语"}
-COVER_RE = re.compile(r"^(closeup|half|full|scene|cover)_(\d\d)\.jpg$")
-FRAME_RE = re.compile(r"^frame_(?:(closeup|half|full|scene)_)?(\d\d)_([\d.]+)s\.jpg$")
+COVER_RE = re.compile(r"^(closeup|half|full|scene|pool|cover)_(\d\d)\.jpg$")   # pool：从整场封面池排的（cover_pool.py）
+FRAME_RE = re.compile(r"^frame_(?:(closeup|half|full|scene|pool)_)?(\d\d)_([\d.]+)s\.jpg$")
+
+
+def save_picked(c, it, cid):
+    """选定的候选封面（cid）存成 PNG 放进这首成品所在的 post/：post/<歌>_cover_picked_<日时分>.png 和 _4x3_ 那张；
+    审核页「下载」、封面池随机分配都用。单曲的 covers 在 <歌>/post/cover，顺着软链接找。返回存下的路径。"""
+    import time
+    from PIL import Image
+    covers = (c.song_dir(it) / "covers").resolve()
+    base = covers.parent.parent if covers.parent.name in ("exp", "post") else covers.parent
+    post = base / "post"
+    post.mkdir(exist_ok=True)
+    stamp = time.strftime("%d%H%M")
+    saved = []
+    for src, suffix in ((covers / f"{cid}.jpg", ""), (covers / f"{cid}_4x3.jpg", "_4x3")):
+        if src.exists():
+            dst = post / f"{it['name']}_cover_picked{suffix}_{stamp}.png"
+            Image.open(src).convert("RGB").save(dst)
+            saved.append(str(dst.relative_to(ROOT)))
+    return saved
 
 
 def cover_candidates(d):
@@ -60,7 +79,9 @@ def subtitle_line(c, it):
     song = read_json(c.song_dir(it) / "song.json", {})
     langs = song.get("langs") or [song.get("lang", "en")]
     zh = info.get("artist_zh") or (read_json(c.song_dir(it) / "post_draft.json", {}).get("song") or {}).get("artist_zh")
-    who = f"{zh} {info.get('artist', '')}" if zh and zh != info.get("artist") else info.get("artist", "")
+    who = zh or info.get("artist", "")   # 只写中文艺名：英文名在大标题 / 投稿标题里都有，第二行字少才放得大（用户 2026-10-24）
+    # 同台合唱的嘉宾（song.json guests）写在歌手后面：夏奇拉 × 杜阿·利帕（用户 2026-10-26：不能只写夏奇拉）
+    who = " × ".join([who] + [g.get("zh") or g["name"] for g in song.get("guests") or []])
     # 第二行带演唱会简称（title_short，没有就用中文名）：洛德 Lorde · ACL音乐节2026 · 中英字幕
     event = info.get("title_short") or concert_names(info)[0]
     return " · ".join(x for x in (who, event, f"中{''.join(LANG_ZH.get(x, '外')[0] for x in langs)}字幕") if x)
@@ -84,6 +105,8 @@ def make_covers(c, it, seg, a):
               "--subtitle", subtitle_line(c, it), "--video", c.source, "--out-dir", out, "--sub-fit", "natural",
               "--start", f"{seg['start']:.2f}", "--end", f"{seg['end']:.2f}", "--text-lift", TEXT_LIFT, "--closeup-min", CLOSEUP_MIN]
     info = read_json(c.info)
+    if info.get("cover_inpaint_static"):   # 片源角上一直在的台标（Lollapalooza 的舞台台标）：自动找出来，取帧后修补掉
+        common += ["--inpaint-static"]
     if info.get("cover_inpaint_corners"):  # 转播两角的歌名 / 台标：只修补文字，有推广横幅的帧不选
         common += ["--inpaint-corners"]
     elif info.get("cover_mask_bottom"):  # 底部有大块遮挡：整条模糊压暗盖住（纯色背景上会看出一条暗带）

@@ -94,6 +94,39 @@ def recognize(y, sr, key, cache, a, b, src):
     return ws
 
 
+CRAM_WIN = 2.0    # 挤成一团的检查窗口（秒）
+CRAM_MIN = 16     # 2 s 里超过这么多词才算可能挤成一团（正常演唱 2 s 最多 13 个左右）
+CRAM_RATIO = 2.5  # 而且是别的几遍同一窗口词数（中位数）的这么多倍
+
+
+def drop_crammed(reads):
+    """某一遍把一大段歌词的时间戳压成一团（Shape of You BBC 1:55～2:03：第 1、3 遍 8 s 里塞进整段主歌，
+    别的几遍同一时间只听到副歌尾巴）：这一遍这几秒的词不用。和别的几遍比（Waka Waka 口号段几遍都很密，不算）。"""
+    import bisect
+    times = [sorted(w["s"] for w in ws) for ws in reads]
+    count = lambda ts, a, b: bisect.bisect_right(ts, b) - bisect.bisect_left(ts, a)
+    out, dropped = [], []
+    for i, ws in enumerate(reads):
+        bad = []
+        for w in ws:
+            a, b = w["s"] - CRAM_WIN / 2, w["s"] + CRAM_WIN / 2
+            n = count(times[i], a, b)
+            if n <= CRAM_MIN:
+                continue
+            # 只和这附近也有识别结果的几遍比（锚点之间重新识别的只覆盖一小段）
+            others = [count(t, a, b) for j, t in enumerate(times) if j != i and count(t, a - 5, b + 5)]
+            if others and n > CRAM_RATIO * max(float(np.median(others)), 1.0):
+                bad.append(w)
+        if bad:
+            dropped.append(f"第 {i + 1} 遍 {bad[0]['s']:.0f}-{bad[-1]['s']:.0f}s {len(bad)} 个词")
+            ids = {id(w) for w in bad}
+            ws = [w for w in ws if id(w) not in ids]
+        out.append(ws)
+    if dropped:
+        print("识别时间戳挤成一团（别的几遍同一时间词少得多），这几遍这几秒不用：" + "；".join(dropped), flush=True)
+    return out
+
+
 def independent(reads):
     """（讲话文字投票用）去掉不独立的重复：送进识别的那段音频（起点、终点）完全一样，结果就一模一样——那是同一个结果重复几次，
     不是几遍互相印证（Agua 开头第 1～4 遍挑中了同一个停顿当切点，都是 0～59.8 s，4 票「mi ya」压过了另一段听对的）。

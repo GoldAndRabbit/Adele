@@ -32,7 +32,11 @@ def main():
         t, head = it.split(":", 1)
         t = float(t) * 1000
         rows = [r for r in L if abs(r["start_ms"] - t) <= 500 and (r.get("text") or "").startswith(head) and not r.get("removed")]
-        units = [u for u in R["units"] if abs(u["start"] - t) <= 700 and u["orig"].startswith(head) and not u.get("dropped")]
+        # 只去离给的时间最近的一行：「Come on」会同时匹配到旁边真唱的「Come on, hold on, tell me…」（Physical 239.25 / 239.6）
+        rows = sorted(rows, key=lambda r: abs(r["start_ms"] - t))[:1]
+        # 翻译句按去掉的那几行的开始时间找（±0.1 s）：按 ±0.7 s 找会把紧挨着的同一句歌词也去掉（Shape of You 211.3 / 212.0）
+        units = [u for u in R["units"] if not u.get("dropped") and u["orig"].startswith(head)
+                 and any(abs(u["start"] - r["start_ms"]) <= 100 for r in rows)]
         for r in rows:
             r.update({"text": "", "verdict": "unconfirmed", "removed": True, "strategy": (r.get("strategy") or "") + f"；人工去掉：{a.why}"})
         for u in units:

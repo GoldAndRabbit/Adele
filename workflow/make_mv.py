@@ -98,7 +98,14 @@ def stage_download(a, w):
         cmd += ["--cookies-from-browser", a.cookies_from_browser]
     if a.cookies:
         cmd += ["--cookies", a.cookies]
-    run(cmd + [a.url])
+    if shutil.which("aria2c"):   # YouTube 单连接常被限速到几百 KB/s；aria2c 16 路并发快好几倍
+        try:
+            run(cmd + ["--downloader", "aria2c", "--downloader-args", "aria2c:-x 16 -s 16 -k 1M", a.url])
+        except subprocess.CalledProcessError:   # aria2c 偶尔整个文件失败退出（Stan RRHOF 的音轨）：换 yt-dlp 自己的下载器再来一次
+            print("aria2c 下载失败，改用 yt-dlp 自带下载器重试", flush=True)
+            run(cmd + [a.url])
+    else:
+        run(cmd + [a.url])
     # 保存元信息，后面标题行会用到
     info = subprocess.run([tool("yt-dlp"), "--no-playlist", "--skip-download", "-J", a.url]
                           + (["--cookies-from-browser", a.cookies_from_browser] if a.cookies_from_browser else [])

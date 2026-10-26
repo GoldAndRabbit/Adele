@@ -47,6 +47,9 @@ bin/biliup -u post_bili/cookies.json login    # 选扫码登录，用 B 站 App 
   "转载来源": "",
   "分区": 29,                // 音乐 > 音乐现场（旧版分区号）
   "新版分区": null,          // 登录后 --types 查；null 不提交
+  "话题": "音乐分享官",      // 投稿页带 # 的蓝色话题（只能点选），话题名也要在标签里
+  "话题ID": 3878,
+  "活动ID": 4072303,         // 话题挂着的活动；换话题用 --topics 关键词 查
   "标签": ["…"],             // 最多 12 个，每个不超过 20 字
   "简介": "…（1~2000 字）",
   "定时发布": "",            // "YYYY-MM-DD HH:MM"，空 = 审核通过后立即；至少晚于提交 4 小时
@@ -70,7 +73,7 @@ bin/biliup -u post_bili/cookies.json login    # 选扫码登录，用 B 站 App 
 | `--tid N` / `--tid-v2 N` | 投稿分区 |
 | `--rebuild` | 已有 bili_upload.json 也按草稿重新生成 |
 
-其他：`--types` 查 B 站的分区表（要先登录）；`--line 线路` 换上传线路；`--again` 已经投过（有 `post/publish.json`）还要再投。
+其他：`--types` 查 B 站的分区表（要先登录）；`--topics 关键词` 查话题的话题ID / 活动ID（如「音乐4K计划」话题ID 1285415、活动ID 4072080）；`--line 线路` 换上传线路；`--again` 已经投过（有 `post/publish.json`）还要再投。
 
 ## upload.py 读什么、查什么
 
@@ -105,7 +108,8 @@ B 站投稿页上的每一项、我们的默认值和来源。固定选项集中
 | UP 主水印 | `watermark.state` | **不加** | `DEFAULTS`（biliup 没有单独参数，走 `--extra-fields`） |
 | 禁止转载 | `no_reprint` | 关（转载稿不适用） | `DEFAULTS` |
 | 充电 | `charging_pay` | 关 | `DEFAULTS` |
-| 互动视频 / 参加活动 | `interactive` / `mission_id` | 不用 | — |
+| 参与话题 / 活动 | `topic_id` + `topic_detail` / `mission_id` | 音乐分享官（3878 / 4072303） | `DEFAULTS`；网页接口字段，biliup 没有话题参数，走 `--extra-fields` |
+| 互动视频 | `interactive` | 不用 | — |
 | 空间动态 | `dynamic` | 空 | — |
 | 精选评论 / 关评论 / 关弹幕 | `up_selection_reply` 等 | 都不开 | — |
 | 字幕 | `subtitle` | 不传（字幕已经烧在画面里） | — |

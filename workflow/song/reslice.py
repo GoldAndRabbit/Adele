@@ -38,6 +38,8 @@ def reslice_all(c, edges):
     for it in c.song_items():
         d = c.song_dir(it)
         b = d / "reports" / "before_reslice"
+        if not (b / "subs").exists() and not (d / "subs").exists():   # 这首没出字幕（只做部分歌的场次）
+            continue
         if not (b / "subs").exists():   # 第一次改：先备份
             b.mkdir(parents=True, exist_ok=True)
             shutil.copytree(d / "subs", b / "subs")

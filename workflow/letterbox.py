@@ -69,6 +69,18 @@ def content_box(d):
     return box
 
 
+def logo_corner(d):
+    """左上角固定 logo 放哪个角：演唱会的 concert.json 里 "logo_corner": "right" 时放画面内容的右上角
+    （片源左上角已经有转播方 / 舞台的台标，要避开），默认 "left"。单曲在 post/<名>.json 里写 logo_corner。"""
+    root = Path(__file__).resolve().parents[1]
+    d = Path(d)
+    own = d / "post" / f"{d.name}.json"   # 单曲：投稿信息里写 "logo_corner": "right"（BBC 现场左上角有台标）
+    if own.exists() and json.loads(own.read_text()).get("logo_corner"):
+        return json.loads(own.read_text())["logo_corner"]
+    f = root / "concerts" / d.resolve().parent.name / "concert.json"
+    return (json.loads(f.read_text()).get("logo_corner") if f.exists() else None) or "left"
+
+
 if __name__ == "__main__":
     for p in sys.argv[1:]:
         (Path(p) / "content_box.json").unlink(missing_ok=True)

@@ -52,7 +52,9 @@ function renderSidebar(route) {
   const ul = $("#songs");
   if (!c) { ul.replaceChildren(); return; }
   const songs = Object.fromEntries(c.songs.map((s) => [s.name, s]));
-  ul.replaceChildren(...c.items.map((it) => {
+  const pool = h("li", {}, h("a", { href: `#/${c.slug}/~covers`, class: route.name === "~covers" ? "active" : null,
+    title: "整场演唱会的画面都能给任何一首当封面" }, h("span", { class: "ji" }, ""), h("span", { class: "jn" }, "封面池（整场挑封面）")));
+  ul.replaceChildren(pool, ...c.items.map((it) => {
     if (it.kind !== "song") return h("li", { class: "tape", title: "过场（预录视频），不出成品" }, `~ ${it.title}`);
     const s = songs[it.name];
     const warn = s.start == null || (s.confidence != null && s.confidence < 0.5) || s.needs_refine;
@@ -125,10 +127,9 @@ async function viewSong(route) {
     h("div", { class: "card-title" }, s.title, h("small", {}, `${hms(s.start)} – ${hms(s.end)}（${fmt(s.end - s.start)}）`)),
     h("div", { class: "spacer" }),
     ...(s.genius_urls || []).map((u, i) => h("a", { href: u, target: "_blank", rel: "noopener" }, s.genius_urls.length > 1 ? `歌词 ${i + 1}` : "Genius 歌词")));
-  // 布局：上面 左 视频 / 右 歌词和翻译（跟着播放滚动）；下面 左 候选封面 / 右 投稿信息
+  // 布局：上面 左 视频 / 右 歌词和翻译（跟着播放滚动）；中间 成品 + B 站投稿 JSON；下面 候选封面（没有成品时 JSON + 封面一行）
   const player = await videoPane(c, s, route.at);
   const covers = coverPane(s);
-  const form = formPane(c, s, covers);
   // 歌词栏：逐句表格；视频上的字幕用诗意版（和成品一致），这首没有诗意版时用直译版
   const x = s.exp;
   const lyricsPane = h("div", { class: "pane lyrics-pane" },
@@ -138,10 +139,13 @@ async function viewSong(route) {
   const nNotes = x ? x.rows.filter((r) => r.note && !r.removed).length : 0;
   if (nNotes) head.querySelector(".card-title").append(
     h("a", { class: "notes-link", href: "javascript:void 0", onclick: () => showNotes(x, player, s) }, `注释 ${nNotes}`));
+  // 还没有成品时：B 站投稿 JSON 和候选封面并排一行；有成品时成品 + JSON 一行，封面在下面
+  const side = player.finals && !player.finals.querySelector(".final-wrap");
+  if (side) player.finals.append(covers.el);
   const card = h("div", { class: "card" }, head,
     h("div", { class: "top" }, player.el, lyricsPane),
     player.finals,
-    h("div", { class: "bottom" }, covers.el, form));
+    side ? null : h("div", { class: "bottom" }, covers.el));
   $("#view").replaceChildren(card);
 }
 
@@ -248,28 +252,6 @@ function coverPane(s) {
   return { el: h("div", { class: "pane" }, h("div", { class: "section-label" }, "候选封面（点选一张）", sw), box), state: st };
 }
 
-function formPane(c, s, covers) {
-  // 投稿信息只看 B 站投稿 JSON（post/bili_upload.json，放在成品右边）；要改哪项走对话，由我改 JSON
-  const entry = s.review_entry || {};
-  const note = h("input", { value: entry.note || "" });
-  const msg = h("span", { class: "hint" }, entry.updated_at ? `上次保存 ${entry.updated_at}` : "");
-  const save = async (status) => {
-    try {
-      const r = await api(`/api/concerts/${c.slug}/songs/${s.name}/review`, { status, cover: covers.state.chosen, note: note.value.trim() });
-      msg.textContent = `已保存 ${r.entry.updated_at}${status === "approved" ? " · 已通过" : status === "rejected" ? " · 已打回" : ""}`;
-      await refreshConcert();
-    } catch (err) { msg.textContent = `保存失败：${err.message}`; }
-  };
-  return h("div", { class: "form" },
-    h("div", { class: "section-label" }, "审核"),
-    h("div", { class: "actions" },
-      h("label", { class: "grow" }, "备注（打回原因等）", note),
-      h("button", { class: "btn", onclick: () => save(undefined) }, "保存"),
-      h("button", { class: "btn ok", onclick: () => save("approved") }, "通过"),
-      h("button", { class: "btn bad", onclick: () => save("rejected") }, "打回"),
-      msg));
-}
-
 // B 站投稿 JSON（post/bili_upload.json）：上传时原样提交的全部字段，只展示（要改走对话）
 function biliJson(s) {
   const label = h("div", { class: "json-label" }, "B 站投稿 JSON（上传时原样提交，要改跟我说）");
@@ -295,7 +277,7 @@ async function videoPane(c, s, at) {
   const edges = { start: s.start, end: s.end };
   const video = h("video", { src: s.preview, controls: true, preload: "auto", playsinline: true,
     controlslist: "nofullscreen", disablepictureinpicture: true });
-  // 左上角叠朝阳 Adele 的 logo（只是预览：和成品 render.py 一样的比例和位置——宽度约为画面的 10.25%、离画面内容左上角 15/3840；
+  // 左上角（logo_corner = right 时右上角）叠朝阳 Adele 的 logo（只是预览：和成品 render.py 一样的比例和位置——宽度约为画面的 10.25%、离画面内容左上角 15/3840；
   // 宽银幕片源上下有黑边，放在内容区域 s.box 里，不放在黑边上；不改视频文件，只是一张图片叠在播放器上）
   const logo = h("img", { src: "adele-logo.png", class: "preview-logo", alt: "" });
   const stage = h("div", { class: "stage" }, video, logo);
@@ -304,8 +286,10 @@ async function videoPane(c, s, at) {
     const ar = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
     const cw = Math.min(W, H * ar), ch = cw / ar;   // 画面按 contain 居中，算出实际画面区域
     const x0 = (W - cw) / 2, y0 = (H - ch) / 2;
-    const b = s.box || { x: 0, y: 0 };
-    Object.assign(logo.style, { left: `${x0 + cw * (b.x + 15 / 3840)}px`, top: `${y0 + ch * (b.y + 15 / 2160)}px`, width: `${cw * 0.1025}px` });
+    const b = s.box || { x: 0, y: 0, w: 1 };
+    // 片源左上角有台标的场次（logo_corner = right）放画面内容的右上角，离右边同样 15/3840
+    const lx = s.logo_corner === "right" ? x0 + cw * (b.x + b.w - 15 / 3840 - 0.1025) : x0 + cw * (b.x + 15 / 3840);
+    Object.assign(logo.style, { left: `${lx}px`, top: `${y0 + ch * (b.y + 15 / 2160)}px`, width: `${cw * 0.1025}px` });
   };
   new ResizeObserver(placeLogo).observe(video);
   video.addEventListener("loadedmetadata", placeLogo);
@@ -512,6 +496,74 @@ function expTable(x, video, offset, delay = () => 0) {
 
 const fmtMs = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
 
+// ---------------------------------------------------------------- 封面池（整场挑封面）
+
+// 整场演唱会挑出来的画面（workflow/live/cover_pool.py）：点一下标记「适合做封面」，再点取消；
+// 标记完跟我说，我把标记的画面随机分给这次要做的歌（cover_pool assign），每首按歌名排好 16:9 + 4:3 存成封面
+async function viewCoverPool(route) {
+  const c = state.concert;
+  document.title = `封面池 · ${c.info.title || c.slug}`;
+  const { frames, songs } = await api(`/api/concerts/${c.slug}/cover_pool`);
+  const titleOf = Object.fromEntries(c.songs.map((s) => [s.name, s.title]));
+  const st = { kind: "all" };
+  const kindBar = h("div", { class: "seg" });
+  const count = h("span", { class: "hint" });
+  const grid = h("div", { class: "covers pool" });
+  const upd = () => {
+    const n = frames.filter((f) => f.marked).length;
+    count.textContent = `已标记 ${n} 张 · 这次要做 ${songs.length} 首：${songs.join("、")}`;
+  };
+  const card = (f) => {
+    const el = h("button", { class: `cover${f.marked ? " on" : ""}`, title: "点一下标记 / 取消（双击看大图）",
+      ondblclick: () => lightbox(f.url),
+      onclick: async () => {
+        try {
+          await api(`/api/concerts/${c.slug}/cover_pool/mark`, { file: f.file, on: !f.marked });
+          f.marked = !f.marked;
+          el.classList.toggle("on", f.marked);
+          mark.hidden = !f.marked;
+          upd();
+        } catch (err) { toast(`标记失败：${err.message || err}`, false); }
+      } },
+      h("img", { src: f.url, loading: "lazy" }),
+      h("span", { class: "ct" }, `${f.score != null ? `${f.score} 分 · ` : ""}${SHOT[f.kind] || ""} ${hms(f.t)}${f.song ? ` · ${titleOf[f.song] || f.song}` : ""}`));
+    if (f.why) el.title = `${f.why}（点一下标记 / 取消，双击看大图）`;
+    const mark = h("span", { class: "pick", hidden: !f.marked }, "已标记");
+    el.append(mark);
+    return el;
+  };
+  const draw = () => {
+    kindBar.replaceChildren(...[["all", "全部"], ["closeup", "特写"], ["half", "半身"], ["scene", "舞台"]].map(([k, l]) =>
+      h("button", { class: k === st.kind ? "on" : null, onclick: () => { st.kind = k; draw(); } }, l)));
+    const xs = frames.filter((f) => st.kind === "all" || f.kind === st.kind);
+    grid.replaceChildren(...(xs.length ? xs.map(card)
+      : [h("div", { class: "placeholder" }, frames.length ? "这一类没有画面" : "封面池还在生成")]));
+  };
+  // 标记完成：标记的画面随机分给要做的歌，每首按歌名排好存成封面；结果列在按钮下面
+  const result = h("div", { class: "covers pool" });
+  const done = h("button", { class: "btn ok", onclick: async () => {
+    if (done.disabled) return;
+    done.disabled = true;
+    done.textContent = "分配中…";
+    try {
+      const r = await api(`/api/concerts/${c.slug}/cover_pool/assign`, {});
+      result.replaceChildren(...r.songs.map((x) => h("button", { class: "cover", title: `${x.title} ← ${x.frame}（双击看大图）`,
+        ondblclick: () => lightbox(x.file) }, h("img", { src: x.file }), h("span", { class: "ct" }, x.title))));
+      toast(`已分配 ${r.songs.length} 首的封面`);
+    } catch (err) { toast(`分配失败：${err.message || err}`, false); }
+    done.disabled = false;
+    done.textContent = "标记完成，分配封面";
+  } }, "标记完成，分配封面");
+  draw();
+  upd();
+  $("#view").replaceChildren(h("div", { class: "card" },
+    h("div", { class: "card-head" }, h("div", { class: "card-title" }, "封面池",
+      h("small", {}, `整场挑出 ${frames.length} 张画面；点选适合做封面的，标记完点「标记完成」，随机分给要做的歌`))),
+    h("div", { class: "pool-body" }, h("div", { class: "pool-head" }, count, kindBar), grid,
+      h("div", { class: "actions" }, done, h("span", { class: "hint" }, "每首随机分一张标记的画面，按歌名排好 16:9 + 4:3 存成封面；可以重复点，重新随机")),
+      result)));
+}
+
 // ---------------------------------------------------------------- 路由
 
 function parseRoute() {
@@ -535,7 +587,8 @@ async function render() {
   if (!route.slug) { $("#view").replaceChildren(h("div", { class: "empty" }, "concerts/ 下还没有场次")); return; }
   try {
     await refreshConcert(route.slug);
-    if (route.name) await viewSong(route);
+    if (route.name === "~covers") await viewCoverPool(route);
+    else if (route.name) await viewSong(route);
     else viewOverview();
   } catch (err) {
     $("#view").replaceChildren(h("div", { class: "empty" }, `加载失败：${err.message}`));

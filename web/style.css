@@ -197,13 +197,6 @@ td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
 }
 .cover .dl:hover { background: rgba(0, 0, 0, 0.6); opacity: 1; }
 .cover .dl.busy { opacity: 0.4; cursor: default; }
-.form { display: flex; flex-direction: column; gap: 10px; }
-.form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-.form input, .form textarea {
-  font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; resize: vertical;
-}
-.form input:focus, .form textarea:focus { outline: none; border-color: var(--accent); }
-.form .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .btn.ok { background: var(--ok); border-color: var(--ok); color: #fff; }
 .btn.bad { color: var(--bad); }
 .btn:disabled { opacity: .5; cursor: default; }
@@ -237,12 +230,8 @@ td.cs.low { color: var(--bad); font-weight: 600; }
 .pane .notice { margin: 0; }
 .toolbar.tight { padding: 0; border: 0; gap: 6px; }
 .toolbar.tight .btn { padding: 4px 9px; }
-.form { padding: 16px 18px; border-bottom: 1px solid var(--line); }
-.form .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.form .actions .grow { flex: 1; min-width: 200px; }
-.form .actions { align-items: flex-end; }
 .lines .table-wrap { max-height: 520px; }
-@media (max-width: 1100px) { .top, .form .row2 { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .top { grid-template-columns: 1fr; } }
 .top .covers { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-height: 560px; overflow: auto; }
 .top .covers.r43 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
@@ -254,10 +243,9 @@ td.cs.low { color: var(--bad); font-weight: 600; }
 .lyrics-pane .table-wrap { max-height: none; flex: 1; height: 0; min-height: 420px; border: 1px solid var(--line); border-radius: 8px; }
 .lyrics-pane table { font-size: 12.5px; }
 .lyrics-pane td.t { width: 1%; }
-.bottom { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; padding: 16px 18px; }
-.bottom .form { padding: 0; border: 0; }
-.bottom .covers { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.bottom .covers.r43 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.bottom { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 16px 18px; }
+.bottom .covers { grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 8px; }
+.bottom .covers.r43 { grid-template-columns: repeat(auto-fill, minmax(min(170px, 100%), 1fr)); }
 @media (max-width: 1100px) { .bottom { grid-template-columns: 1fr; } .lyrics-pane .table-wrap { height: 420px; flex: none; } }
 
 /* 视频窄一点，歌词表宽一点：字幕和实际听到并列 */
@@ -387,3 +375,10 @@ td.src { white-space: nowrap; }
 .bili-json .json-label { display: flex; align-items: center; justify-content: space-between; font-size: 13px; opacity: .85; }
 .json-view { margin: 0; max-height: 520px; overflow: auto; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line);
   border-radius: 6px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; user-select: text; }
+/* 封面池：整场画面，点选标记适合做封面的 */
+.pool-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; }
+.pool-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.covers.pool { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+/* 投稿 JSON 右边并排的候选封面：小图，高度和 JSON 框差不多，多了框内滚动 */
+.finals .covers { grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); grid-auto-rows: max-content; gap: 8px; max-height: 560px; overflow: auto; }
+.finals .covers.r43 { grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); }
