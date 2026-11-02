@@ -60,7 +60,9 @@ function renderSidebar(route) {
     const warn = s.start == null || (s.confidence != null && s.confidence < 0.5) || s.needs_refine;
     return h("li", {}, h("a", { href: `#/${c.slug}/${it.name}`, class: route.name === it.name ? "active" : null, title: it.title },
       h("span", { class: "ji" }, it.idx),
-      h("span", { class: "jn" }, it.title),
+      h("span", { class: "song-list-info" },
+        h("span", { class: "song-list-title" }, it.title),
+        h("span", { class: `song-cover-status${s.cover_selected ? " selected" : ""}` }, s.cover_selected ? "已选完封面" : "尚未选择封面")),
       warn ? h("span", { class: "warn", title: s.needs_refine ? "边界改过，需要重跑精校" : "定位置信度低" }, "⚠") : null,
       h("span", { class: "jd" }, s.start != null ? fmt(s.end - s.start) : "")));
   }));
@@ -199,7 +201,16 @@ function coverPane(s) {
   const entry = s.review_entry || {};
   const st = { chosen: entry.cover || null, ratio: "169" };
   const box = h("div", { class: "covers" });
+  const selectionStatus = h("span", { class: "cover-selection-status", role: "status", "aria-live": "polite" });
   const draw = () => {
+    const selected = Boolean(st.chosen || s.cover_selected);
+    selectionStatus.textContent = selected ? "已选完封面" : "尚未选择封面";
+    selectionStatus.classList.toggle("selected", selected);
+    const summary = state.concert?.songs.find((item) => item.name === s.name);
+    if (summary && summary.cover_selected !== selected) {
+      summary.cover_selected = selected;
+      renderSidebar(parseRoute());
+    }
     box.className = `covers${st.ratio === "43" ? " r43" : ""}`;
     const card = (x) => {
       const src = st.ratio === "43" && x.file_4x3 ? x.file_4x3 : x.file;
@@ -207,7 +218,15 @@ function coverPane(s) {
       return h("button", {
         class: `cover${x.id === st.chosen ? " on" : ""}${top ? " best" : ""}`,
         title: `${x.id}${x.score != null ? ` · 分数 ${x.score.toFixed(2)}` : ""}${x.why ? ` · ${x.why}` : ""}（双击看大图）`,
-        onclick: () => { st.chosen = x.id; draw(); },
+        onclick: async () => {
+          if (st.saving) return;
+          st.saving = true;
+          try {
+            await api(`/api/concerts/${parseRoute().slug}/songs/${s.name}/review`, { cover: x.id });
+            st.chosen = x.id; s.cover_selected = true; draw();
+          } catch (err) { toast(`封面保存失败：${err.message || err}`, false); }
+          finally { st.saving = false; }
+        },
         ondblclick: () => lightbox(src),
       }, h("img", { src, loading: "lazy" }),
       top ? h("span", { class: "rk" }, `#${x.rank}`) : null,
@@ -249,7 +268,7 @@ function coverPane(s) {
       st.ratio = k; draw();
       sw.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.k === k));
     } }, l)));
-  return { el: h("div", { class: "pane" }, h("div", { class: "section-label" }, "候选封面（点选一张）", sw), box), state: st };
+  return { el: h("div", { class: "pane" }, h("div", { class: "section-label" }, "候选封面（点选一张）", selectionStatus, sw), box), state: st };
 }
 
 // B 站投稿 JSON（post/bili_upload.json）：上传时原样提交的全部字段，只展示（要改走对话）

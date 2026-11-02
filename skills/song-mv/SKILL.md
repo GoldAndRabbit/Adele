@@ -13,6 +13,7 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 | 1. 下载、切片、歌词、人声分离 | `workflow/make_mv.py --name X --url "LINK" --to separate` | `posts/X/` 下 source.mp4、audio.flac、lyrics.txt、vocals.wav |
 | 2. 投稿信息（标题、简介、标签） | `workflow/make_meta.py --name X --subtitle-langs "英语,中文" --note "演出名称、日期、场地"` | `posts/X/post/X.json` |
 | 3. 字幕：对齐 / 观众合唱 / 讲话断句 / 翻译（直译 + 诗意版）/ 注释 | `-m workflow.song.run post X` | `posts/X/subs/`（lyrics_poetic.ass 是诗意版） |
+| 3a. 独立标题翻译与校对 | `-m workflow.song.title_translation posts/X` | `title_translation.json`；同步字幕片头、投稿标题及审核草稿 |
 | 4. 封面 | `workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中英字幕"` | `posts/X/post/cover/` |
 | 5. 挂到审核页（字幕预览版 + 封面 + 投稿信息） | `-m workflow.live.singles X` | 审核页「单曲」里多一首（按歌名合并，不影响其他单曲） |
 | 6. **用户在审核页看完、确认后**才做 4K 成品 | `-m workflow.song.render post:X` | `posts/X/post/X 4K60FPS Sub-WaterMark.mp4` |
@@ -20,6 +21,8 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 封面和简介都在 4K 之前出，和字幕预览版一起给用户看；字幕、翻译、注释的修改都写进这首的定稿表（zh_fixed.json / zh_notes.json），
 不调模型重新生成字幕；用户确认之前不渲染。歌词有现成的（用户给的、OCR 抄下来的、官方简介里的）就事先放到 `posts/X/lyrics.txt`，
 第 1 步会跳过 Genius。封面要队徽：`--extra-logo assets/crests/<队>.png`；原视频有频道台标：`--inpaint-static`。
+
+第 6 步默认使用苹果 VideoToolbox HEVC/H.265 硬件编码（`hevc_hw`，35 Mbps，峰值 50 Mbps）；可用 `--enc x264` 或 `--enc h264_hw` 手动切换。
 
 第 6 步会自己补水印计划（workflow/song/watermark.py）、调 make_mv 的 interp（原片已经是 60 帧就不插帧也不抽帧），
 渲染 4K + 诗意版字幕 + 左上角 logo + 中间水印 + 原样 FLAC，渲染完删帧。路径约定见 `workflow/paths.py`。
@@ -37,8 +40,13 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 - 需要登录：`--cookies-from-browser chrome`（先征得用户同意）。YouTube 常变，先 `.venv/bin/pip install -U "yt-dlp[default]"`；下载最高 2160p、原声音轨
 
 ## 2. 封面（16:9 + 4:3）
+副标题默认自然字距居中，不补字距撑满标题宽度；短文案可用 `--artist-zh` 补中文艺名，
+封面第二行默认带场次 / 节目名称；MV 默认标注 `MV`。从已核对的演出信息读取名称，`--event` 可覆盖；放在字幕语言标签之前。
+英文显示歌名统一标题大小写，原始歌词正文保留原文。
+
 ```bash
 .venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中日字幕"
+.venv/bin/python workflow/make_cover.py --name X --title "Lose Yourself" --subtitle "Eminem · 中英字幕" --artist-zh "埃米纳姆" --event "奥斯卡2020"
 .venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "..." --at 65.2 [--text-y 0.80]   # 指定帧
 ```
 - 默认按正脸挑演唱者：正脸特写 `closeup_XX` / 半身 `half_XX` / 全身 `full_XX`，总览图 `candidates_*.jpg` 给用户挑；不够时 `--at` 指定时间补
@@ -46,6 +54,12 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 - 用户选定后改名为 `cover_01.jpg` / `cover_01_4x3.jpg`，`posts/X/post/cover/` 只留这两张
 
 ## 3. 投稿信息核对
+标题译名统一读取 `title_translation.json`，`zh_fixed.json` 的 `__title__` 优先级最高。
+标题步骤有独立缓存，可单独重跑；不再由通用片头翻译和歌词流程分别命名。
+人工修订示例：`-m workflow.song.title_translation posts/X --title-zh "真正的痞子阿姆" --artist-zh "埃米纳姆"`。
+这会重建字幕文字并同步投稿标题，无需重新对齐或渲染视频。人物名和角色名应统一，
+不要机械保留英文；意译不可宣称是官方译名。歌词中需要修订的句子另存 `zh_fixed.json`。
+
 - 标题 `[4K60帧/Hi-Res] 中文名《歌名》英文名 关键词`
 - **生成后逐条核对并手改**：模型常把频道口号当演出细节、给罗马字人名乱配汉字、编造材料里没有的事实、用无依据的夸张；不写不确定的成员名字
 - 简介只写歌和演出，不写视频制作（字幕收录了什么、画质处理等）
@@ -54,3 +68,6 @@ description: 给一个歌曲视频链接（YouTube 等），产出 4K + 60帧插
 - `.venv/bin/python post_bili/upload.py posts/<name>` 只检查并打印要提交的内容；**把输出给用户看，用户确认后**才加 `--submit`
 - 第一次投 / 流程改过：加 `--only-self`（仅自己可见），在 B 站上看过效果再公开
 - 登录（`bin/biliup -u post_bili/cookies.json login`）要用户自己在终端扫码；细节见 post_bili/README.md
+
+## 存储默认规则
+插帧、逐帧缓存与编码一律在内置磁盘完成，不逐帧转存外接盘。成片取得真实投稿回执后，复制到外接盘并校验大小及 SHA-256，再移除本地成片副本、保留原路径符号链接；原片与用户定稿不删除。空间不足时暂停并处理空间，不自动退回外接盘产帧。

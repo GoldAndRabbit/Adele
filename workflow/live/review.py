@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 人工审核结果 review.json：每首歌一条 {status, cover, title, intro（歌曲介绍 + 演出介绍 + 歌词介绍，空行分开）, tags, note, fingerprint}。
-通过时记下指纹（边界 + lyrics.ass + 选中的封面 + 标题）；之后这些有任何变化，通过自动失效（stale），hd 不会处理。
+通过时记下指纹（边界、subs/ 字幕、选中的封面、投稿信息和水印）；之后这些有变化，
+通过自动失效（stale），hd 不会处理。旧指纹也需要重新审核。
 """
 
 import hashlib
+import json
 import time
 
+from workflow.paths import render_subtitle
 from .paths import read_json, write_json
 
 STATUSES = ("pending", "approved", "rejected")
@@ -24,9 +27,19 @@ def fingerprint(c, it, entry):
     d = c.song_dir(it)
     seg = segment_of(c, it["name"]) or {}
     h = hashlib.sha256()
-    h.update(f"{seg.get('start')}|{seg.get('end')}|{entry.get('cover')}|{entry.get('title')}".encode())
-    ass = d / "lyrics.ass"
-    h.update(ass.read_bytes() if ass.exists() else b"-")
+    h.update(json.dumps({"version": 2, "span": [seg.get("start"), seg.get("end")],
+                         "entry": {k: entry.get(k) for k in ("cover", "title", "intro", "tags")},
+                         "subtitle": render_subtitle(d).name},
+                        ensure_ascii=False, sort_keys=True).encode())
+    # 审核页展示三版字幕；新增诗意版或更改任一版，都需要重新确认。
+    files = ["subs/lyrics.ass", "subs/lyrics_literal.ass", "subs/lyrics_poetic.ass",
+             "watermark.json", "post_draft.json"]
+    cover = entry.get("cover")
+    if cover:
+        files.extend([f"covers/{cover}.jpg", f"covers/{cover}_4x3.jpg"])
+    for name in files:
+        path = d / name
+        h.update(json.dumps([name, hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None]).encode())
     return h.hexdigest()[:16]
 
 
@@ -51,8 +64,8 @@ def save_entry(c, it, patch):
     if patch.get("status") == "approved":
         if not entry.get("cover"):
             raise ValueError("先选一张封面再通过")
-        if not (c.song_dir(it) / "lyrics.ass").exists():
-            raise ValueError("还没有字幕（refine 没跑完），不能通过")
+        if not render_subtitle(c.song_dir(it)).is_file():
+            raise ValueError("还没有成品字幕（subs/lyrics_poetic.ass 或 lyrics_literal.ass），不能通过")
         entry["fingerprint"] = fingerprint(c, it, entry)
         entry["approved_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     entry["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -70,7 +83,7 @@ def song_status(c, it):
         stage = "hd_done"
     elif (d / "covers").exists() and (d / "post_draft.json").exists():
         stage = "packaged"
-    elif (d / "lyrics.ass").exists():
+    elif render_subtitle(d).is_file():
         stage = "refined"
     elif seg and seg.get("start") is not None:
         stage = "located"

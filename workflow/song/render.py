@@ -17,10 +17,10 @@ ffmpeg 编码的输出写进这首的 logs/render_<时间>.log，终端只打开
 成品：posts/<场次>/<name>/post/<name> 4K60FPS Sub-WaterMark.mp4（单曲是 posts/<name>/post/；每首只留这一个版本）
 
     .venv/bin/python -m workflow.song.render song:lorde_acl2026:01_royals post:lose_yourself_2009 ...
-    .venv/bin/python -m workflow.song.render --enc hevc_hw song:...   # 换编码器（见 ENCODERS），默认 x264
+    .venv/bin/python -m workflow.song.render --enc hevc_hw song:...   # 显式选择默认的苹果 HEVC 硬件编码
 
-编码器：默认 x264（软件，crf 18）。硬件 VideoToolbox 编码这一步快一倍（Levitating 4:24：10:39 -> 5:05），
-但插帧才是大头，整首只省约 20%；同码率下软件画质更好，所以默认不用硬件，只保留接口。
+编码器：默认 hevc_hw（苹果 VideoToolbox HEVC/H.265，35 Mbps，峰值 50 Mbps）。
+可用 --enc x264 选择软件 H.264，或 --enc h264_hw 选择苹果硬件 H.264。
 """
 
 import os
@@ -29,12 +29,14 @@ import subprocess
 import sys
 
 from workflow.letterbox import content_box, logo_corner
+from workflow.paths import render_subtitle
 from workflow.live.paths import ROOT, VENV_PY, Concert, read_json
 
 LEAD_EXTRA = 0.6   # 字幕文件里已经统一提前 0.2s；审核页默认「提前 0.8s」= 再提前 0.6s
 LOGO = ROOT / "assets" / "adele-logo.png"
 LOGO_SCALE = 0.10  # 左上角 logo：和 make_mv.py 一样（logo 原图宽 × 0.10，离画面内容左上角 15px）
 W, H, FPS = 3840, 2160, 60
+DEFAULT_ENCODER = "hevc_hw"
 ENCODERS = {   # 成品视频编码参数（--enc）；硬件的码率是和 x264 crf 18 肉眼看不出差别的取值（Levitating 实测）
     "x264": ["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-profile:v", "high", "-level", "5.2"],
     "h264_hw": ["-c:v", "h264_videotoolbox", "-b:v", "50M", "-maxrate", "70M", "-bufsize", "100M", "-profile:v", "high", "-level", "5.2"],
@@ -92,9 +94,9 @@ def ensure_watermark(spec, d):
 
 def render_ass(d, work):
     import pysubs2
-    f = d / "subs" / "lyrics_poetic.ass"   # 诗意版（审核页默认）；没有就用直译版
-    subs = pysubs2.load(str(f if f.exists() else d / "subs" / "lyrics_literal.ass"))
-    print(f"{d.name}：字幕用 {'诗意版' if f.exists() else '直译版'}", flush=True)
+    f = render_subtitle(d)
+    subs = pysubs2.load(str(f))
+    print(f"{d.name}：字幕用 {'诗意版' if f.name == 'lyrics_poetic.ass' else '直译版'}", flush=True)
     ms = round(LEAD_EXTRA * 1000)
     for ev in subs.events:   # 审核页预览是所有字幕一起挪（含片头、注释），这里一样
         ev.start, ev.end = max(0, ev.start - ms), max(0, ev.end - ms)
@@ -154,7 +156,7 @@ def render(d, work, out, frames=None, t_in=0.0, enc=None, log=None):
     fc.append(f"[{last}]format=yuv420p[v]")
     tmp = out.with_suffix(".partial.mp4")
     cmd = ["ffmpeg", "-y", "-hide_banner", *inputs, "-filter_complex", ";".join(fc), "-map", "[v]", "-map", "1:a",
-           *(enc or ENCODERS["x264"]),
+           *(enc or ENCODERS[DEFAULT_ENCODER]),
            "-c:a", "copy",   # FLAC 48kHz/24bit 原样放进 mp4：B 站靠它给 Hi-Res无损 标
            "-shortest", "-movflags", "+faststart", tmp]
     if log is None:
@@ -215,7 +217,7 @@ def prepare(spec, reserve=0.0, wait_encode=None):
     return d, out, seconds
 
 
-def finish(d, out, enc="x264"):
+def finish(d, out, enc=DEFAULT_ENCODER):
     """编码成 4K 成品，做完删这首的帧和中间视频。"""
     import time
     (d / "post").mkdir(exist_ok=True)
@@ -228,14 +230,14 @@ def finish(d, out, enc="x264"):
     print(f"{time.strftime('%H:%M:%S')} {d.name}：编码完成 >>> {out}", flush=True)
 
 
-def one(spec, enc="x264"):
+def one(spec, enc=DEFAULT_ENCODER):
     """单独做一首（不走流水线）：抽查、补做用。"""
     r = prepare(spec)
     if r:
         finish(r[0], r[1], enc=enc)
 
 
-def pipeline(specs, enc="x264"):
+def pipeline(specs, enc=DEFAULT_ENCODER):
     """按顺序做；第 i 首编码时第 i+1 首插帧。返回 {spec: 跳过原因}。"""
     from concurrent.futures import ThreadPoolExecutor
     skipped, pending = {}, None   # pending = (spec, future, 预计成品大小)
@@ -275,7 +277,7 @@ def pipeline(specs, enc="x264"):
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    enc = "x264"
+    enc = DEFAULT_ENCODER
     if "--enc" in args:   # --enc x264 / h264_hw / hevc_hw
         k = args.index("--enc")
         enc = args[k + 1]

@@ -12,6 +12,13 @@ ASSETS = ROOT / "assets"
 BIN = ROOT / "bin"
 
 
+def render_subtitle(song_dir):
+    """成品字幕：优先诗意版，没有时使用直译版；不回退到旧目录或初译版。"""
+    subs = Path(song_dir) / "subs"
+    poetic = subs / "lyrics_poetic.ass"
+    return poetic if poetic.is_file() else subs / "lyrics_literal.ass"
+
+
 class Song:
     """posts/<name>/
          lyrics.txt          参考歌词（Genius）          lyrics.srt   对齐后的原文字幕
@@ -50,6 +57,11 @@ class Song:
         return self.post / f"{self.name}.json"
 
     def mkdirs(self):
+        if __package__:
+            from .storage import prepare_song_directory
+        else:  # make_mv.py can import paths directly from workflow/.
+            from storage import prepare_song_directory
+        prepare_song_directory(self.dir)
         for d in (self.dir, self.reports, self.post):
             d.mkdir(parents=True, exist_ok=True)
         return self

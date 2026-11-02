@@ -127,7 +127,7 @@ bin/biliup -u post_bili/cookies.json login
 .venv/bin/python workflow/make_meta.py --name X --subtitle-langs "英语,中文" --note "演出名称、日期、场地"
 .venv/bin/python -m workflow.song.run post X        # 字幕：对齐 / 观众合唱 / 翻译 / 注释 → posts/X/subs/
 .venv/bin/python -m workflow.live.singles X        # 挂到审核页
-.venv/bin/python -m workflow.song.render post:X     # 4K60 成品
+.venv/bin/python -m workflow.song.render post:X     # 4K60 成品，默认苹果 HEVC 硬件编码（hevc_hw）
 .venv/bin/python workflow/make_cover.py --name X --title "歌名" --subtitle "歌手 · 中英字幕"
 ```
 
@@ -171,3 +171,12 @@ bin/biliup -u post_bili/cookies.json login
 .venv/bin/python tests/regression_shakira.py          # 审核时指出过的问题，逐条检查现在的字幕
 .venv/bin/python tests/regression_shakira.py 32_dai_dai
 ```
+
+### 外接工作盘
+
+本机可用 `external_storage.json` 启用外接存储（`root` 指向外接盘专用目录，`enabled: true`）。
+`Song.mkdirs()` 创建新单曲时会在外接盘 `posts/<name>` 建目录，并保留项目内同名软链接；已有本机作业保持原位置。
+工作盘未挂载或只读时会报错，避免把外接目录误写回内置磁盘。迁移已有作业应在其未运行时复制、校验后切换软链接。
+本机 AAGold 专用目录为 `/Volumes/AAGold/adele-workflow`；使用后先安全卸载再拔线。
+
+当前批处理的插帧缓存采用本机小窗口暂存、SHA-256 校验后持续转存到外接盘 `cache/frame-spill/`；本机路径保留软链接。未转存帧积压约 2 GiB 时暂停生产帧，转存跟上后恢复。当前 NTFS/FUSE-T 挂载曾出现原生程序直接写入空帧，因此不直接让 RIFE 输出到该挂载。成片通过校验后归档外接盘。

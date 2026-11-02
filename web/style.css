@@ -382,3 +382,11 @@ td.src { white-space: nowrap; }
 /* 投稿 JSON 右边并排的候选封面：小图，高度和 JSON 框差不多，多了框内滚动 */
 .finals .covers { grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); grid-auto-rows: max-content; gap: 8px; max-height: 560px; overflow: auto; }
 .finals .covers.r43 { grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); }
+
+.cover-selection-status { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 12px; white-space: nowrap; color: #f5c46b; background: #3a2a10; }
+.cover-selection-status.selected { color: #7ee2a8; background: #1f3b2a; }
+
+.jobs .song-list-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.jobs .song-list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobs .song-cover-status { align-self: flex-start; font-size: 11px; line-height: 1.5; padding: 0 6px; border-radius: 4px; color: #f5c46b; background: #3a2a10; }
+.jobs .song-cover-status.selected { color: #7ee2a8; background: #1f3b2a; }

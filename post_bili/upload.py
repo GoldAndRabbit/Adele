@@ -22,6 +22,7 @@ bili_upload.json 的 key 是 B 站投稿页上的名称（视频文件、封面�
 """
 
 import argparse
+import os
 import json
 import re
 import subprocess
@@ -93,7 +94,7 @@ def from_page(j):
 
 
 # 标签固定格式：{歌手中文名} {歌手英文名} {演唱会名} + 下面这几个
-TAGS_FIXED = ["欧美音乐", "Billboard", "格莱美", "演唱会", "双语字幕", "欧美现场"]
+TAGS_FIXED = ["Billboard", "格莱美", "双语字幕"]
 TITLE_MAX = 80
 DESC_MAX = 2000
 TAG_MAX, TAG_LEN = 12, 20   # B 站最多 12 个标签，每个不超过 20 字
@@ -195,9 +196,9 @@ def generate(d, a):
     post, source, names = load_post(d)
     video = d / "post" / f"{d.name} 4K60FPS Sub-WaterMark.mp4"
     cover = Path(a.cover).resolve() if a.cover else picked_cover(d, post)
-    rel = lambda p: str(p.relative_to(ROOT)) if p else None
+    rel = lambda p: path_label(p) if p else None
     f = {**DEFAULTS, "video": rel(video), "cover": rel(cover), "cover43": rel(picked_cover(d, post, r43=True)), "title": post.get("title") or "", "desc": description(post),
-         "tag": tags_of([*names, DEFAULTS["topic"]]), "source": a.source if a.source is not None else source,
+         "tag": tags_of((read_json(d / "presentation_preferences.json", {}).get("tags") or [*names, DEFAULTS["topic"]])), "source": a.source if a.source is not None else source,
          "dtime": int(datetime.strptime(a.at, "%Y-%m-%d %H:%M").timestamp()) if a.at else None}
     if a.tid:
         f["tid"] = a.tid
@@ -291,8 +292,17 @@ def command(f, line=None, cover43_url=None):
     return cmd + [str(ROOT / f["video"])]
 
 
+def path_label(path):
+    """Keep project-relative labels, allowing external storage paths too."""
+    path = Path(path)
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def show(d, f, spec, errors):
-    print(f"投稿 JSON  {(d / 'post' / 'bili_upload.json').relative_to(ROOT)}")
+    print(f"投稿 JSON  {path_label(d / 'post' / 'bili_upload.json')}")
     print(f"成品      {f['video']}  {spec}")
     print(f"封面      16:9 {f['cover']}\n          4:3  {f['cover43']}")
     print(f"标题      ({len(f['title'])} 字) {f['title']}")
@@ -317,7 +327,7 @@ def submit(d, fields, cmd):
     log.parent.mkdir(parents=True, exist_ok=True)
     out = []
     with log.open("w") as fh, subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                               text=True, bufsize=1) as p:
+                                               text=True, bufsize=1, env={**os.environ, "RUST_LOG": "info"}) as p:
         for line in p.stdout:
             sys.stdout.write(line)
             fh.write(line)
@@ -326,11 +336,11 @@ def submit(d, fields, cmd):
     bvid = (re.findall(r"BV[0-9A-Za-z]{10}", text) or [None])[-1]
     aid = (re.findall(r"\baid\W{0,3}(?:Number\()?(\d+)", text) or [None])[-1]   # biliup 输出 "aid": Number(117493410567800)
     if p.returncode != 0 or not (bvid or aid):
-        sys.exit(f"上传失败或没拿到稿件号（退出码 {p.returncode}），完整输出见 {log.relative_to(ROOT)}")
+        sys.exit(f"未取得投稿回执，需核对平台后再决定重试（退出码 {p.returncode}），完整输出见 {path_label(log)}")
     rec = {"bvid": bvid, "aid": int(aid) if aid else None, "submitted_at": datetime.now().isoformat(timespec="seconds"),
-           "log": str(log.relative_to(ROOT)), **fields}
+           "log": path_label(log), **fields}
     (d / "post" / "publish.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n")
-    print(f"已提交 {bvid or 'av' + str(aid)}，记录在 {(d / 'post' / 'publish.json').relative_to(ROOT)}")
+    print(f"已提交 {bvid or 'av' + str(aid)}，记录在 {path_label(d / 'post' / 'publish.json')}")
 
 
 def topics(keyword):
@@ -394,12 +404,12 @@ def main():
     jf = d / "post" / "bili_upload.json"
     if a.submit:
         if not jf.exists():
-            sys.exit(f"没有 {jf.relative_to(ROOT)}：先不加 --submit 跑一次生成，看过再上传")
+            sys.exit(f"没有 {path_label(jf)}：先不加 --submit 跑一次生成，看过再上传")
     elif not jf.exists() or a.rebuild:
         jf.write_text(dump(generate(d, a)))
-        print(f"已生成 {jf.relative_to(ROOT)}")
+        print(f"已生成 {path_label(jf)}")
     else:
-        print(f"已有 {jf.relative_to(ROOT)}，按它检查（要按草稿重新生成加 --rebuild）")
+        print(f"已有 {path_label(jf)}，按它检查（要按草稿重新生成加 --rebuild）")
     f = from_page(read_json(jf))
     spec, errors = check(f)
     show(d, f, spec, errors)

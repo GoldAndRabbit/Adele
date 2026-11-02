@@ -125,6 +125,10 @@ def make_covers(c, it, seg, a):
 def song_title_zh(c, it):
     """歌名的中文译名：翻译流程的歌名步骤（subs result.json 的 title_zh），没有再看字幕片头的 __title__ 缓存；
     和原文一样（TQG / Dai Dai）就没有。"""
+    from workflow.song.title_translation import resolved
+    chosen = resolved(c.song_dir(it))
+    if chosen:
+        return chosen if chosen.lower() != it["title"].lower() else ""
     res = read_json(c.song_dir(it) / "subs" / "translation" / "result.json", {}) or {}
     cache = read_json(c.song_dir(it) / "zh_cache.json", {}) or {}
     zh = res.get("title_zh") or next((v for k, v in cache.items() if k.startswith("__title__::")), "")
@@ -204,10 +208,13 @@ def draft_meta(c, it, seg, a):
     })
 
 
-def package_one(c, it, seg, a):
+def package_one(c, it, seg, a, *, meta_future=None):
     try:
-        draft_meta(c, it, seg, a)
+        if meta_future is None:
+            draft_meta(c, it, seg, a)
         make_covers(c, it, seg, a)
+        if meta_future is not None:
+            meta_future.result()
         try:   # 候选排序：算法推荐 Top3（cover_rank.py，Qwen 一首一次调用）；失败不影响封面本身
             from .cover_rank import rank
             rank(c.song_dir(it).resolve(), force=a.force)
@@ -223,8 +230,8 @@ def package_one(c, it, seg, a):
 
 def stage_package(c, a):
     todo = selected(c, a)
-    # 介绍只调接口，可以 3 首并发；封面要跑 Real-ESRGAN（本地重模型），一次只跑一首
+    # 介绍最多 3 首并发，和逐首封面同时进行；Real-ESRGAN 始终只跑一首。
     with ThreadPoolExecutor(3) as ex:
-        list(ex.map(lambda x: draft_meta(c, *x, a), todo))
-    res = [package_one(c, *x, a) for x in todo]
+        metas = [ex.submit(draft_meta, c, *x, a) for x in todo]
+        res = [package_one(c, *x, a, meta_future=meta) for x, meta in zip(todo, metas)]
     print(f"\npackage：{sum(res)}/{len(todo)} 首完成")

@@ -35,7 +35,7 @@ sys.path.insert(0, str(ROOT / "workflow"))
 MODEL = "deepseek-flash"
 EFFORT = "high"
 # 每一步各自的版本：改了哪一步的提示词，只把那一步的版本加一（它后面依赖它的步骤会因为输入变了自动重跑）
-STEP_VERSION = {"brief": "3", "draft": "3", "polish": "3", "review": "7", "garbage": "3", "poetic": "5", "title": "1"}
+STEP_VERSION = {"brief": "3", "draft": "3", "polish": "3", "review": "7", "garbage": "3", "poetic": "5", "title": "2"}
 GLOSSARY = Path(__file__).with_name("glossary.json")
 MAX_ZH = 18              # 中文 v2 每行最多字数（字幕可读）
 GARBAGE_KEEP = 68        # 歌词行识别文字和歌词读音相似度（partial）≥ 这个：唱走样了，不当幻听（实测走样 70~100，幻听 44~60）
@@ -101,13 +101,6 @@ P_POETIC = """你是当代中文诗人。下面是一首歌的字幕（按组）
 """ + COMMON + """
 输出 JSON：{"groups": [{"id": 组号, "zh": [...]}, ...]}，每组行数和原文一致；不要加 ♪，不要解释。"""
 
-P_TITLE = """你是资深的中文歌词译者，整首歌词已经翻完，现在定这首歌的中文歌名。
-下面有原文歌名、「歌曲理解」、歌词里出现歌名（或歌名关键词）的句子和它们已经定好的中文译法。
-- 这首歌在中文世界有广为流传的通行译名（唱片公司官方中文名、主流音乐平台通用的名字）时，用通行译名
-- 没有通行译名：歌名的中文要和歌词里同一个词的译法一致（歌词里 royals 译成「皇室」，歌名就不要另译成「贵族」）；
-  译出这个词在这首歌里的真实含义，不要按字典第一个义项直译（liability 在歌里指「累赘 / 负担」，不是会计上的「负债」）
-- 像一个歌名：简短（一般 2～6 个字），不加书名号；原名是人名 / 缩写 / 拟声、或者节目名带编号（BZRP Music Sessions #53），输出原文
-输出 JSON：{"zh": "中文歌名", "why": "一句话"}"""
 
 P_GARBAGE = """下面是一首歌现场字幕里不太确定的行，每行有「识别」（语音识别听到的文字）；歌词行还有对应的「歌词」。
 现场有人群声、混响，识别有时会听出**没有意义的幻听**：乱码、不成句的词串、零散字母、和这首歌语言无关的别的语言词串
@@ -333,7 +326,6 @@ def groups_with_memory(cache, step, prompt, uniq, ctx, label, mem, key, extra=No
 # ---------------------------------------------------------------- 主流程
 
 def translate(d, out_dir, lyrics, title):
-    from translate_ass import translate_title
     tdir = out_dir / "translation"
     cache = Cache(tdir / "cache.json")
     units = load_units(out_dir)
@@ -436,18 +428,16 @@ def translate(d, out_dir, lyrics, title):
             if isinstance(x, dict) and x.get("id") in members:
                 for u in members[x["id"]]:
                     u["dropped"] = "没有意义的识别结果（多半是人群声里的幻听）：" + str(x.get("reason", ""))
+    else:
+        print("幻听检查: 已筛查全部行，无需模型复核的候选", flush=True)
     # 顶部注释：单独的选注释词流程（song_note_workflow），在审校之后、用定稿的中文判断「观众看中文能不能懂」
     from .song_note_workflow import select_notes
     notes, note_log = select_notes(cache, units, brief, title)
     (tdir / "notes.json").write_text(json.dumps({"final": {str(k): v for k, v in notes.items()}, "candidates": note_log},
                                                 ensure_ascii=False, indent=1))
 
-    # 片头歌名
-    zc_path = d / "zh_cache.json"
-    zc = json.loads(zc_path.read_text()) if zc_path.exists() else {}
-    os.environ["TRANSLATE_MODEL"] = MODEL
-    title_zh = translate_title(title, zc) if title else None
-    zc_path.write_text(json.dumps(zc, ensure_ascii=False, indent=1))
+    # 标题由独立步骤统一生成，不再先调一次通用标题翻译。
+    title_zh = None
 
     result = {"model": MODEL, "effort": EFFORT, "version": STEP_VERSION, "seconds": {k: round(v, 1) for k, v in TIMES.items()}, "title": title, "title_zh": title_zh, "brief": brief,
               "units": units, "notes": {str(k): v for k, v in notes.items()}}
@@ -457,41 +447,12 @@ def translate(d, out_dir, lyrics, title):
     build_outputs(d, out_dir)
     # 第 8 步 诗意版（成品烧这一版）：flash 写出来太直，用 pro
     poetic(d, out_dir, model=POETIC_MODEL)
+    from .title_translation import sync as sync_title
+    sync_title(d)
     return json.loads((tdir / "result.json").read_text())
 
 
-def song_title(cache, R, d=None):
-    """中文歌名（整首翻完之后）：歌词里出现歌名的句子怎么译的，歌名就跟着；有通行译名用通行译名。
-    只改《》里的歌名，中文歌手名不动（R["title_zh"] 形如「《中文歌名》 中文歌手」）。
-    定稿表 zh_fixed.json 里有 "__title__"（如「臀部不会说谎」）就直接用它，不问模型（模型每次重跑给的歌名可能不一样）。
-    投稿标题（make_meta）也读这里的歌名，两处一致。"""
-    title, old = R.get("title") or "", R.get("title_zh") or ""
-    fixed = (json.loads((d / "zh_fixed.json").read_text()) if d and (d / "zh_fixed.json").exists() else {}).get("__title__")
-    if fixed:
-        zh = fixed.strip().strip("《》")
-        R["title_zh"] = re.sub(r"《[^》]*》", f"《{zh}》", old) if "《" in old else f"《{zh}》 {old}".strip()
-        R["title_why"] = "定稿表里定的歌名"
-        return R["title_zh"]
-    m = re.search(r"《([^》]*)》", title)
-    if not m:
-        return old
-    name = m.group(1)
-    keys = [w for w in re.findall(r"[^\W\d_]{3,}", name.lower())]
-    hits = [{"原文": u["orig"], "中文": u.get("v2_final") or u.get("v2", "")} for u in R["units"]
-            if u.get("type") != "讲话" and any(k in u["orig"].lower() for k in keys)]
-    seen, uniq = set(), []
-    for h in hits:
-        if h["原文"] not in seen:
-            seen.add(h["原文"])
-            uniq.append(h)
-    brief = R.get("brief") or {}
-    payload = json.dumps({"歌名": name, "整行": title, "歌曲理解": {k: brief.get(k) for k in ("theme", "voice", "tone", "core_lines")},
-                          "歌词里出现歌名的句子": uniq[:12]}, ensure_ascii=False)
-    res = cached_ask(cache, "title", P_TITLE, payload, "歌名", check=lambda r: isinstance(r, dict) and str(r.get("zh", "")).strip())
-    zh = str(res["zh"]).strip().strip("《》")
-    new = re.sub(r"《[^》]*》", f"《{zh}》", old) if "《" in old else f"《{zh}》 {old}".strip()
-    R["title_zh"], R["title_why"] = new, res.get("why", "")
-    return new
+from .title_translation import translate as song_title
 
 
 # ---------------------------------------------------------------- 第 6 步 定稿 + 写字幕文件（审核页改了以后也只重跑这一步）
@@ -534,6 +495,8 @@ def build_outputs(d, out_dir):
     from translate_ass import CJK_FONT, build_ass
     tdir = out_dir / "translation"
     res = json.loads((tdir / "result.json").read_text())
+    from .title_translation import apply as apply_title
+    apply_title(d, res)
     units = finalize(d, res["units"])
     notes = {int(k): v for k, v in res["notes"].items()}
     # 你在审核页改 / 加 / 删的注释：歌曲目录 zh_notes.json，{原文: 注释}，空字符串 = 删掉；按原文找第一次出现的那一行

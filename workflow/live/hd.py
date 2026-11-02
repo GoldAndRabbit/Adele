@@ -9,6 +9,7 @@ hd：只处理审核通过（且通过后没再改过）的歌，一首做完再
 
 import shutil
 
+from workflow.paths import render_subtitle
 from . import review
 from .package import cover_candidates
 from .paths import ROOT, VENV_PY, read_json, write_json
@@ -45,7 +46,7 @@ def write_post(c, it, entry, video):
         "spec": {"resolution": "3840x2160", "fps": 60, "audio": "FLAC 48kHz/24bit (Hi-Res)"},
         "files": {"video": str(video.relative_to(ROOT)), "cover": str((post / "cover" / "cover_01.jpg").relative_to(ROOT)),
                   "cover_4x3": str((post / "cover" / "cover_01_4x3.jpg").relative_to(ROOT)),
-                  "subtitle": str((d / "subs" / "lyrics_literal.ass").relative_to(ROOT))},
+                  "subtitle": str(render_subtitle(d).relative_to(ROOT))},
         "source": {"concert": read_json(c.info).get("title"), "segment": [review.segment_of(c, it["name"])[k] for k in ("start", "end")]},
     })
     write_json(post / f"{it['name']}.json", out)

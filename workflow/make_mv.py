@@ -92,7 +92,7 @@ def stage_download(a, w):
            # 没起服务也不影响 default 客户端（需要 yt-dlp-ejs + deno 解 JS 校验，见 requirements.txt）
            "--extractor-args", "youtube:player_client=default,mweb",
            "--merge-output-format", "mp4", "--retries", "10", "--fragment-retries", "10",
-           "--write-subs", "--sub-langs", "all,-live_chat", "--convert-subs", "srt",
+           "--write-subs", "--sub-langs", "all,-live_chat,-danmaku", "--convert-subs", "srt",
            "-o", str(w / "source.%(ext)s")]
     if a.cookies_from_browser:
         cmd += ["--cookies-from-browser", a.cookies_from_browser]
@@ -282,6 +282,8 @@ def stage_interp(a, w):
         return
     for d in (fin, fout):
         d.mkdir()
+    from local_space import prepare as prepare_local_space
+    prepare_local_space(ROOT, w, info)
     ext = pick_frame_ext(a, video, info, w)
     q = ["-q:v", "1"] if ext == "jpg" else []
 
@@ -295,7 +297,9 @@ def stage_interp(a, w):
     print(f"RIFE: {n_in} 帧 @ {info['fps']:.3f} -> {n_out} 帧 @ {TARGET_FPS} ({ext})")
     run([BIN / "rife-ncnn-vulkan", "-i", fin, "-o", fout,
          "-m", MODELS / "rife-v4.6", "-n", n_out, "-j", "3:6:3", "-f", f"%08d.{ext}"])
-    shutil.rmtree(fin)  # 插帧前的原始帧只在重新插帧时有用，随时能从源视频重抽；重新渲染只需要 frames_out
+    # FUSE/NFS may report a temporary frame already absent during cleanup.
+    # Cleanup must not discard a successfully completed interpolation step.
+    shutil.rmtree(fin, ignore_errors=True)
 
 
 def check_hires(path):

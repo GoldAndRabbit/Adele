@@ -11,10 +11,25 @@ posts/<name>/ 下的文件一个都不改。按歌名合并：只处理传进来
 import json
 import subprocess
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from .paths import CONCERTS, ROOT, read_json, write_json
+from workflow.song.title_translation import display_title
 
 SLUG = "singles"
+
+
+def production_day(item):
+    """按任务建立日期分组，使用上海时区；不使用视频的上传 / 演出日期。"""
+    saved = item.get("production_day")
+    if saved:
+        return saved
+    p = ROOT / "posts" / item["name"]
+    if not p.exists():
+        p = CONCERTS / SLUG / "songs" / item["name"]
+    st = p.stat()
+    return datetime.fromtimestamp(getattr(st, "st_birthtime", st.st_mtime), ZoneInfo("Asia/Shanghai")).strftime("%y%m%d")
 
 
 def duration(path):
@@ -63,8 +78,11 @@ def build(names):
         write_json(d / "post_draft.json", {"title": post.get("title"), "tags": post.get("tags", []),
                                            "intro": post.get("intro", {}), "song": song})
         items[name] = {"idx": items.get(name, {}).get("idx") or len(items) + 1, "name": name,
-                       "title": song.get("title") or name, "kind": "song",
-                       "artist": song.get("artist"), "notes": (post.get("performance") or {}).get("event")}
+                       "title": display_title(song.get("title") or name), "kind": "song",
+                       "artist": song.get("artist"), "notes": (post.get("performance") or {}).get("event"),
+                       "production_day": production_day(items.get(name) or {"name": name}),
+                       "display_title": items.get(name, {}).get("display_title"),
+                       **{k: v for k, v in items.get(name, {}).items() if k.startswith("review_hidden")}}
         segs[name] = {"name": name, "start": 0.0, "end": round(dur, 2), "confidence": 1.0}
         print(f"{name}: {dur:.0f}s", flush=True)
     order = sorted(items.values(), key=lambda x: x["idx"])

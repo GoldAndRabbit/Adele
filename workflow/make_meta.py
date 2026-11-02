@@ -63,6 +63,9 @@ SYSTEM_PROMPT = """你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。�
 def subs_title_zh(d):
     """字幕片头的中文歌名（翻译流程第 7 步定的，或定稿表里的 __title__）：投稿标题以它为准，两处一致。没有就返回 None。"""
     import re
+    from song.title_translation import resolved
+    if resolved(d):
+        return resolved(d)
     f = Path(d) / "subs" / "translation" / "result.json"
     m = re.match(r"\s*《(.+?)》", (json.loads(f.read_text()).get("title_zh") or "") if f.exists() else "")
     return m.group(1).strip() if m else None

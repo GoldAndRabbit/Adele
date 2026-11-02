@@ -328,6 +328,10 @@ def run(d, lyrics, out_dir, meta=None):
     shown = [r for r in rows if r["kind"] in ("lyric", "talk", "live")]
     for blk in (block(shown, dur, head=True), block(shown, dur, head=False)):
         if blk and LM.PITCH.ratio(blk[0]["s"], blk[-1]["e"]) < BLOCK_TALK:
+            # 音高不稳定不能推翻参考歌词证据：说唱、低声演唱也会触发此阈值。
+            # 已知剧情对白可按歌曲显式关闭保护。
+            if opts.get("protect_reference_lyrics", True) and any(r.get("occ") and r["occ"].get("anchor") for r in blk):
+                continue
             lyr_in = [r for r in blk if r.get("occ")]
             mostly_weak = bool(lyr_in) and sum(1 for r in lyr_in if not r["occ"]["anchor"]) > len(lyr_in) / 2
             for r in blk:

@@ -1038,8 +1038,35 @@ def crop_window(img, ratio):
     return min(max(x, 0), img.width - w), w
 
 
+def cover_subtitle(text, artist_zh=None, event=None):
+    """中文艺名和场次名可选；场次放在字幕语言标签之前。"""
+    text = (text or "").strip()
+    if artist_zh and artist_zh not in text:
+        text = f"{artist_zh} {text}".strip()
+    if event and event not in text:
+        match = re.search(r"\s*[·・]\s*(中[^·・]*字幕)$", text)
+        text = f"{text[:match.start()]} · {event} · {match[1]}" if match else " · ".join(x for x in (text, event) if x)
+    return re.sub(r"\s*[·・]\s*", "·", text)
+
+
+def default_cover_event(a):
+    """Use known performance metadata; official music videos are labelled MV."""
+    name = getattr(a, "name", "")
+    if "_mv" in name:
+        return "MV"
+    for path in [ROOT / "posts" / name / "post" / f"{name}.json",
+                 ROOT / "posts" / name / "post_draft.json"]:
+        if path.exists():
+            perf = json.loads(path.read_text()).get("performance") or {}
+            return perf.get("event_zh") or perf.get("event") or perf.get("event_en")
+    return None
+
+
 def compose(frame, a):
     """按画布实际尺寸排版：logo/徽章按高度定大小，标题按当前宽度自适应，16:9 和 4:3 共用。"""
+    # 全小写来源标题统一单词首字母大写，保留已有缩写和人工大小写。
+    if a.title.islower():
+        a.title = re.sub(r"(^|[\s/\-])([a-z])", lambda m: m[1] + m[2].upper(), a.title)
     canvas = frame.convert("RGBA")
     cw, ch = canvas.size
 
@@ -1088,36 +1115,33 @@ def compose(frame, a):
     title_key = a.title_font or "cjk"  # 中日英标题统一用冬青黑体 W8，和之前的封面一致
     # 标题撑满到接近左右边缘（默认 94% 画布宽），字号再受高度上限约束
     sub_y = int(ch * (a.text_y - a.text_lift))
-    if a.subtitle:
-        # 宋体的「·」是全角字、两边自带留白，再加空格就空得很丑（也白白占宽度、字放不大）；去掉分隔符两边的空格
-        a.subtitle = re.sub(r"\s*[·・]\s*", "·", a.subtitle)
+    subtitle = cover_subtitle(a.subtitle, getattr(a, "artist_zh", None), getattr(a, "event", None) or default_cover_event(a))
 
     def layout(max_size):
         tf = fit_width(a.title, title_key, int(cw * a.title_width), max_size)
         title_w = ink_width(a.title, tf)
-        if not a.subtitle:
+        if not subtitle:
             return tf, None, 0.0, sub_y
         if a.sub_fit == "natural":
-            # 居中，宽度 = 标题宽的 85%：先按正常字距放大字号；长标题（BZRP Music Sessions #53）字小，副标题要比标题还大
-            # 才够宽，字号就封顶在标题字号，差的宽度用字距补齐。整块变高没关系，后面标题会自动缩小避开徽章、整块再居中
+            # 居中、只按正常字距调整字号；85% 是宽度上限，不把短文案补字距拉满。
             sub_w = int(title_w * 0.85)
-            sf = fit_width(a.subtitle, "sub", sub_w, tf.size)
-            tracking = max(0.0, (sub_w - ink_width(a.subtitle, sf)) / max(1, len(a.subtitle) - 1))
+            sf = fit_width(subtitle, "sub", sub_w, tf.size)
+            tracking = 0.0
             if sf.size < ch * 0.10:
                 # 超短标题（TQG）：字号顶到高度上限也不宽，副标题按 85% 算会小得看不清；字号保底画布高的 10%
                 # （和长标题的副标题一样大），宽度最多到画布宽的 85%，可以比标题宽
-                sf, tracking = fit_width(a.subtitle, "sub", int(cw * 0.90), int(ch * 0.10)), 0.0
+                sf, tracking = fit_width(subtitle, "sub", int(cw * 0.90), int(ch * 0.10)), 0.0
         else:
             # 副标题和标题左右对齐：先按标题宽度定字号；字号太大就封顶，用字距把宽度拉到和标题一样
-            sf = fit_width(a.subtitle, "sub", title_w, int(tf.size * 0.68))
-            tracking = max(0.0, (title_w - ink_width(a.subtitle, sf)) / max(1, len(a.subtitle) - 1))
+            sf = fit_width(subtitle, "sub", title_w, int(tf.size * 0.68))
+            tracking = max(0.0, (title_w - ink_width(subtitle, sf)) / max(1, len(subtitle) - 1))
             if sf.size < ch * SUB_MIN:
                 # 短标题（Stan、Ribs）配长副标题：按标题宽度排，副标题小得看不清（用户 2026-10-24）；
                 # 字号保底，宽度放开到画布的 85%，可以比标题宽
-                sf, tracking = fit_width(a.subtitle, "sub", int(cw * 0.90), int(ch * SUB_MIN)), 0.0
+                sf, tracking = fit_width(subtitle, "sub", int(cw * 0.90), int(ch * SUB_MIN)), 0.0
         # 标题基线：默认在副标题上方 1.12 个字号；标题有下伸笔画（Liability 的 y、Girl 的 g）时，
         # 按「副标题字顶 + 描边」和「标题下伸 + 描边」实际算，再留一点空，免得压到第二行
-        sub_top = -sf.getbbox(a.subtitle, anchor="ls")[1] + max(2, int(sf.size * 0.08))
+        sub_top = -sf.getbbox(subtitle, anchor="ls")[1] + max(2, int(sf.size * 0.08))
         title_desc = max(0, tf.getbbox(a.title, anchor="ls")[3]) + max(2, int(tf.size * 0.06))
         return tf, sf, tracking, min(sub_y - int(sf.size * 1.12), sub_y - sub_top - title_desc - int(ch * 0.012))
 
@@ -1135,7 +1159,7 @@ def compose(frame, a):
     shift = max(0, (top - top_limit) // 2)
     draw_text(canvas, (cw / 2, title_y - shift), a.title, tf)
     if sf:
-        draw_text_tracked(canvas, cw / 2, sub_y - shift, a.subtitle, sf, tracking, 0.08)
+        draw_text_tracked(canvas, cw / 2, sub_y - shift, subtitle, sf, tracking, 0.08)
     return canvas.convert("RGB")
 
 
@@ -1159,6 +1183,8 @@ def build_parser():
     p.add_argument("--name", required=True)
     p.add_argument("--title", required=True, help="大标题，一般是歌名")
     p.add_argument("--subtitle", help="副标题，如 'Lorde · 中英字幕'")
+    p.add_argument("--artist-zh", help="可选中文艺名，补在副标题前，如 埃米纳姆")
+    p.add_argument("--event", help="覆盖自动识别的演唱会 / 节目名；MV 默认标注 MV，放在字幕语言之前")
     p.add_argument("--video", help="取帧的视频，默认 posts/<name>/source.mp4（原始 4K）")
     p.add_argument("--scene", choices=list(SCENE_KINDS), default="fans",
                    help="--select scene 时挑哪种画面：fans 球迷氛围（看台、TIFO、旗帜、球场全景，队歌用）；"
@@ -1204,10 +1230,10 @@ def build_parser():
     p.add_argument("--crop-bottom", type=float, default=0.0,
                    help="取帧时先裁掉底部这一比例（如 0.14），用于画面里烧了字幕的搬运视频")
     p.add_argument("--title-width", type=float, default=0.94,
-                   help="标题撑满的画布宽度比例（默认 0.94，接近左右边缘）；副标题与标题等宽对齐")
+                   help="标题占画布宽度的上限（默认 0.94，接近左右边缘）")
     p.add_argument("--title-font", choices=["sans", "gill", "serif", "cjk"])
-    p.add_argument("--sub-fit", choices=["stretch", "natural"], default="stretch",
-                   help="副标题：stretch（默认）拉开字距和标题等宽；natural 正常字距、不刻意拉宽")
+    p.add_argument("--sub-fit", choices=["stretch", "natural"], default="natural",
+                   help="副标题：natural（默认）正常字距居中；stretch 拉开字距和标题等宽")
     p.add_argument("--recompose", action="store_true",
                    help="只重排文字：用 out-dir 里已有的高清帧（frame_*.jpg）重新生成封面，不重新挑帧、不重新高清化")
     p.add_argument("--extra-logo", action="append", help="右上角额外 logo（png，如 assets/crests/fc_bayern.png），和左上 logo + 4K 徽章等高对齐，可多次")
@@ -1267,15 +1293,22 @@ def main():
         return
 
     if a.recompose:
+        groups = {}
         for f in sorted(out.glob("frame_*.jpg")):
             m = re.match(r"frame_(?:(closeup|half|full|scene|pool)_)?(\d\d)_", f.name)
             if not m:
                 continue
             k = m[1] or "cover"
             img = Image.open(f).convert("RGB")
-            compose(img, a).save(out / f"{k}_{m[2]}.jpg", quality=95)
-            compose(crop_ratio(img, 4 / 3), a).save(out / f"{k}_{m[2]}_4x3.jpg", quality=95)
+            c, c43 = compose(img, a), compose(crop_ratio(img, 4 / 3), a)
+            c.save(out / f"{k}_{m[2]}.jpg", quality=95)
+            c43.save(out / f"{k}_{m[2]}_4x3.jpg", quality=95)
+            groups.setdefault(k, []).append((c, c43))
             print(f"{k}_{m[2]}.jpg + 4x3  <- {f.name}")
+        for k, pairs in groups.items():
+            stem = "candidates" if k == "cover" else f"candidates_{k}"
+            contact_sheet([c for c, _ in pairs], cols=4).save(out / f"{stem}.jpg", quality=92)
+            contact_sheet([c for _, c in pairs], cols=4).save(out / f"{stem}_4x3.jpg", quality=92)
         return
 
     if not a.image and not a.at and a.select == "scene":

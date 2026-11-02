@@ -26,15 +26,28 @@ from workflow.live import review  # noqa: E402
 from workflow.live.package import cover_candidates  # noqa: E402
 from workflow.letterbox import content_box, logo_corner  # noqa: E402
 from workflow.live.paths import CONCERTS, Concert, read_json  # noqa: E402
+from workflow.live.singles import production_day  # noqa: E402
 
 app = FastAPI(title="adele review")
 
 
 def concert(slug):
-    c = Concert(slug)
+    dated = re.fullmatch(r"singles_(\d{6})", slug)
+    c = Concert("singles" if dated else slug)
     if not c.info.exists() or c.dir.parent != CONCERTS:
         raise HTTPException(404, "没有这个场次")
+    if dated:
+        c.review_day = dated[1]
     return c
+
+
+def visible_items(c):
+    day = getattr(c, "review_day", None)
+    return [it for it in c.items() if not it.get("review_hidden") and (not day or production_day(it) == day)]
+
+
+def display_title(it):
+    return it.get("display_title") or it["title"]
 
 
 def song(c, name):
@@ -47,6 +60,10 @@ def song(c, name):
     return it
 
 
+def has_picked_cover(d):
+    return any((d / "post").glob("*_cover_picked_*.png"))
+
+
 def song_summary(c, it, segs, rv):
     d = c.song_dir(it)
     seg = segs.get(it["name"], {})
@@ -55,10 +72,11 @@ def song_summary(c, it, segs, rv):
     covers = cover_candidates(d)
     chosen = next((x for x in covers if x["id"] == entry.get("cover")), None)
     return {
-        "idx": it["idx"], "name": it["name"], "title": it["title"], "notes": it.get("notes"),
+        "idx": it["idx"], "name": it["name"], "title": display_title(it), "notes": it.get("notes"),
         "start": seg.get("start"), "end": seg.get("end"), "confidence": seg.get("confidence"),
         "flags": seg.get("flags", []), "manual": bool(seg.get("manual")),
         "stage": st["stage"], "review": st["review"], "needs_refine": st["needs_refine"],
+        "cover_selected": bool(entry.get("cover")) or has_picked_cover(d),
         "thumb": media_url(c, it["name"], (chosen or covers[0])["file"]) if covers else None,
     }
 
@@ -145,6 +163,16 @@ def list_concerts():
         if (p / "concert.json").exists():
             c = Concert(p.name)
             info = read_json(c.info)
+            if p.name == "singles":
+                days = {}
+                for it in c.song_items():
+                    if it.get("review_hidden"):
+                        continue
+                    day = production_day(it)
+                    days[day] = days.get(day, 0) + 1
+                out.extend({"slug": f"singles_{day}", "title": f"单曲 {day}", "artist": "", "date": day, "songs": count}
+                           for day, count in sorted(days.items(), reverse=True))
+                continue
             out.append({"slug": p.name, "title": info.get("title") or p.name, "artist": info.get("artist"),
                         "date": info.get("date"), "songs": len(c.song_items())})
     return out
@@ -157,12 +185,16 @@ def get_concert(slug: str):
     segs = {s["name"]: s for s in seg.get("items", [])}
     rv = review.load(c)
     info = read_json(c.info)
+    items = visible_items(c)
+    songs = [it for it in items if it["kind"] == "song"]
+    if getattr(c, "review_day", None):
+        info = {**info, "title": f"单曲 {c.review_day}", "date": c.review_day}
     return {
         "slug": slug, "info": {k: info.get(k) for k in ("title", "artist", "date", "venue", "city", "tour", "duration",
                                                          "fps", "width", "height", "audio_rate", "setlist_url")},
         "source": f"/media/{slug}/source.mp4" if c.source.exists() else None,
-        "items": [{"idx": it["idx"], "name": it["name"], "title": it["title"], "kind": it["kind"]} for it in c.items()],
-        "songs": [song_summary(c, it, segs, rv) for it in c.song_items()],
+        "items": [{"idx": it["idx"], "name": it["name"], "title": display_title(it), "kind": it["kind"]} for it in items],
+        "songs": [song_summary(c, it, segs, rv) for it in songs],
         "gaps": seg.get("gaps", []),
     }
 
@@ -214,6 +246,7 @@ def get_song(slug: str, name: str):
         "box": content_box(d),
         "logo_corner": logo_corner(d),   # 片源左上角有台标的场次放右上角
         "review_entry": rv["songs"].get(name, {}),
+        "cover_selected": bool(rv["songs"].get(name, {}).get("cover")) or has_picked_cover(d),
     }
 
 
@@ -280,6 +313,7 @@ def post_cover_download(slug: str, name: str, body: dict = Body(...)):
     saved = save_picked(c, it, cid)
     if not saved:
         raise HTTPException(404, "没有这张封面")
+    review.save_entry(c, it, {"cover": cid})
     return {"saved": saved}
 
 
