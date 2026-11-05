@@ -28,7 +28,7 @@ from pathlib import Path
 from PIL import Image
 
 from . import review
-from .package import CLOSEUP_MIN, TEXT_LIFT, save_picked, subtitle_line
+from .package import CLOSEUP_MIN, TEXT_LIFT, save_picked, subtitle_line, cover_title
 from .paths import ROOT, VENV_PY, Concert, read_json, write_json
 
 POOL_WINDOWS = 10                           # 整场切成 10 段，每段各挑一批（只在整场挑「最好的」会全挤在一两段里）
@@ -222,7 +222,7 @@ def compose_for(slug, name, file):
     n = 1 + max([int(f.name.split("_")[2]) for f in cdir.glob("frame_pool_*.jpg")] or [0])
     cid = f"pool_{n:02d}"
     img = Image.open(src).convert("RGB")
-    c169, c43 = make_cover.compose_pair(img, ["--name", it["name"], "--title", it["title"], "--subtitle", subtitle_line(c, it),
+    c169, c43 = make_cover.compose_pair(img, ["--name", it["name"], "--title", cover_title(c, it), "--subtitle", subtitle_line(c, it),
                                               "--sub-fit", "natural", "--text-lift", TEXT_LIFT])
     c169.convert("RGB").save(cdir / f"{cid}.jpg", quality=95)
     c43.convert("RGB").save(cdir / f"{cid}_4x3.jpg", quality=95)

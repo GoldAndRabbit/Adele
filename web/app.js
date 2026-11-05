@@ -48,7 +48,7 @@ function renderSidebar(route) {
   const c = state.concert;
   $("#concerts").replaceChildren(...state.concerts.map((x) =>
     h("a", { href: `#/${x.slug}`, class: x.slug === route.slug && !route.name ? "active" : null },
-      h("span", { class: "jn" }, x.title), h("span", { class: "jd" }, `${x.songs} 首`))));
+      x.title, h("span", { class: "concert-count" }, `（${x.songs}首）`))));
   const ul = $("#songs");
   if (!c) { ul.replaceChildren(); return; }
   const songs = Object.fromEntries(c.songs.map((s) => [s.name, s]));
@@ -62,7 +62,9 @@ function renderSidebar(route) {
       h("span", { class: "ji" }, it.idx),
       h("span", { class: "song-list-info" },
         h("span", { class: "song-list-title" }, it.title),
-        h("span", { class: `song-cover-status${s.cover_selected ? " selected" : ""}` }, s.cover_selected ? "已选完封面" : "尚未选择封面")),
+        h("span", { class: "song-list-badges" },
+          h("span", { class: `song-cover-status${s.cover_selected ? " selected" : ""}` }, s.cover_selected ? "已选完封面" : "尚未选择封面"),
+          h("span", { class: `song-cover-status${s.subtitles_ready ? " selected" : ""}` }, s.subtitles_ready ? "已产出字幕" : "尚未产出字幕"))),
       warn ? h("span", { class: "warn", title: s.needs_refine ? "边界改过，需要重跑精校" : "定位置信度低" }, "⚠") : null,
       h("span", { class: "jd" }, s.start != null ? fmt(s.end - s.start) : "")));
   }));
@@ -72,7 +74,7 @@ function renderSidebar(route) {
 
 function viewOverview() {
   const c = state.concert;
-  document.title = c.info.title || c.slug;
+  document.title = "演唱会";
   const card = h("div", { class: "card" },
     h("div", { class: "card-head" },
       h("div", { class: "card-title" }, `歌单 ${c.songs.length} 首`, h("small", {}, `整场 ${hms(c.info.duration)}`)),
@@ -124,7 +126,7 @@ async function viewSong(route) {
   const c = state.concert;
   const s = await api(`/api/concerts/${c.slug}/songs/${route.name}`);
   state.song = s;
-  document.title = `${s.idx}. ${s.title}`;
+  document.title = "演唱会";
   const head = h("div", { class: "card-head" },
     h("div", { class: "card-title" }, s.title, h("small", {}, `${hms(s.start)} – ${hms(s.end)}（${fmt(s.end - s.start)}）`)),
     h("div", { class: "spacer" }),
@@ -521,8 +523,8 @@ const fmtMs = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) 
 // 标记完跟我说，我把标记的画面随机分给这次要做的歌（cover_pool assign），每首按歌名排好 16:9 + 4:3 存成封面
 async function viewCoverPool(route) {
   const c = state.concert;
-  document.title = `封面池 · ${c.info.title || c.slug}`;
-  const { frames, songs } = await api(`/api/concerts/${c.slug}/cover_pool`);
+  document.title = "演唱会";
+  const { frames, songs, selected = [] } = await api(`/api/concerts/${c.slug}/cover_pool`);
   const titleOf = Object.fromEntries(c.songs.map((s) => [s.name, s.title]));
   const st = { kind: "all" };
   const kindBar = h("div", { class: "seg" });
@@ -560,14 +562,21 @@ async function viewCoverPool(route) {
   };
   // 标记完成：标记的画面随机分给要做的歌，每首按歌名排好存成封面；结果列在按钮下面
   const result = h("div", { class: "covers pool" });
+  const selectedLabel = h("div", { class: "section-label" });
+  const showSelected = (rows) => {
+    selectedLabel.textContent = `已选封面（${rows.length}首）`;
+    result.replaceChildren(...rows.map((x) => h("button", { class: "cover", title: `${x.title}（双击看大图）`,
+      ondblclick: () => lightbox(x.file) }, h("img", { src: x.file }), h("span", { class: "ct" }, x.title))));
+  };
+  showSelected(selected);
   const done = h("button", { class: "btn ok", onclick: async () => {
     if (done.disabled) return;
     done.disabled = true;
     done.textContent = "分配中…";
     try {
       const r = await api(`/api/concerts/${c.slug}/cover_pool/assign`, {});
-      result.replaceChildren(...r.songs.map((x) => h("button", { class: "cover", title: `${x.title} ← ${x.frame}（双击看大图）`,
-        ondblclick: () => lightbox(x.file) }, h("img", { src: x.file }), h("span", { class: "ct" }, x.title))));
+      showSelected(r.songs);
+      await refreshConcert(c.slug);
       toast(`已分配 ${r.songs.length} 首的封面`);
     } catch (err) { toast(`分配失败：${err.message || err}`, false); }
     done.disabled = false;
@@ -580,7 +589,7 @@ async function viewCoverPool(route) {
       h("small", {}, `整场挑出 ${frames.length} 张画面；点选适合做封面的，标记完点「标记完成」，随机分给要做的歌`))),
     h("div", { class: "pool-body" }, h("div", { class: "pool-head" }, count, kindBar), grid,
       h("div", { class: "actions" }, done, h("span", { class: "hint" }, "每首随机分一张标记的画面，按歌名排好 16:9 + 4:3 存成封面；可以重复点，重新随机")),
-      result)));
+      selectedLabel, result)));
 }
 
 // ---------------------------------------------------------------- 路由

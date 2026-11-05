@@ -32,6 +32,10 @@ def resolved(d):
 
 
 def apply(d, result):
+    draft = Path(d) / "post_draft.json"
+    song = (json.loads(draft.read_text()).get("song") or {}) if draft.exists() else {}
+    if song.get("artist") and result.get("title") and "》" in result["title"]:
+        result["title"] = result["title"].split("》", 1)[0] + "》 " + song["artist"]
     english = load(d).get("title")
     if english and result.get("title"):
         result["title"] = re.sub(r"《[^》]*》", lambda _: f"《{display_title(english)}》", result["title"], count=1)
@@ -39,7 +43,7 @@ def apply(d, result):
     if not zh:
         return
     old = result.get("title_zh") or ""
-    artist = load(d).get("artist_zh")
+    artist = song.get("artist_zh") or load(d).get("artist_zh")
     result["title_zh"] = (f"《{zh}》 {artist}" if artist else
         re.sub(r"《[^》]*》", lambda _: f"《{zh}》", old) if "《" in old else f"《{zh}》 {old}".strip())
 
@@ -63,7 +67,7 @@ def sync(d):
             continue
         song["title"] = display_title(song["title"])
         song["title_zh"] = resolved(d)
-        song["artist_zh"] = load(d).get("artist_zh") or song.get("artist_zh")
+        song["artist_zh"] = song.get("artist_zh") or load(d).get("artist_zh")
         perf = data.get("performance") or {}
         data["song"] = song
         data["title"] = build_title(song.get("artist_zh"), song.get("artist"), song["title"], song["title_zh"], perf.get("event_zh"), perf.get("event_en"), "中英字幕")

@@ -56,7 +56,8 @@ def cut_audio(c, it, seg, force=False):
 
 
 def sub_title(c, it):
-    artist = read_json(c.info).get("artist", "")
+    draft = read_json(c.song_dir(it) / "post_draft.json", {})
+    artist = (draft.get("song") or {}).get("artist") or it.get("artist") or read_json(c.info).get("artist", "")
     return f"《{it['title']}》 {artist}".strip()
 
 

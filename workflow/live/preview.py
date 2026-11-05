@@ -15,7 +15,7 @@ def make_preview(c, it, seg, force=False):
     d = c.song_dir(it)
     info = read_json(d / "song.json", {})
     dur = read_json(c.info).get("duration") or seg["end"] + PAD
-    want = [round(max(0.0, seg["start"] - PAD), 2), round(min(dur, seg["end"] + PAD), 2)]
+    want = [round(max(0.0, seg["start"] - seg.get("preview_lead", PAD)), 2), round(min(dur, seg["end"] + seg.get("preview_tail", PAD)), 2)]
     out = d / "preview.mp4"
     if out.exists() and info.get("preview") == want and not force:
         return False

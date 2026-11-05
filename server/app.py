@@ -76,6 +76,7 @@ def song_summary(c, it, segs, rv):
         "start": seg.get("start"), "end": seg.get("end"), "confidence": seg.get("confidence"),
         "flags": seg.get("flags", []), "manual": bool(seg.get("manual")),
         "stage": st["stage"], "review": st["review"], "needs_refine": st["needs_refine"],
+        "subtitles_ready": (d / "subs/lyrics.ass").is_file() and (d / "subs/lyrics.ass").stat().st_size > 0,
         "cover_selected": bool(entry.get("cover")) or has_picked_cover(d),
         "thumb": media_url(c, it["name"], (chosen or covers[0])["file"]) if covers else None,
     }
@@ -192,7 +193,9 @@ def get_concert(slug: str):
     return {
         "slug": slug, "info": {k: info.get(k) for k in ("title", "artist", "date", "venue", "city", "tour", "duration",
                                                          "fps", "width", "height", "audio_rate", "setlist_url")},
-        "source": f"/media/{slug}/source.mp4" if c.source.exists() else None,
+        # Archived media may live on a slow external mount. Listing the concert
+        # only needs the link; opening media validates its target separately.
+        "source": f"/media/{slug}/source.mp4" if c.source.is_symlink() or c.source.exists() else None,
         "items": [{"idx": it["idx"], "name": it["name"], "title": display_title(it), "kind": it["kind"]} for it in items],
         "songs": [song_summary(c, it, segs, rv) for it in songs],
         "gaps": seg.get("gaps", []),
@@ -261,13 +264,31 @@ def post_review(slug: str, name: str, body: dict = Body(...)):
     return {"entry": entry, "review": review.effective(c, it, entry)}
 
 
+def selected_covers(c):
+    """展示已保存的真实选择，刷新或单首改选后仍一致。"""
+    entries = review.load(c).get("songs", {})
+    rows = []
+    for it in c.song_items():
+        cid = entries.get(it["name"], {}).get("cover")
+        if not cid or not re.fullmatch(r"(closeup|half|full|scene|pool|cover)_\d+", cid):
+            continue
+        path = c.song_dir(it) / "covers" / f"{cid}.jpg"
+        if not path.is_file():
+            continue
+        version = path.stat().st_mtime_ns
+        rows.append({"name": it["name"], "title": it["title"], "frame": cid,
+                     "file": media_url(c, it["name"], f"covers/{cid}.jpg") + f"?v={version}",
+                     "file_4x3": media_url(c, it["name"], f"covers/{cid}_4x3.jpg") + f"?v={version}"})
+    return rows
+
+
 @app.get("/api/concerts/{slug}/cover_pool")
 def get_cover_pool(slug: str):
     """整场封面池（workflow/live/cover_pool.py）：每帧的地址、类别、整场时间、在哪首歌里、标没标记；要分封面的歌。"""
     from workflow.live.cover_pool import frames, targets
     c = concert(slug)
     return {"frames": [{**x, "url": f"/media/{slug}/cover_pool/{x['file']}"} for x in frames(c)],
-            "songs": [it["title"] for it in targets(c)]}
+            "songs": [it["title"] for it in targets(c)], "selected": selected_covers(c)}
 
 
 @app.post("/api/concerts/{slug}/cover_pool/mark")
@@ -325,7 +346,8 @@ def bili_upload(d):
     做好投稿信息就能在审核页看到，换了封面也跟着变。上传前 post_bili/upload.py 会再正式生成一次。"""
     f = d / "post" / "bili_upload.json"
     if f.exists():
-        return f.read_text()
+        from post_bili.upload import dump
+        return dump(read_json(f))
     try:
         import contextlib
         import io

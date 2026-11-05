@@ -98,6 +98,19 @@ def run_song(slug, name):
     print(name, [(x["t"], x["x"], x["y"]) for x in out["items"]])
 
 
+def ensure_song(slug, name):
+    """保留已有水印定稿；缺失或损坏时不能静默跳过。"""
+    from workflow.live.paths import Concert
+    c = Concert(slug)
+    path = c.song_dir(c.item(name)) / "watermark.json"
+    if not path.exists():
+        run_song(slug, name)
+    data = json.loads(path.read_text())
+    if not isinstance(data.get("items"), list) or not data.get("logo"):
+        raise ValueError(f"{name}: 水印计划无效")
+    return data
+
+
 def run_post(name):
     import subprocess
     from workflow.live.paths import ROOT

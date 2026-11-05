@@ -78,12 +78,17 @@ def subtitle_line(c, it):
     info = read_json(c.info)
     song = read_json(c.song_dir(it) / "song.json", {})
     langs = song.get("langs") or [song.get("lang", "en")]
-    zh = info.get("artist_zh") or (read_json(c.song_dir(it) / "post_draft.json", {}).get("song") or {}).get("artist_zh")
-    who = zh or info.get("artist", "")   # 只写中文艺名：英文名在大标题 / 投稿标题里都有，第二行字少才放得大（用户 2026-10-24）
+    cast = read_json(c.song_dir(it) / "post_draft.json", {}).get("song") or {}
+    zh = info.get("title_artist_zh") or cast.get("artist_zh") or info.get("artist_zh")
+    en = info.get("title_artist_en") or cast.get("artist") or info.get("artist", "")
+    # 明确的封面定稿优先；默认同时保留中英文艺名。
+    who = song.get("cover_artist") or info.get("cover_artist") or " ".join(dict.fromkeys(x for x in (zh, en) if x))
     # 同台合唱的嘉宾（song.json guests）写在歌手后面：夏奇拉 × 杜阿·利帕（用户 2026-10-26：不能只写夏奇拉）
     who = " × ".join([who] + [g.get("zh") or g["name"] for g in song.get("guests") or []])
     # 第二行带演唱会简称（title_short，没有就用中文名）：洛德 Lorde · ACL音乐节2026 · 中英字幕
     event = info.get("title_short") or concert_names(info)[0]
+    if not who or not event:
+        raise ValueError("封面缺少歌手或演出简称，请先补齐投稿资料")
     return " · ".join(x for x in (who, event, f"中{''.join(LANG_ZH.get(x, '外')[0] for x in langs)}字幕") if x)
 
 
@@ -95,13 +100,17 @@ def concert_names(info):
     return c_zh, c_en
 
 
+def cover_title(c, it):
+    return read_json(c.song_dir(it) / "song.json", {}).get("cover_title") or it["title"]
+
+
 def make_covers(c, it, seg, a):
     """候选封面：make_cover 的默认流程（正脸特写 / 半身各 16 张，去掉糊的，Real-ESRGAN 高清化）。
     不再按整帧清晰度补 cover_XX：补出来的基本是全景，看不清人。"""
     import shutil
     d = c.song_dir(it)
     out = d / "covers"
-    common = [VENV_PY, ROOT / "workflow" / "make_cover.py", "--name", it["name"], "--title", it["title"],
+    common = [VENV_PY, ROOT / "workflow" / "make_cover.py", "--name", it["name"], "--title", cover_title(c, it),
               "--subtitle", subtitle_line(c, it), "--video", c.source, "--out-dir", out, "--sub-fit", "natural",
               "--start", f"{seg['start']:.2f}", "--end", f"{seg['end']:.2f}", "--text-lift", TEXT_LIFT, "--closeup-min", CLOSEUP_MIN]
     info = read_json(c.info)
@@ -115,11 +124,17 @@ def make_covers(c, it, seg, a):
         shutil.rmtree(out)  # 重新挑：旧候选的文件名和时间点都不一样了，留着会混在一起
     log = d / "logs" / "v2_covers.log"
     log.parent.mkdir(parents=True, exist_ok=True)
+    layout = {"title": cover_title(c, it), "subtitle": subtitle_line(c, it), "text_lift": TEXT_LIFT, "sub_fit": "natural"}
     with log.open("a") as fh:
-        if not any(x["id"].split("_")[0] in ("closeup", "half", "full") for x in cover_candidates(d)):
-            r = subprocess.run([str(x) for x in common + ["--per-shot", PER_SHOT]], stdout=fh, stderr=subprocess.STDOUT)
+        existing = any(x["id"].split("_")[0] in ("closeup", "half", "full") for x in cover_candidates(d))
+        if not existing or read_json(out / "presentation_layout.json", {}) != layout:
+            if existing and not any(out.glob("frame_*.jpg")):
+                raise RuntimeError("封面文字已变更但缺少原始帧，不能沿用旧封面")
+            args = ["--recompose"] if existing else ["--per-shot", PER_SHOT]
+            r = subprocess.run([str(x) for x in common + args], stdout=fh, stderr=subprocess.STDOUT)
             if r.returncode:
                 raise RuntimeError(f"封面失败，见 {log}")
+            write_json(out / "presentation_layout.json", layout)
 
 
 def song_title_zh(c, it):
@@ -137,19 +152,42 @@ def song_title_zh(c, it):
     return "" if not t or t.lower() == it["title"].lower() else t
 
 
-def post_title(c, it):
+def post_title(c, it, cast=None):
     """和单曲同一个格式（make_meta.build_title）：演唱会名都不带歌手名（马德里演唱会2026 / Live from Madrid 2026）。"""
     import make_meta
     info = read_json(c.info)
     song = read_json(c.song_dir(it) / "song.json", {})
     langs = song.get("langs") or [song.get("lang", "en")]
     zh, en = info.get("artist_zh") or info["artist"], info["artist"]
+    if cast is None:
+        cast = (read_json(c.song_dir(it) / "post_draft.json", {}).get("song") or {})
+    zh, en = (info.get("title_artist_zh") or cast.get("artist_zh") or zh,
+              info.get("title_artist_en") or cast.get("artist") or en)
     c_zh, c_en = concert_names(info)
-    title = make_meta.build_title(zh, en, it["title"], song_title_zh(c, it), c_zh, c_en,
+    title_song = cast.get("title_song") or it["title"]
+    title = make_meta.build_title(zh, en, title_song, song_title_zh(c, it), c_zh, c_en,
                                   make_meta.subs_tag([LANG_ZH.get(x, "外语") for x in langs]))
     for w in info.get("title_fill") or []:   # 不到 80 字：按顺序补艺人昵称等搜索词（concert.json 的 title_fill，如 神婆 洛奶）
         if w not in title and len(title) + 1 + len(w) <= make_meta.TITLE_MAX:
             title += " " + w
+    if info.get("title_target_length"):
+        from itertools import combinations
+        target = int(info["title_target_length"])
+        # 用已配置的真实演出关键词补全；不截断歌名，也不编造年份。
+        options = [x for x in info.get("title_keywords", []) if x not in title]
+        variants = [title]
+        if "》" + en in title:
+            variants.append(title.replace("》" + en, "》 " + en, 1))
+        song_zh = song_title_zh(c, it)
+        if song_zh:
+            variants += [v.replace(" " + song_zh + " ", " 《" + song_zh + "》 ", 1) for v in list(variants)]
+        for count in range(len(options) + 1):
+            for words in combinations(options, count):
+                for base in variants:
+                    head, sep, tail = base.rpartition(" ")
+                    candidate = " ".join([head, *words, tail])
+                    if len(candidate) == target:
+                        return candidate
     return title
 
 
@@ -197,7 +235,7 @@ def draft_meta(c, it, seg, a):
             break
     make_meta.fit_intro(gen, it["title"])   # B 站简介上限 2000 字
     write_json(dst, {
-        "title": post_title(c, it),
+        "title": post_title(c, it, {"artist": gen.get("artist_en"), "artist_zh": gen.get("artist_zh")}),
         "song": {"title": gen.get("song_title") or it["title"], "artist": gen.get("artist_en"),
                  "artist_zh": gen.get("artist_zh"), "release_year": gen.get("release_year")},
         "performance": {"event": gen.get("event") or info.get("title"), "date": gen.get("event_date") or info.get("date")},
@@ -208,13 +246,42 @@ def draft_meta(c, it, seg, a):
     })
 
 
+def validate_presentation(c, it):
+    """完成标记前核验实际投稿资料，不能用生成成功代替格式合格。"""
+    info = read_json(c.info)
+    draft = read_json(c.song_dir(it) / "post_draft.json", {})
+    title = draft.get("title") or ""
+    target = info.get("title_target_length", 80)
+    errors = []
+    if not title.startswith("[4K60帧/Hi-Res]"):
+        errors.append("缺少规格前缀")
+    if len(title) != target:
+        errors.append(f"标题字符数 {len(title)}，要求 {target}")
+    cast = draft.get("song") or {}
+    for name in (info.get("title_artist_zh") or cast.get("artist_zh"),
+                 info.get("title_artist_en") or cast.get("artist")):
+        if not name or name not in title:
+            errors.append("标题缺少中英文歌手名")
+    events = [x for x in (*concert_names(info), info.get("title_short")) if x]
+    if not events or not any(x in title for x in events):
+        errors.append("标题缺少演出名")
+    subtitle = subtitle_line(c, it)
+    if errors:
+        raise ValueError("投稿格式检查失败：" + "；".join(errors))
+    return {"title_length": len(title), "cover_subtitle": subtitle}
+
+
 def package_one(c, it, seg, a, *, meta_future=None):
     try:
         if meta_future is None:
             draft_meta(c, it, seg, a)
-        make_covers(c, it, seg, a)
         if meta_future is not None:
             meta_future.result()
+        validate_presentation(c, it)
+        make_covers(c, it, seg, a)
+        # 中途淡入淡出的水印必须在审核前生成，不能等到成片编码才补。
+        from workflow.song.watermark import ensure_song
+        ensure_song(c.slug, it["name"])
         try:   # 候选排序：算法推荐 Top3（cover_rank.py，Qwen 一首一次调用）；失败不影响封面本身
             from .cover_rank import rank
             rank(c.song_dir(it).resolve(), force=a.force)

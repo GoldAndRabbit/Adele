@@ -27,6 +27,7 @@ W, H = 1920, 1080
 TEXT_Y = 0.82  # 副标题基线最低位置（占画面高度），所有景别统一；文字块矮时在徽章底边 ~ 这条线之间居中。B 站底部约 16% 会盖播放量/时长，不要超过 0.84
 
 FONTS = {
+    "cjk_sc": ("/System/Library/Fonts/STHeiti Medium.ttc", 0),
     "sans": ("/System/Library/Fonts/Avenir Next.ttc", 8),                    # Avenir Next Heavy
     "gill": ("/System/Library/Fonts/Supplemental/GillSans.ttc", 1),          # Gill Sans Bold（Bzrp 那种）
     "serif": ("/System/Library/Fonts/Supplemental/Georgia Bold.ttf", 0),     # 衬线（Man of the Year 那种）
@@ -1113,6 +1114,12 @@ def compose(frame, a):
 
     # 标题 + 副标题，整体底边在安全线以上
     title_key = a.title_font or "cjk"  # 中日英标题统一用冬青黑体 W8，和之前的封面一致
+    if title_key == "cjk":
+        probe = font("cjk", 64)
+        missing = bytes(probe.getmask(chr(0x10FFFF)))
+        if any(not ch.isspace() and bytes(probe.getmask(ch)) == missing for ch in a.title):
+            title_key = "cjk_sc"  # 日文字体缺简体字时使用完整中文字体，避免方框。
+
     # 标题撑满到接近左右边缘（默认 94% 画布宽），字号再受高度上限约束
     sub_y = int(ch * (a.text_y - a.text_lift))
     subtitle = cover_subtitle(a.subtitle, getattr(a, "artist_zh", None), getattr(a, "event", None) or default_cover_event(a))

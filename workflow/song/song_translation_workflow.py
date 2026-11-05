@@ -339,11 +339,20 @@ def translate(d, out_dir, lyrics, title):
     groups = make_groups(units)
     uniq, gkey = unique_groups(groups)
     # 第 1、2 步
-    brief = song_brief(cache, lyrics, title)
+    draft_file = d / "post_draft.json"
+    performance_context = ""
+    if draft_file.exists():
+        draft = json.loads(draft_file.read_text())
+        song = draft.get("song") or {}
+        event = draft.get("performance") or {}
+        performance_context = " ".join(filter(None, [song.get("artist"), song.get("artist_zh"), event.get("event"), event.get("date")]))
+    brief = song_brief(cache, lyrics, title + ("\n本段投稿资料：" + performance_context if performance_context else ""))
     style_file = d / "zh_style.json"
     style = json.loads(style_file.read_text()).get("rules", []) if style_file.exists() else []
     gloss = glossary_for(brief, fixed_here, style)
     ctx = context_text(brief, gloss)
+    if performance_context:
+        ctx += "\n本段演出阵容与场次：" + performance_context
     # 第 3 步 初译、第 4 步 润色：别的场次已经定稿的同一句（译文记忆）直接用，不重新翻
     mem = load_memory(d)
     v1 = groups_with_memory(cache, "draft", P_DRAFT, uniq, ctx, "初译", mem, "v1")

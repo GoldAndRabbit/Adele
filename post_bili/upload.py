@@ -62,7 +62,7 @@ KEYS = ["视频文件", "封面16:9", "封面4:3", "标题", "类型", "转载�
 
 def to_page(f):
     """接口字段 -> bili_upload.json（中文 key）。"""
-    out = {"视频文件": f["video"], "封面16:9": f["cover"], "封面4:3": f["cover43"], "标题": f["title"],
+    out = {"视频文件": f["video"], "封面16:9": f["cover"], "封面4:3": f["cover43"], "标题": f["title"], "标题字符数": len(f["title"]),
            "类型": {v: k for k, v in COPYRIGHT.items()}[f["copyright"]], "转载来源": f["source"],
            "分区": f["tid"], "分区名称": TID_NAMES.get(f["tid"], ""), "新版分区": f["tid_v2"],
            "话题": f["topic"], "话题ID": f["topic_id"], "活动ID": f["mission_id"], "标签": f["tag"], "简介": f["desc"],
@@ -74,6 +74,11 @@ def to_page(f):
 
 def dump(j):
     """bili_upload.json 的写法：每项一行（标签也横着放一行），行首空一格。"""
+    # 派生展示字段，每次序列化重算；from_page 不向投稿接口传递此字段。
+    j = {k: v for k, v in j.items() if k != "标题字符数"}
+    if "标题" in j:
+        j = {key: value for k, v in j.items()
+             for key, value in ([(k, v), ("标题字符数", len(v))] if k == "标题" else [(k, v)])}
     return "{\n" + ",\n".join(f" {json.dumps(k, ensure_ascii=False)}: {json.dumps(v, ensure_ascii=False)}"
                                for k, v in j.items()) + "\n}\n"
 

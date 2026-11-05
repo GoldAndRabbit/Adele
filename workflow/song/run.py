@@ -444,6 +444,8 @@ def run(d, lyrics, out_dir, meta=None):
 
     # 显示时间
     shown = [r for r in rows if r["kind"] in ("lyric", "talk", "live")]
+    for r in shown:
+        r["text"] = re.sub('(?i)(\\byeah\\b(?:[ ,，\\t]+yeah\\b){4})(?:[ ,，\\t]+yeah\\b)+', r"\1", r["text"])
     for i, r in enumerate(shown):
         nxt = shown[i + 1]["s"] if i + 1 < len(shown) else r["e"] + 5
         r["show_e"] = min(max(r["e"] + HOLD, r["s"] + MIN_SHOW), nxt - 0.05)
@@ -690,6 +692,8 @@ def run_song(slug, name):
     table, prof = run(d, [t for t, _ in acoustic.section_lines(d / "lyrics.txt")], out, meta)
     from .song_translation_workflow import translate as st
     st(d, out, [t for t, _ in acoustic.section_lines(d / "lyrics.txt")], sub_title(c, it))   # 翻译（song_translation_workflow）
+    from .watermark import ensure_song
+    ensure_song(slug, name)
     summary(it["title"], table, prof)
 
 

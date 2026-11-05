@@ -21,3 +21,8 @@ post_bili/cookies.json
 # biliup login 扫码时生成的二维码
 qrcode.png
 bin/biliup
+
+# 本机外接盘挂载、存储配置和审核服务日志
+/external_storage
+/external_storage.json
+/server/review_server.log
