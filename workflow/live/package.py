@@ -48,6 +48,7 @@ def cover_candidates(d):
     cdir = d / "covers"
     if not cdir.exists():
         return []
+    reconstructed = read_json(cdir / "reconstructed.json", {}) or {}
     times = {}
     for f in cdir.iterdir():
         m = FRAME_RE.match(f.name)
@@ -60,7 +61,7 @@ def cover_candidates(d):
             cid = f"{m[1]}_{m[2]}"
             f43 = cdir / f"{cid}_4x3.jpg"
             out.append({"id": cid, "file": f"covers/{f.name}", "file_4x3": f"covers/{f43.name}" if f43.exists() else None,
-                        "t": times.get(cid)})
+                        "t": times.get(cid), "reconstructed": cid in reconstructed})
     order = {"closeup": 0, "half": 1, "full": 2, "cover": 3}   # 特写、半身、全身，按清晰度补的放最后
     out.sort(key=lambda x: (order.get(x["id"].split("_")[0], 9), x["id"]))
     # 排过序（cover_rank.py 的 rank.json）就按名次排：前三是算法推荐，审核页单独一组
@@ -153,42 +154,14 @@ def song_title_zh(c, it):
 
 
 def post_title(c, it, cast=None):
-    """和单曲同一个格式（make_meta.build_title）：演唱会名都不带歌手名（马德里演唱会2026 / Live from Madrid 2026）。"""
-    import make_meta
+    from workflow.bili_title import build_title
     info = read_json(c.info)
-    song = read_json(c.song_dir(it) / "song.json", {})
-    langs = song.get("langs") or [song.get("lang", "en")]
-    zh, en = info.get("artist_zh") or info["artist"], info["artist"]
-    if cast is None:
-        cast = (read_json(c.song_dir(it) / "post_draft.json", {}).get("song") or {})
-    zh, en = (info.get("title_artist_zh") or cast.get("artist_zh") or zh,
-              info.get("title_artist_en") or cast.get("artist") or en)
-    c_zh, c_en = concert_names(info)
-    title_song = cast.get("title_song") or it["title"]
-    title = make_meta.build_title(zh, en, title_song, song_title_zh(c, it), c_zh, c_en,
-                                  make_meta.subs_tag([LANG_ZH.get(x, "外语") for x in langs]))
-    for w in info.get("title_fill") or []:   # 不到 80 字：按顺序补艺人昵称等搜索词（concert.json 的 title_fill，如 神婆 洛奶）
-        if w not in title and len(title) + 1 + len(w) <= make_meta.TITLE_MAX:
-            title += " " + w
-    if info.get("title_target_length"):
-        from itertools import combinations
-        target = int(info["title_target_length"])
-        # 用已配置的真实演出关键词补全；不截断歌名，也不编造年份。
-        options = [x for x in info.get("title_keywords", []) if x not in title]
-        variants = [title]
-        if "》" + en in title:
-            variants.append(title.replace("》" + en, "》 " + en, 1))
-        song_zh = song_title_zh(c, it)
-        if song_zh:
-            variants += [v.replace(" " + song_zh + " ", " 《" + song_zh + "》 ", 1) for v in list(variants)]
-        for count in range(len(options) + 1):
-            for words in combinations(options, count):
-                for base in variants:
-                    head, sep, tail = base.rpartition(" ")
-                    candidate = " ".join([head, *words, tail])
-                    if len(candidate) == target:
-                        return candidate
-    return title
+    cast = cast if cast is not None else read_json(c.song_dir(it) / "post_draft.json", {}).get("song", {})
+    return build_title(cast.get("artist_zh") or info.get("artist_zh"),
+                       cast.get("artist") or it.get("artist") or info.get("artist"),
+                       cast.get("title_song") or it["title"], song_title_zh(c, it),
+                       info.get("title_zh") or info.get("title"), info.get("title_en"),
+                       year=info.get("date"), nicknames=cast.get("nicknames_zh"))
 
 
 def draft_meta(c, it, seg, a):

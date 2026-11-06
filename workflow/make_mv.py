@@ -80,6 +80,12 @@ def stage_download(a, w):
     if src.exists():
         print(f"已存在 {src}，跳过下载")
         return
+    from storage import external_root
+    root = external_root()
+    source_dir = root / "sources" / w.relative_to(ROOT) if root else w
+    source_dir.mkdir(parents=True, exist_ok=True)
+    from youtube_download import cli_args
+    session = cli_args(a.url, proxy=getattr(a, "proxy", None), browser=a.cookies_from_browser, cookie_file=a.cookies)
     # 下载参数和 SubDub（../SubDub/subdub/pipeline.py stage_download）保持一致
     cmd = [tool("yt-dlp"), "--no-playlist",
            # 画质最高到 2160p（这里和 SubDub 不同，SubDub 只要 1080p）；很多视频带 YouTube 自动配音的多语种音轨，
@@ -88,16 +94,11 @@ def stage_download(a, w):
            "-f", "bv*[height<=2160][dynamic_range=SDR]+ba[format_note*=original]/bv*[height<=2160][dynamic_range=SDR]+ba[language^=en]/"
                  "bv*[height<=2160][dynamic_range=SDR]+ba/"
                  "bv*[height<=2160]+ba[format_note*=original]/bv*[height<=2160]+ba[language^=en]/bv*+ba/b",
-           # 有的视频不给 PO token 只出 360p 合流：本机起了 bgutil PO token 服务时 mweb 客户端能拿到 1080p；
-           # 没起服务也不影响 default 客户端（需要 yt-dlp-ejs + deno 解 JS 校验，见 requirements.txt）
-           "--extractor-args", "youtube:player_client=default,mweb",
+           *session,
            "--merge-output-format", "mp4", "--retries", "10", "--fragment-retries", "10",
            "--write-subs", "--sub-langs", "all,-live_chat,-danmaku", "--convert-subs", "srt",
-           "-o", str(w / "source.%(ext)s")]
-    if a.cookies_from_browser:
-        cmd += ["--cookies-from-browser", a.cookies_from_browser]
-    if a.cookies:
-        cmd += ["--cookies", a.cookies]
+           "--remux-video", "mp4", "-o", str(source_dir / "source.%(ext)s"),
+           "-o", "subtitle:" + str(w / "source.%(ext)s")]
     if shutil.which("aria2c"):   # YouTube 单连接常被限速到几百 KB/s；aria2c 16 路并发快好几倍
         try:
             run(cmd + ["--downloader", "aria2c", "--downloader-args", "aria2c:-x 16 -s 16 -k 1M", a.url])
@@ -106,10 +107,19 @@ def stage_download(a, w):
             run(cmd + [a.url])
     else:
         run(cmd + [a.url])
+    if root:
+        target = source_dir / "source.mp4"
+        result = json.loads(subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_entries", "stream=codec_type:format=duration",
+            "-of", "json", str(target)
+        ]))
+        if not {"audio", "video"} <= {stream["codec_type"] for stream in result["streams"]} or float(result["format"]["duration"]) <= 0:
+            raise RuntimeError(f"原视频音视频轨或时长不完整：{target}")
+        if external_root() != root:
+            raise RuntimeError("下载过程中归档盘已更换")
+        src.symlink_to(target)
     # 保存元信息，后面标题行会用到
-    info = subprocess.run([tool("yt-dlp"), "--no-playlist", "--skip-download", "-J", a.url]
-                          + (["--cookies-from-browser", a.cookies_from_browser] if a.cookies_from_browser else [])
-                          + (["--cookies", a.cookies] if a.cookies else []),
+    info = subprocess.run([tool("yt-dlp"), *session, "--no-playlist", "--skip-download", "-J", a.url],
                           capture_output=True, text=True)
     if info.returncode == 0:
         d = json.loads(info.stdout)
@@ -338,6 +348,7 @@ def main():
     p.add_argument("--genius-url", help="lyrics 阶段：直接指定 Genius 歌词页")
     p.add_argument("--song-title", help="lyrics 阶段：手动指定歌名（自动识别不准时）")
     p.add_argument("--artist", help="lyrics 阶段：手动指定歌手")
+    p.add_argument("--proxy", help="媒体和元数据共用的代理，省略时使用 yt-dlp 默认设置")
     p.add_argument("--cookies-from-browser", help="yt-dlp 需要登录时: chrome / safari / firefox")
     p.add_argument("--cookies", help="cookies.txt 路径")
     p.add_argument("--frame-format", choices=["auto", "png", "jpg"], default="auto",

@@ -17,6 +17,7 @@
 """
 
 import json
+import os
 import random
 import re
 import shutil
@@ -33,11 +34,11 @@ from .paths import ROOT, VENV_PY, Concert, read_json, write_json
 
 POOL_WINDOWS = 10                           # 整场切成 10 段，每段各挑一批（只在整场挑「最好的」会全挤在一两段里）
 POOL_SHOTS = "closeup=8,half=6,full=0"      # 每段：特写 8、半身 6（舞台全景、大屏幕做不了封面，不挑）
-POOL_KEEP = 60                              # 过了硬条件、打分 + 去重之后最多留这么多给用户标记
-PER_SONG = 4                                # 同一首歌（或两首之间）最多留几张（画面分散到整场）
-PER_MINUTE = 2                              # 任意 60 秒里最多留 2 张（同一个镜头的画面时间挨着，画面指纹去不掉）
+POOL_KEEP = 160                              # 过了硬条件、打分 + 去重之后最多留这么多给用户标记
+PER_SONG = 20                                # 同一首歌（或两首之间）最多留几张（画面分散到整场）
+PER_MINUTE = 8                              # 任意 60 秒里最多留 2 张（同一个镜头的画面时间挨着，画面指纹去不掉）
 MIN_SCORE = 6                               # 过了硬条件还要 6 分以上
-FRAME_RE = re.compile(r"^frame_(closeup|half|full|scene)_(\d\d)_([\d.]+)s\.jpg$")
+FRAME_RE = re.compile(r"^frame_(closeup|half|full|scene)_(\d{2,})_([\d.]+)s\.jpg$")
 SCORE_SYSTEM = "你是演唱会视频的封面编辑，负责从演唱会截图里挑能做视频封面的画面。"
 # 舞台全景、拍大屏幕、背影都做不了封面（用户 2026-10-24：「屏幕后面的」「氛围和舞台看不出来任何东西」），先过硬条件再打分
 SCORE_PROMPT = ("下面 {n} 张截图（图1、图2……）来自同一场演唱会。先判断每张能不能做 B 站视频封面，四条都满足才算能（usable=true）：\n"
@@ -48,7 +49,24 @@ SCORE_PROMPT = ("下面 {n} 张截图（图1、图2……）来自同一场演�
                 "再给能用的打 0~10 分：表情有感染力、脸不被话筒挡、光线和构图好看的高分。不能用的 score 给 0。\n"
                 '输出 JSON：{{"items": [{{"id": "图1", "usable": true, "score": 8, "why": "一句话"}}]}}')
 def pool_dir(c):
+    if not c.has_cover_pool:
+        raise ValueError("此场次按单曲选择封面")
     return c.dir / "cover_pool"
+
+
+def ensure_pool(c):
+    """老场次复用各首的原始截图，已有独立挑帧的池沿用原结果。"""
+    out = pool_dir(c)
+    out.mkdir(exist_ok=True)
+    imported = out / ".song_frames"
+    imported.touch(exist_ok=True)
+    for it in c.song_items():
+        for src in (c.song_dir(it) / "covers").glob("frame_*.jpg"):
+            if FRAME_RE.fullmatch(src.name) and src.is_file():
+                try:
+                    (out / src.name).symlink_to(os.path.relpath(src, out))
+                except FileExistsError:
+                    pass
 
 
 def score_frames(files):
@@ -109,40 +127,18 @@ def build(slug):
     for f in out.iterdir():
         if f.suffix == ".jpg" and not f.name.startswith("frame_"):
             f.unlink()
+    if (out / ".song_frames").exists():
+        for frame in out.glob("frame_*.jpg"):
+            if frame.is_symlink() and frame.name not in marks(c):
+                frame.unlink()
+        (out / ".song_frames").unlink()
     refilter(slug)
 
 
 def refilter(slug):
-    """封面池里现有的帧重新过一遍：Qwen 判硬条件 + 打分，不能用 / 分低的、同一个镜头的、某首歌太多的删掉（标记过的留着）。"""
-    c = Concert(slug)
-    out = pool_dir(c)
-    marked = marks(c)
-    files = [out / x["file"] for x in frames(c)]
-    scores = score_frames(files)
-    song_of = {x["file"]: x["song"] for x in frames(c)}
-    time_of = {x["file"]: x["t"] for x in frames(c)}
-    keep, per = [], {}
-    for f in sorted(files, key=lambda f: (f.name not in marked, -scores.get(f.name, (0, ""))[0])):
-        if f.name not in marked:
-            if f.name.startswith("frame_scene_") or scores.get(f.name, (0, ""))[0] < MIN_SCORE:   # 舞台全景一律不要
-                continue
-            t = time_of[f.name]
-            if sum(1 for k in keep if abs(time_of[k.name] - t) < 60) >= PER_MINUTE:
-                continue
-            s = song_of.get(f.name)
-            if per.get(s, 0) >= PER_SONG:
-                continue
-            if len(keep) >= POOL_KEEP:
-                continue
-        s = song_of.get(f.name)
-        keep.append(f)
-        per[s] = per.get(s, 0) + 1
-    for f in files:
-        if f not in keep:
-            f.unlink()
-    write_json(out / "scores.json", {f.name: {"score": scores.get(f.name, (0, ""))[0], "why": scores.get(f.name, (0, ""))[1]}
-                                     for f in keep})
-    print(f"{slug}：{len(files)} 帧过硬条件 + 打分 + 去重，留 {len(keep)} 帧（标记的 {len(marked & {f.name for f in keep})} 张照留）")
+    """Recheck hard visual exclusions; retain original files and user selections."""
+    from workflow.cover_pool_quality import upgrade
+    return upgrade(Concert(slug), target=100)
 
 
 def marks(c):
@@ -153,6 +149,8 @@ def set_mark(c, file, on):
     m = marks(c)
     if not FRAME_RE.match(file) or not (pool_dir(c) / file).is_file():
         raise ValueError("封面池里没有这一帧")
+    if on and file not in {r["file"] for r in frames(c)}:
+        raise ValueError("此帧未通过当前封面筛选")
     (m.add if on else m.discard)(file)
     write_json(pool_dir(c) / "marked.json", sorted(m))
     return len(m)
@@ -160,12 +158,13 @@ def set_mark(c, file, on):
 
 def targets(c):
     """要分封面的歌：出了字幕的（这次要做投稿的）。"""
-    return [it for it in c.song_items() if (c.song_dir(it) / "subs" / "lyrics_poetic.ass").exists()]
+    return [it for it in c.song_items() if not it.get("review_hidden") and any((c.song_dir(it) / "subs" / n).is_file() for n in ("lyrics_poetic.ass", "lyrics_literal.ass", "lyrics.ass"))]
 
 
-def assign(slug, seed=None):
+def assign(slug, seed=None, portrait=False):
     c = Concert(slug)
-    picked = sorted(marks(c))
+    approved = {r["file"] for r in frames(c)}
+    picked = sorted(marks(c) & approved)
     songs = targets(c)
     if not picked:
         raise ValueError("还没有标记的画面：先在审核页「封面池」里标记")
@@ -173,20 +172,33 @@ def assign(slug, seed=None):
     order = picked[:]
     rnd.shuffle(order)
     out = {}
+    from datetime import datetime
+    from workflow.vertical_post import SHANGHAI
+    from workflow.portrait_pool import apply_pool_assignment
+    clicked = datetime.now(SHANGHAI)
     for i, it in enumerate(songs):
         f = order[i % len(order)]   # 标记的比歌少：轮着重复用
+        if portrait:
+            pair = apply_pool_assignment(c, it, f, clicked)
+            out[it["name"]] = {"frame": f, "portrait": pair["name"], "landscape": Path(pair["wide_path"]).name}
+            write_json(pool_dir(c) / "portrait_assigned.json", {"at": clicked.isoformat(), "songs": out})
+            continue
         cid = compose_for(slug, it["name"], f)
         save_picked(c, it, cid)
         review.save_entry(c, it, {"cover": cid})
         out[it["name"]] = {"frame": f, "cover": cid}
         print(f"{it['title']} <- {f}（{cid}）")
+    if portrait:
+        return out
     write_json(pool_dir(c) / "assigned.json", {"at": time.strftime("%Y-%m-%d %H:%M"), "songs": out})
     return out
 
 
-def frames(c):
+def frames(c, include_rejected=False):
     """封面池里的帧：[{file, kind, t, song, marked}]，t 是整场时间，song 是这一刻在哪首歌里（不在任何一首里是 None）。"""
+    ensure_pool(c)
     marked = marks(c)
+    quality = read_json(pool_dir(c) / "quality.json", {})
     scores = read_json(pool_dir(c) / "scores.json", {}) or {}
     segs = [(s["name"], s.get("start"), s.get("end")) for s in (c.load("segments") or {}).get("items", [])]
     out = []
@@ -197,6 +209,12 @@ def frames(c):
         t = float(m[3])
         song = next((n for n, a, b in segs if a is not None and b is not None and a <= t < b), None)
         sc = scores.get(f.name) or {}
+        if quality:
+            verdict = quality.get("frames", {}).get(f.name, {})
+            if not include_rejected and not verdict.get("approved"):
+                continue
+            if verdict:
+                sc = {"score": verdict.get("detail", {}).get("score", 0), "why": verdict.get("reason", "")}
         out.append({"file": f.name, "kind": m[1], "t": t, "song": song, "marked": f.name in marked,
                     "score": sc.get("score"), "why": sc.get("why", "")})
     return sorted(out, key=lambda x: (-(x["score"] or 0), x["t"]))   # 分高的在前

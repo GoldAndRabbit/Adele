@@ -62,6 +62,14 @@ class Concert:
     def load(self, key, default=None):
         return read_json(getattr(self, key), default)
 
+    @property
+    def has_cover_pool(self):
+        info = self.load("info") or {}
+        artist = (info.get("artist") or "").strip().casefold()
+        return (self.slug != "singles" and bool(artist)
+                and artist not in {"various artists", "群星", "多位艺人"}
+                and info.get("cover_selection_mode") != "song")
+
     def items(self):
         return (self.load("setlist") or {}).get("items", [])
 
@@ -87,3 +95,18 @@ class Concert:
             if str(key) in (it["name"], str(it["idx"]), f"{it['idx']:02d}"):
                 return it
         raise KeyError(f"歌单里没有 {key}")
+
+
+def subtitle_video(concert, item, info):
+    """Return the visual reference and song-time offset for subtitle and watermark checks."""
+    selection = read_json(concert.dir / "vertical_source.json", {}).get("songs", {}).get(item["name"])
+    if selection:
+        from workflow.vertical_source import prepare
+        return prepare(concert, item), 0
+    start = (info.get("slice") or [0])[0]
+    preview = concert.song_dir(item) / "preview.mp4"
+    if preview.is_file():
+        return preview, start - (info.get("preview") or [0])[0]
+    if concert.source.is_file():
+        return concert.source, start
+    raise FileNotFoundError(f"{item['name']} 缺少逐曲参考视频和整场原片")

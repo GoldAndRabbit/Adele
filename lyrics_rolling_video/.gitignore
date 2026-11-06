@@ -1,0 +1,5 @@
+# Downloaded media, ASR scratch files and generated artifacts stay local.
+/data/
+/preview/
+/exports/
+__pycache__/

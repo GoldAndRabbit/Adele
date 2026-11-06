@@ -14,6 +14,18 @@ PAD = 10.0
 def make_preview(c, it, seg, force=False):
     d = c.song_dir(it)
     info = read_json(d / "song.json", {})
+    selected = read_json(c.dir / "vertical_source.json", {}).get("songs", {}).get(it["name"])
+    if selected:
+        from workflow.vertical_source import prepare
+        source = prepare(c, it)
+        out = d / "preview.mp4"
+        tmp = d / "preview.selected.mp4"
+        tmp.unlink(missing_ok=True)
+        tmp.symlink_to(source.resolve())
+        tmp.replace(out)
+        info["preview"] = selected["slice"]
+        write_json(d / "song.json", info)
+        return True
     dur = read_json(c.info).get("duration") or seg["end"] + PAD
     want = [round(max(0.0, seg["start"] - seg.get("preview_lead", PAD)), 2), round(min(dur, seg["end"] + seg.get("preview_tail", PAD)), 2)]
     out = d / "preview.mp4"

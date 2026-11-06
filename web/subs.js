@@ -45,6 +45,7 @@ function parseAss(text) {
       const f = line.slice(9).split(",");
       let size = null;   // {\fs} 跨 \N 延续
       const lines = f.slice(9).join(",").split("\\N").map((l) => {
+        if (/[\u3400-\u9fff]/.test(l)) l = l.replace(/[♪♫♬🎵🎶]/gu, "").trim();
         const m = l.match(/^\s*\{\\fs(\d+)\}/);
         if (m) size = +m[1];
         // 行内颜色 {\c&HBBGGRR&} … {\c}：切成几段，各段带自己的颜色（片头署名里的 Takit 是蓝色）

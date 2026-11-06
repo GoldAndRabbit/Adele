@@ -66,12 +66,17 @@ def youtube_info(url, session, cookies=None):
     if cookies:
         options["cookiefile"] = cookies
     try:
+        if __package__:
+            from .youtube_download import extractor_options
+        else:
+            from youtube_download import extractor_options
+        options["extractor_args"] = extractor_options(url)
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
         if not info or info.get("_type") in {"playlist", "multi_video"}:
             raise ValueError("请提供单个音乐视频链接，不支持播放列表")
         return info
-    except DownloadError:
+    except (DownloadError, RuntimeError):
         print("yt-dlp 获取元数据失败，尝试 YouTube oEmbed…", file=sys.stderr)
         response = session.get("https://www.youtube.com/oembed", params={"url": url, "format": "json"},
                                timeout=TIMEOUT)

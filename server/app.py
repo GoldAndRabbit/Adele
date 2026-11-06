@@ -11,10 +11,15 @@
 
 import json
 import re
+import shutil
+from fractions import Fraction
+from functools import lru_cache
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
+from threading import Semaphore
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -22,28 +27,72 @@ from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from workflow.vertical_post import posting_inputs, caption as vertical_post_caption, cover_attachment, replace_cover_selection, submission, SHANGHAI
+from workflow.subtitle_spelling import display_english
 from workflow.live import review  # noqa: E402
 from workflow.live.package import cover_candidates  # noqa: E402
 from workflow.letterbox import content_box, logo_corner  # noqa: E402
-from workflow.live.paths import CONCERTS, Concert, read_json  # noqa: E402
+from workflow.live.paths import CONCERTS, Concert, read_json, write_json  # noqa: E402
 from workflow.live.singles import production_day  # noqa: E402
 
 app = FastAPI(title="adele review")
 
 
+def concert_display_title(info, slug):
+    title = info.get("title") or slug
+    date = str(info.get("date") or "")
+    if not re.match(r"^\d{4}(?:-|$)", date):
+        return title
+    year = date[:4]
+    if title.endswith(year):
+        return title
+    return f"{title.removeprefix(year).strip()} {year}"
+
+
+def single_artist(it):
+    return (it.get("artist") or "").strip() or "未知歌手"
+
+
+def artist_slug(artist):
+    return "artist_" + artist.casefold().encode("utf-8").hex()
+
+
+HALFTIME_SLUG = "super_bowl_halftime"
+HALFTIME_TITLE = "历届超级碗中场秀"
+
+
+GROUP_ARTIST_ALIASES = {"Giovanni Zarrella & Ricchi e Poveri": "Ricchi e Poveri"}
+
+
+def group_artist(it):
+    artist = single_artist(it)
+    return GROUP_ARTIST_ALIASES.get(artist, artist)
+
+
+def single_group(it):
+    event = " ".join(it.get(key) or "" for key in ("display_title", "title", "notes"))
+    if "超级碗中场秀" in event or re.search(r"super bowl.*half[ -]?time", event, re.I):
+        return HALFTIME_SLUG
+    return artist_slug(group_artist(it))
+
+
 def concert(slug):
     dated = re.fullmatch(r"singles_(\d{6})", slug)
-    c = Concert("singles" if dated else slug)
+    single_collection = slug.startswith("artist_") or slug == HALFTIME_SLUG
+    c = Concert("singles" if dated or single_collection else slug)
     if not c.info.exists() or c.dir.parent != CONCERTS:
         raise HTTPException(404, "没有这个场次")
     if dated:
         c.review_day = dated[1]
+    if single_collection:
+        c.single_collection = slug
     return c
 
 
 def visible_items(c):
     day = getattr(c, "review_day", None)
-    return [it for it in c.items() if not it.get("review_hidden") and (not day or production_day(it) == day)]
+    return [it for it in c.items() if not it.get("review_hidden") and (not day or production_day(it) == day)
+            and (not getattr(c, "single_collection", None) or single_group(it) == c.single_collection)]
 
 
 def display_title(it):
@@ -64,19 +113,66 @@ def has_picked_cover(d):
     return any((d / "post").glob("*_cover_picked_*.png"))
 
 
+def saved_cover_id(d, candidates):
+    from PIL import Image, ImageChops
+    picks = (f for f in (d / "post").glob("*_cover_picked_*.png") if "_4x3_" not in f.name)
+    latest = max(picks, key=lambda f: f.stat().st_mtime, default=None)
+    if not latest:
+        return None
+    try:
+        with Image.open(latest) as src:
+            picked = src.convert("RGB")
+        for candidate in candidates:
+            with Image.open(d / candidate["file"]) as src:
+                if src.size == picked.size and not ImageChops.difference(picked, src.convert("RGB")).getbbox():
+                    return candidate["id"]
+    except OSError:
+        pass
+    return None
+
+
+def selected_portrait_cover(directory):
+    folder = directory / "vertical"
+    selected = read_json(folder / "selected.json", {}).get("cover")
+    if selected and any(r["file"] == selected for r in read_json(folder / "candidates.json", [])):
+        return selected if (folder / selected).is_file() else None
+    return None
+
+
+def portrait_release(d, *, current_only=True):
+    from workflow.vertical_workflow import revision
+    folder = d / "vertical"
+    record = read_json(folder / "release.json", {})
+    if record.get("file") and (folder / record["file"]).is_file() and (not current_only or record.get("revision") == revision(d)):
+        return record
+    return None
+
+
 def song_summary(c, it, segs, rv):
     d = c.song_dir(it)
     seg = segs.get(it["name"], {})
+    source_info = read_json(d / "song.json", {})
+    if source_info.get("source_file") and source_info.get("slice"):
+        seg = {**seg, "start": source_info["slice"][0], "end": source_info["slice"][1]}
     st = review.song_status(c, it)
+    draft = read_json(d / "post_draft.json", {})
+    posting_draft, concert_name, artist_zh = posting_inputs(c, it, draft)
+    caption = vertical_post_caption(posting_draft, concert_name, artist_zh)
     entry = rv["songs"].get(it["name"], {})
     covers = cover_candidates(d)
     chosen = next((x for x in covers if x["id"] == entry.get("cover")), None)
+    selected = selected_portrait_cover(d)
+    attachment = cover_attachment(d, selected)
     return {
-        "idx": it["idx"], "name": it["name"], "title": display_title(it), "notes": it.get("notes"),
+        "idx": it["idx"], "name": it["name"], "title": display_title(it), "notes": it.get("notes"), "artist": it.get("artist"),
         "start": seg.get("start"), "end": seg.get("end"), "confidence": seg.get("confidence"),
         "flags": seg.get("flags", []), "manual": bool(seg.get("manual")),
         "stage": st["stage"], "review": st["review"], "needs_refine": st["needs_refine"],
+        "post_ready": bool(caption and attachment), "douyin_caption": caption,
+        "douyin_submission": submission(posting_draft, concert_name, artist_zh),
         "subtitles_ready": (d / "subs/lyrics.ass").is_file() and (d / "subs/lyrics.ass").stat().st_size > 0,
+        "portrait_release_ready": bool(portrait_release(d)),
+        "portrait_cover_selected": bool(selected),
         "cover_selected": bool(entry.get("cover")) or has_picked_cover(d),
         "thumb": media_url(c, it["name"], (chosen or covers[0])["file"]) if covers else None,
     }
@@ -95,10 +191,10 @@ def exp_data(d, ass_url):
     xrows = []
     for r in read_json(x / "lines.json", []) or []:
         t = (r["start_ms"] or 0) / 1000
-        m = next((y for y in xl if abs(y["start"] - t) < 0.06 and y["orig"] == r["text"]), None) if r["text"] else None
+        m = next((y for y in xl if abs(y["start"] - t) < 0.06 and display_english(y["orig"]) == display_english(r["text"])), None) if r["text"] else None
         lang = r.get("lang") or line_lang(r.get("text") or r.get("genius") or r.get("qwen") or "", main)
         xrows.append({**r, "lang": lang, "zh": m["zh"] if m else "", "start": t, "end": (r["end_ms"] or 0) / 1000})
-    have = lambda y: any(abs(r["start"] - y["start"]) < 0.15 and r["text"] == y["orig"] for r in xrows)   # 2.946 / 2.950 是同一句
+    have = lambda y: any(abs(r["start"] - y["start"]) < 0.15 and display_english(r["text"] or "") == display_english(y["orig"]) for r in xrows)   # 2.946 / 2.950 是同一句
     xl = [y for y in xl if y["style"] != "Note"]   # 顶部注释不是字幕行（逐句表格里挂在对应那句下面）
     for y in xl:   # 片头歌名（翻译时加的）和讲话：字幕文件里有、逐句数据里没有的
         if y["orig"].startswith("《") or (y["style"] != "Default" and not have(y)):
@@ -110,7 +206,7 @@ def exp_data(d, ass_url):
                           "strategy": "片头歌名（歌名翻译）" if y["orig"].startswith("《") else "讲话"})
         elif y["style"] != "Default":   # 讲话行：逐句数据里有，补上中文
             for r in xrows:
-                if r["text"] == y["orig"] and abs(r["start"] - y["start"]) < 0.06:
+                if display_english(r["text"] or "") == display_english(y["orig"]) and abs(r["start"] - y["start"]) < 0.06:
                     r["zh"], r["speech"] = y["zh"], True
     # 歌曲中间的水印（workflow/song/watermark.py）也作为一行插进表格，方便对照时间和位置
     wm = read_json(d / "watermark.json", None) or {}
@@ -142,8 +238,8 @@ def exp_data(d, ass_url):
         notes = {int(k): v for k, v in (tr.get("final_notes") or tr.get("notes") or {}).items()}
         for r in xrows:
             # 原文比较前统一空白（日文歌词里有全角空格，字幕文件里是半角）
-            rt = re.sub(r"\s+", " ", r["text"] or "").strip()
-            m = next((u for u in tr["units"] if abs(u["start"] - (r["start_ms"] or 0)) < 60 and u["orig"] == rt), None)
+            rt = display_english(re.sub(r"\s+", " ", r["text"] or "").strip())
+            m = next((u for u in tr["units"] if abs(u["start"] - (r["start_ms"] or 0)) < 60 and display_english(re.sub(r"\s+", " ", u["orig"]).strip()) == rt), None)
             if m:
                 r.update({"zh": m.get("v1", r.get("zh", "")), "zh2": m.get("v2_final", m.get("v2", "")), "zh_issues": m.get("issues", []),
                           "zh_locked": m.get("locked", False), "unit": m["i"], "note": notes.get(m["i"], ""),
@@ -152,6 +248,8 @@ def exp_data(d, ass_url):
                     r.update({"removed": True, "verdict": "unconfirmed", "strategy": m["dropped"], "zh": "", "zh2": "", "note": ""})
     zh2_ass = ass_url.replace("lyrics.ass", "lyrics_literal.ass") if (x / "lyrics_literal.ass").exists() else None
     zh3_ass = ass_url.replace("lyrics.ass", "lyrics_poetic.ass") if (x / "lyrics_poetic.ass").exists() else None   # 诗意版
+    for row in xrows:
+        row["text"] = display_english(row["text"] or "")
     return {"rows": xrows, "ass": ass_url if (x / "lyrics.ass").exists() else None, "ass_literal": zh2_ass, "ass_poetic": zh3_ass,
             "zh3_model": tr.get("poetic_model"), "zh2_model": tr.get("model"), "profile": prof or None,
             "models": {"asr": asr_match.MODEL}}
@@ -159,24 +257,39 @@ def exp_data(d, ass_url):
 
 @app.get("/api/concerts")
 def list_concerts():
+    def track(c, it):
+        return {"name": it["name"], "title": display_title(it), "notes": it.get("notes"),
+                "portrait_release_ready": bool(portrait_release(c.song_dir(it)))}
+
     out = []
     for p in sorted(CONCERTS.iterdir()) if CONCERTS.exists() else []:
         if (p / "concert.json").exists():
             c = Concert(p.name)
             info = read_json(c.info)
             if p.name == "singles":
-                days = {}
-                for it in c.song_items():
-                    if it.get("review_hidden"):
+                groups = {}
+                for it in visible_items(c):
+                    if it["kind"] != "song":
                         continue
-                    day = production_day(it)
-                    days[day] = days.get(day, 0) + 1
-                out.extend({"slug": f"singles_{day}", "title": f"单曲 {day}", "artist": "", "date": day, "songs": count}
-                           for day, count in sorted(days.items(), reverse=True))
+                    artist = group_artist(it)
+                    slug = single_group(it)
+                    event = slug == HALFTIME_SLUG
+                    group = groups.setdefault(slug, {"slug": slug, "title": HALFTIME_TITLE if event else artist,
+                                                     "artist": "" if event else artist,
+                                                     "kind": "event" if event else "artist", "tracks": [], "songs": 0})
+                    group["tracks"].append(track(c, it))
+                    group["songs"] += 1
+                for alias, artist in GROUP_ARTIST_ALIASES.items():
+                    if artist_slug(artist) in groups:
+                        groups[artist_slug(artist)].setdefault("aliases", []).append(artist_slug(alias))
+                out.extend(sorted(groups.values(), key=lambda group: (group["kind"] != "event", group["title"].casefold())))
                 continue
-            out.append({"slug": p.name, "title": info.get("title") or p.name, "artist": info.get("artist"),
-                        "date": info.get("date"), "songs": len(c.song_items())})
-    return out
+            out.append({"slug": p.name, "title": concert_display_title(info, p.name), "artist": info.get("artist"),
+                        "date": info.get("date"), "fps": info.get("fps"), "songs": len(c.song_items()),
+                        "tracks": [track(c, it) for it in visible_items(c) if it["kind"] == "song"]})
+    concerts = sorted((row for row in out if not row.get("kind")),
+                      key=lambda row: row.get("date") or "", reverse=True)
+    return concerts + [row for row in out if row.get("kind")]
 
 
 @app.get("/api/concerts/{slug}")
@@ -188,10 +301,17 @@ def get_concert(slug: str):
     info = read_json(c.info)
     items = visible_items(c)
     songs = [it for it in items if it["kind"] == "song"]
+    if c.slug != "singles":
+        info = {**info, "title": concert_display_title(info, slug)}
+    if slug == HALFTIME_SLUG:
+        info = {**info, "title": HALFTIME_TITLE, "artist": ""}
+    elif getattr(c, "single_collection", None) and songs:
+        artist = group_artist(songs[0])
+        info = {**info, "title": artist, "artist": artist}
     if getattr(c, "review_day", None):
         info = {**info, "title": f"单曲 {c.review_day}", "date": c.review_day}
     return {
-        "slug": slug, "info": {k: info.get(k) for k in ("title", "artist", "date", "venue", "city", "tour", "duration",
+        "slug": slug, "has_cover_pool": c.has_cover_pool, "info": {k: info.get(k) for k in ("title", "artist", "date", "venue", "city", "tour", "duration",
                                                          "fps", "width", "height", "audio_rate", "setlist_url")},
         # Archived media may live on a slow external mount. Listing the concert
         # only needs the link; opening media validates its target separately.
@@ -224,12 +344,78 @@ def get_song(slug: str, name: str):
     rv = review.load(c)
     base = song_summary(c, it, segs, rv)
     info = read_json(d / "song.json", {})
+    candidates = [] if c.has_cover_pool else cover_candidates(d)
+    selected_id = rv["songs"].get(name, {}).get("cover") or (saved_cover_id(d, candidates) if candidates else None)
+    previews = (d / "vertical").glob("preview-*.mp4")
+    latest = max((f for f in previews if re.fullmatch(r"preview-\d+\.mp4", f.name)),
+                 key=lambda f: f.stat().st_mtime_ns, default=None)
+    full = d / "vertical" / "full.mp4"
+    portrait = None
+    if full.is_file() or latest:
+        complete = full.is_file()
+        path = full if complete else latest
+        length = info["slice"][1] - info["slice"][0]
+        portrait = {"url": media_url(c, name, f"vertical/{path.name}"), "format": video_format(path), "full": complete,
+                    "start": 0 if complete else int(path.stem.split("-")[1]) / 1000,
+                    "duration": length if complete else min(60, length)}
+    from workflow.vertical_workflow import revision, first_lyric
+    folder = d / "vertical"
+    picks = read_json(folder / "candidates.json", [])
+    if c.has_cover_pool:
+        picks = [r for r in picks if r["file"] == selected_portrait_cover(d)]
+    current = revision(d) if picks and (full.is_file() or info.get("preview_mode") == "browser") else None
+    released = portrait_release(d, current_only=info.get("source_review") == "pending")
+    release_url = None
+    if released:
+        release_url = media_url(c, name, "vertical/" + released["file"])
+    originals = None
+    differences = []
+    selection = read_json(c.dir / "vertical_source.json", {}).get("songs", {}).get(name)
+    if selection:
+        selected_kind = selection.get("kind", "ts")
+        source = Path(selection["directory"]) / "source.mp4"
+        # The selected source is exposed through a stable, allowlisted link.
+        link = folder / "original-selected.mp4"
+        originals = [{"key": "selected", "label": {"720p": "720p 原片片段", "ts": "TS 原片片段"}.get(selected_kind, "原片片段"),
+                      "url": media_url(c, name, "vertical/original-selected.mp4") if link.is_file() else None,
+                      "format": video_format(link), "start": 0}]
+    browser_portrait = None
+    if name in read_json(c.dir / "browser_previews.json", {}).get("songs", []) and originals:
+        source = next((row for row in originals if row["url"]), None)
+        if source:
+            from workflow.portrait_browser import preview_data
+            captions = next((d / "subs" / f for f in ("lyrics_poetic.ass", "lyrics_literal.ass", "lyrics.ass")
+                             if (d / "subs" / f).is_file()), None)
+            browser_portrait = {**preview_data(c, it, d), **source,
+                                "captions": ass_lines(captions) if captions else []}
     return {
         **base,
+        "douyin_cover": cover_attachment(d, selected_portrait_cover(d)),
+        "source_review": info.get("source_review"),
+        "review_mode": info.get("preview_mode"),
+        "browser_portrait": browser_portrait,
+        "products": product_data(c, name, d),
+        "originals": originals, "source_differences": differences,
+        "source_note": info.get("source_note"),
+        "source_format": original_format(c, d, info),
+        "vertical_preview": None if info.get("preview_mode") == "browser" else portrait,
+        "portrait_review": {"selected": selected_portrait_cover(d), "revision": current, "first": first_lyric(d) if current else None,
+                            "covers": [{**r, "url": media_url(c, name, "vertical/" + r["file"])} for r in picks],
+                            "released": {**released, "previous": not base["portrait_release_ready"], "url": release_url, "format": video_format(folder / released["file"])} if release_url else None},
         "exp": exp_data(d, f"/media/{slug}/songs/{name}/subs/lyrics.ass"),
         "artist": it.get("artist"), "genius_urls": info.get("genius_urls", []), "slice": info.get("slice"),
         "preview": f"/media/{slug}/songs/{name}/preview.mp4" if (d / "preview.mp4").exists() else None,
         "preview_span": info.get("preview"),
+        "preview_format": video_format(d / "preview.mp4"),
+        "portrait_nonts60_format": video_format(folder / "compare-nonts-1080p60.mp4"),
+        "portrait_nonts60": media_url(c, name, "vertical/compare-nonts-1080p60.mp4")
+                           if (folder / "compare-nonts-1080p60.mp4").is_file() else None,
+        "portrait_ts60_format": video_format(folder / "compare-ts-1080p60.mp4"),
+        "portrait_60_format": video_format(folder / "compare-720p60.mp4"),
+        "portrait_ts60": media_url(c, name, "vertical/compare-ts-1080p60.mp4")
+                         if (d / "vertical/compare-ts-1080p60.mp4").is_file() else None,
+        "portrait_60": media_url(c, name, "vertical/compare-720p60.mp4")
+                       if not info.get("source_review") and (d / "vertical/compare-720p60.mp4").is_file() else None,
         # 成品（workflow/song/render.py）：4K60、烧好字幕和水印、FLAC；出来了审核页预览下方直接播
         "final": (media_url(c, name, f"post/{name} 4K60FPS Sub-WaterMark.mp4").replace(" ", "%20")
                   if (d / "post" / f"{name} 4K60FPS Sub-WaterMark.mp4").exists() else None),
@@ -238,7 +424,7 @@ def get_song(slug: str, name: str):
         "finals": finals(c, name, d),
         "covers": [{**x, "file": media_url(c, name, x["file"]),
                     "file_4x3": media_url(c, name, x["file_4x3"]) if x["file_4x3"] else None}
-                   for x in cover_candidates(d)],
+                   for x in candidates],
         "draft": read_json(d / "post_draft.json", {}),
         # B 站投稿 JSON（post_bili/upload.py 生成，上传时原样提交），审核页只展示
         "bili_upload": bili_upload(d),
@@ -248,7 +434,7 @@ def get_song(slug: str, name: str):
         # 画面内容区域（去掉宽银幕的上下黑边）：左上角 logo、水印都相对它放
         "box": content_box(d),
         "logo_corner": logo_corner(d),   # 片源左上角有台标的场次放右上角
-        "review_entry": rv["songs"].get(name, {}),
+        "review_entry": rv["songs"].get(name, {}), "selected_cover_id": selected_id,
         "cover_selected": bool(rv["songs"].get(name, {}).get("cover")) or has_picked_cover(d),
     }
 
@@ -266,36 +452,40 @@ def post_review(slug: str, name: str, body: dict = Body(...)):
 
 def selected_covers(c):
     """展示已保存的真实选择，刷新或单首改选后仍一致。"""
-    entries = review.load(c).get("songs", {})
     rows = []
     for it in c.song_items():
-        cid = entries.get(it["name"], {}).get("cover")
-        if not cid or not re.fullmatch(r"(closeup|half|full|scene|pool|cover)_\d+", cid):
-            continue
-        path = c.song_dir(it) / "covers" / f"{cid}.jpg"
-        if not path.is_file():
-            continue
-        version = path.stat().st_mtime_ns
-        rows.append({"name": it["name"], "title": it["title"], "frame": cid,
-                     "file": media_url(c, it["name"], f"covers/{cid}.jpg") + f"?v={version}",
-                     "file_4x3": media_url(c, it["name"], f"covers/{cid}_4x3.jpg") + f"?v={version}"})
+        directory = c.song_dir(it)
+        selected = selected_portrait_cover(directory)
+        pair = cover_attachment(directory, selected)
+        if pair:
+            rows.append({"name": it["name"], "title": it["title"],
+                         "file": media_url(c, it["name"], "vertical/" + selected),
+                         "file_4x3": media_url(c, it["name"], "vertical/" + Path(pair["wide_path"]).name) if pair.get("wide_path") else None})
     return rows
+
+
+def pool_concert(slug):
+    c = concert(slug)
+    if not c.has_cover_pool:
+        raise HTTPException(404, "此场次按单曲选择封面")
+    return c
 
 
 @app.get("/api/concerts/{slug}/cover_pool")
 def get_cover_pool(slug: str):
     """整场封面池（workflow/live/cover_pool.py）：每帧的地址、类别、整场时间、在哪首歌里、标没标记；要分封面的歌。"""
     from workflow.live.cover_pool import frames, targets
-    c = concert(slug)
+    c = pool_concert(slug)
     return {"frames": [{**x, "url": f"/media/{slug}/cover_pool/{x['file']}"} for x in frames(c)],
-            "songs": [it["title"] for it in targets(c)], "selected": selected_covers(c)}
+            "songs": [it["title"] for it in targets(c)], "selected": selected_covers(c),
+            "quality_stage": read_json(c.dir / "cover_pool/quality.json", {}).get("stage")}
 
 
 @app.post("/api/concerts/{slug}/cover_pool/mark")
 def post_cover_pool_mark(slug: str, body: dict = Body(...)):
     """封面池里标记 / 取消标记一帧（适合做封面）；标记完由 cover_pool.assign 随机分给要做的歌。"""
     from workflow.live.cover_pool import set_mark
-    c = concert(slug)
+    c = pool_concert(slug)
     try:
         n = set_mark(c, body.get("file") or "", bool(body.get("on")))
     except ValueError as e:
@@ -307,17 +497,84 @@ def post_cover_pool_mark(slug: str, body: dict = Body(...)):
 def post_cover_pool_assign(slug: str):
     """标记完成：标记的画面随机分给要做的歌，每首按歌名排好 16:9 + 4:3 存成封面（cover_pool.assign）。"""
     from workflow.live.cover_pool import assign
-    c = concert(slug)
+    c = pool_concert(slug)
     try:
-        out = assign(slug)
-    except ValueError as e:
+        assign(slug, portrait=True)
+    except (ValueError, OSError) as e:
         raise HTTPException(400, str(e))
-    res = []
-    for name, x in out.items():
-        it = c.item(name)
-        res.append({"name": name, "title": it["title"], "frame": x["frame"],
-                    "file": media_url(c, name, f"covers/{x['cover']}.jpg"), "file_4x3": media_url(c, name, f"covers/{x['cover']}_4x3.jpg")})
-    return {"songs": res}
+    return {"songs": selected_covers(c)}
+
+
+@app.get("/api/concerts/{slug}/songs/{name}/cover_design")
+def get_cover_design(slug: str, name: str):
+    c = concert(slug)
+    it = song(c, name)
+    directory = c.song_dir(it) / "covers"
+    from workflow.cover_frames import candidate_frames
+    raw = [{k: v for k, v in row.items() if k not in {"path", "source"}} |
+           {"url": f"/api/concerts/{slug}/songs/{name}/cover_frame/{row['id']}"}
+           for row in candidate_frames(c, it)]
+    generated = [{"file": path.name, "url": media_url(c, name, f"covers/ai/{path.name}")}
+                 for path in sorted((directory / "ai").glob("*"))
+                 if path.is_file() and not path.name.startswith(("bili-", "douyin-"))
+                 and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}]
+    # Variants refer to a shared master and are displayed on each platform tab.
+    variants = read_json(directory / "ai/variants.json", [])
+    masters = read_json(directory / "ai/masters.json", [])
+    if masters:
+        generated = [row | {"url": media_url(c, name, "covers/ai/" + row["file"]),
+                           "reference_url": media_url(c, name, "covers/ai/" + row["reference"])}
+                     for row in masters]
+        active = {row["file"] for row in masters}
+        variants = [row for row in variants if row["master"] in active]
+    generated = [row for row in generated if row["file"] not in {v["file"] for v in variants}]
+    for variant in variants:
+        variant["url"] = media_url(c, name, "covers/ai/" + variant["file"])
+    failures = []
+    for run in {row.get("run") for row in masters if row.get("run")}:
+        for path in sorted((directory / "ai/runs" / run).glob("candidate-*.json")):
+            record = read_json(path, {})
+            if record.get("status") == "failed":
+                reason = "服务商内容审核未通过" if "SensitiveContent" in record.get("provider_error_code", "") else "生成失败，未自动重试"
+                failures.append({"label": record.get("label"), "reason": reason})
+    return {"frames": raw, "generated": generated, "variants": variants, "failed_candidates": failures}
+
+
+_frame_extraction = Semaphore(2)
+
+
+@app.get("/api/concerts/{slug}/songs/{name}/cover_frame/{frame_id}")
+def get_cover_frame(slug: str, name: str, frame_id: str):
+    from workflow.cover_frames import candidate_frames
+    from workflow.vertical_cover import original_frame
+    import tempfile
+    c = concert(slug)
+    item = song(c, name)
+    row = next((r for r in candidate_frames(c, item) if r["id"] == frame_id), None)
+    if row is None:
+        raise HTTPException(404, "候选帧不存在")
+    if row["path"]:
+        return FileResponse(row["path"], headers={"Cache-Control": "no-cache"})
+    if not row["source"]:
+        cached = sorted((c.song_dir(item) / "covers/raw").glob(frame_id + "-*.jpg"))
+        if cached:
+            return FileResponse(cached[-1], headers={"Cache-Control": "no-cache"})
+        raise HTTPException(409, "原片离线，接入硬盘后可恢复此帧")
+    source = Path(row["source"])
+    version = source.stat().st_mtime_ns
+    folder = c.song_dir(item) / "covers/raw"
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{frame_id}-{version}.jpg"
+    with _frame_extraction:
+        if not target.is_file():
+            try:
+                with tempfile.TemporaryDirectory(dir=folder) as temp:
+                    pending = Path(temp) / "frame.jpg"
+                    original_frame(c, item, row["t"]).save(pending, quality=95)
+                    pending.replace(target)
+            except (OSError, subprocess.SubprocessError) as error:
+                raise HTTPException(503, "原帧提取失败，请重试") from error
+    return FileResponse(target, headers={"Cache-Control": "no-cache"})
 
 
 @app.post("/api/concerts/{slug}/songs/{name}/cover_download")
@@ -338,7 +595,7 @@ def post_cover_download(slug: str, name: str, body: dict = Body(...)):
     return {"saved": saved}
 
 
-MEDIA_OK = {".mp4", ".ass", ".jpg"}
+MEDIA_OK = {".mp4", ".ass", ".jpg", ".jpeg", ".png", ".webp"}
 
 
 def bili_upload(d):
@@ -347,7 +604,13 @@ def bili_upload(d):
     f = d / "post" / "bili_upload.json"
     if f.exists():
         from post_bili.upload import dump
-        return dump(read_json(f))
+        from workflow.bili_title import for_post
+        saved = read_json(f)
+        draft = read_json(d / "post_draft.json", {})
+        if draft.get("song"):
+            saved["标题"] = for_post(d, draft)
+            saved["标题字符数"] = len(saved["标题"])
+        return dump(saved)
     try:
         import contextlib
         import io
@@ -364,6 +627,81 @@ def bili_upload(d):
 FINAL_LABELS = {"hw_videotoolbox": "硬件编码 H.264 VideoToolbox（对比版）", "hevc_videotoolbox": "硬件编码 HEVC VideoToolbox（对比版）"}
 
 
+def original_format(c, d, info):
+    concert_info = read_json(c.info)
+    candidates = [info.get("original_source_file"), info.get("source_file")]
+    if c.slug == "singles":
+        candidates.extend([d / "source.mp4", (d / "post").resolve().parent / "source.mp4"])
+    else:
+        candidates.extend([concert_info.get("original_source_file"), concert_info.get("source_file"), c.source])
+    for value in filter(None, candidates):
+        path = Path(value)
+        try:
+            stat = path.stat()
+            primary = {**probe_original(path, stat.st_mtime_ns, stat.st_size),
+                       "filename": path.resolve().name, "size_gb": round(stat.st_size / 1e9, 2)}
+            variants = [primary.copy()]
+            seen = {path.resolve()}
+            for extra in concert_info.get("source_variants", []):
+                alternate = Path(extra)
+                if alternate.resolve() in seen:
+                    continue
+                seen.add(alternate.resolve())
+                try:
+                    metadata = alternate.stat()
+                    variants.append({**probe_original(alternate, metadata.st_mtime_ns, metadata.st_size),
+                                     "filename": alternate.name, "size_gb": round(metadata.st_size / 1e9, 2)})
+                except (OSError, ValueError, KeyError, ZeroDivisionError, subprocess.SubprocessError):
+                    continue
+            return {**primary, "files": variants}
+        except (OSError, ValueError, KeyError, ZeroDivisionError, subprocess.SubprocessError):
+            continue
+    return {"resolution": "未知分辨率", "fps": "未知帧率", "audio": "未知音频格式"}
+
+
+@lru_cache(maxsize=256)
+def probe_original(path, mtime_ns, size):
+    result = subprocess.check_output([shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe",
+        "-v", "error", "-show_entries",
+        "stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,field_order:stream_disposition=default",
+        "-of", "json", str(path)], timeout=6)
+    streams = json.loads(result).get("streams", [])
+    videos = [s for s in streams if s.get("codec_type") == "video"]
+    audios = [s for s in streams if s.get("codec_type") == "audio"]
+    video = next((s for s in videos if s.get("disposition", {}).get("default")), next(iter(videos), {}))
+    scan = "i" if video.get("field_order") in ("tt", "bb", "tb", "bt") else "p"
+    fps = next((video[k] for k in ("avg_frame_rate", "r_frame_rate") if video.get(k) not in (None, "0/0", "0")), None)
+    return {
+        "resolution": f"{min(video['width'], video['height'])}{scan}" if video.get("height") else "未知分辨率",
+        "fps": f"{float(Fraction(fps)):.2f}".rstrip("0").rstrip(".") + " fps" if fps else "未知帧率",
+        "audio": " / ".join(dict.fromkeys(s["codec_name"].upper() for s in audios if s.get("codec_name"))) or "无音轨",
+    }
+
+
+def video_format(path):
+    try:
+        stat = path.stat()
+        return _probe_format(path, stat.st_mtime_ns, stat.st_size)
+    except (OSError, ValueError, IndexError, KeyError, ZeroDivisionError, subprocess.SubprocessError):
+        return None
+
+
+@lru_cache(maxsize=2048)
+def _probe_format(path, mtime_ns, size):
+    probe = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
+    result = subprocess.check_output([probe, "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,avg_frame_rate,r_frame_rate,field_order",
+        "-of", "json", str(path)], timeout=6)
+    stream = json.loads(result)["streams"][0]
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        rate = stream.get(key)
+        if rate and rate != "0/0" and Fraction(rate) > 0:
+            fps = f"{float(Fraction(rate)):.2f}".rstrip("0").rstrip(".")
+            scan = "i" if stream.get("field_order") in ("tt", "bb", "tb", "bt") else "p"
+            return f"{min(stream['width'], stream['height'])}{scan}{fps}fps"
+    return None
+
+
 def finals(c, name, d):
     main = f"{name} 4K60FPS Sub-WaterMark.mp4"
     files = sorted((d / "post").glob("*.mp4"), key=lambda f: (f.name != main, f.name))
@@ -374,8 +712,23 @@ def finals(c, name, d):
         label = "软件编码 libx264（正式成品）" if f.name == main else \
             next((v for k, v in FINAL_LABELS.items() if k in f.name), f.name)
         out.append({"label": label, "file": f.name, "url": media_url(c, name, f"post/{f.name}").replace(" ", "%20"),
-                    "path": str(f.resolve()), "gb": round(f.stat().st_size / 1e9, 2)})
+                    "path": str(f.resolve()), "format": video_format(f), "gb": round(f.stat().st_size / 1e9, 2)})
     return out
+
+
+def product_data(c, name, directory):
+    manifest = read_json(directory / "products/products.json", {})
+    items = []
+    for item in manifest.get("items", []):
+        file = item.get("file", "")
+        if file not in ("bilibili-4k60.mp4", "douyin-1080p60.mp4"):
+            continue
+        path = directory / "products" / file
+        if item.get("status") != "ready" or not path.is_file():
+            continue
+        items.append({**item, "url": media_url(c, name, "products/" + file),
+                      "bytes": path.stat().st_size, "path": str(path.resolve())})
+    return {**manifest, "items": items}
 
 
 def media_url(c, name, rel):
@@ -385,15 +738,60 @@ def media_url(c, name, rel):
     return f"/media/{c.slug}/songs/{name}/{rel}?v={v}"
 
 
+_vertical_render_slot = Semaphore(1)
+
+
+@app.post("/api/concerts/{slug}/songs/{name}/vertical_preview")
+def generate_vertical_preview(slug: str, name: str):
+    from workflow.vertical_preview import render
+    c = concert(slug)
+    item = song(c, name)
+    if not _vertical_render_slot.acquire(blocking=False):
+        raise HTTPException(409, "正在生成另一支竖屏预览，请稍后重试")
+    try:
+        settings = read_json(c.dir / "vertical_preview.json", {})
+        full = settings.get("full", False) or (c.song_dir(item) / "vertical/full.mp4").is_file()
+        render(c, item, force=True, full=full)
+    except (ValueError, FileNotFoundError, subprocess.CalledProcessError) as error:
+        raise HTTPException(422, f"生成竖屏预览失败：{error}") from error
+    finally:
+        _vertical_render_slot.release()
+    return {"ok": True}
+
+
+@app.post("/api/concerts/{slug}/songs/{name}/vertical_cover")
+def select_vertical_cover(slug: str, name: str, body: dict = Body(...)):
+    c = concert(slug)
+    item = song(c, name)
+    cover = body.get("cover")
+    if c.has_cover_pool:
+        raise HTTPException(422, "整场演唱会请到封面池选帧并标记完成")
+    try:
+        attachment = replace_cover_selection(c, item, cover, datetime.now(SHANGHAI))
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        raise HTTPException(422, f"配套封面生成失败：{error}") from error
+    return {"cover": cover, "douyin_cover": attachment}
+
+
 @app.post("/api/concerts/{slug}/songs/{name}/reveal_final")
 def reveal_final(slug: str, name: str, file: str = ""):
-    """在 Finder 里定位这首的成品（只开这一个文件，审核页「在 Finder 中显示」用）；file：成品目录里的哪个文件，默认正式成品。"""
-    c = concert(slug)
-    post = c.song_dir(song(c, name)) / "post"
-    f = (post / (file or f"{name} 4K60FPS Sub-WaterMark.mp4")).resolve()
-    if f.parent != post.resolve() or f.suffix != ".mp4" or not f.is_file():
+    d = concert(slug)
+    directory = d.song_dir(song(d, name))
+    file = file or f"{name} 4K60FPS Sub-WaterMark.mp4"
+    if file in ("vertical/compare-ts-1080p60.mp4", "vertical/compare-nonts-1080p60.mp4", "vertical/compare-720p60.mp4") or re.fullmatch(
+        r"vertical/release-[0-9a-f]{16}\.mp4", file
+    ):
+        path = directory / file
+    elif file in ("products/bilibili-4k60.mp4", "products/douyin-1080p60.mp4"):
+        path = directory / file
+    elif Path(file).name == file and file.endswith(".mp4") and ".partial." not in file:
+        path = directory / "post" / file
+    else:
         raise HTTPException(404)
-    subprocess.run(["open", "-R", str(f)], check=False)
+    if not path.is_file():
+        raise HTTPException(404, "成片文件不存在或硬盘尚未挂载")
+    if subprocess.run(["open", "-R", str(path.resolve())]).returncode:
+        raise HTTPException(500, "Finder 未能打开成片目录")
     return {"ok": True}
 
 
@@ -402,10 +800,14 @@ def media(slug: str, path: str):
     c = concert(slug)
     f = (c.dir / path)
     parts = Path(path).parts
-    allowed = f.suffix in MEDIA_OK and (
+    allowed = f.suffix.lower() in MEDIA_OK and (
         path == "source.mp4"
-        or (len(parts) == 3 and parts[0] == "songs" and parts[2] == "preview.mp4")
+        or (len(parts) == 3 and parts[0] == "songs" and parts[2] in ("preview.mp4", "preview-720p60.mp4"))
+        or (len(parts) == 4 and parts[0] == "songs" and parts[2] == "vertical"
+            and (parts[3] in ("full.mp4", "original-selected.mp4", "original-ts.mp4", "original-720.mp4", "compare-720p60.mp4", "compare-ts-1080p60.mp4", "compare-nonts-1080p60.mp4") or re.fullmatch(re.escape(parts[1]) + r"-[0-9a-f]{12}-4x3-\d{10}\.jpg", parts[3])
+                 or re.fullmatch(r"(?:preview-\d+|release-[0-9a-f]{16})\.mp4|cover-\d+-[0-9a-f]{12}\.jpg", parts[3])))
         or (len(parts) == 4 and parts[0] == "songs" and parts[2] == "subs" and parts[3] in ("lyrics.ass", "lyrics_literal.ass", "lyrics_poetic.ass"))
+        or (len(parts) == 4 and parts[0] == "songs" and parts[2] == "products" and parts[3] in ("bilibili-4k60.mp4", "douyin-1080p60.mp4"))
         or (len(parts) >= 4 and parts[0] == "songs" and parts[2] in ("covers", "post"))
         or (len(parts) == 2 and parts[0] == "cover_pool"))   # 整场封面池的原始帧
     if not allowed or ".." in parts or not f.resolve().is_file():

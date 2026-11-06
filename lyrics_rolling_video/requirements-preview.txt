@@ -1,0 +1,2 @@
+# Only needed for MP4 export / browser verification. Aligning uses ../requirements.txt.
+playwright>=1.64,<2

@@ -71,30 +71,9 @@ def subs_title_zh(d):
     return m.group(1).strip() if m else None
 
 
-def build_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs):
-    """投稿标题（固定格式，代码拼，不让模型写）：
-    [4K60帧/Hi-Res] {艺人中文}《{歌名原文}》{艺人英文} {歌名中文} {演出中文名} {演出英文名} 中x字幕
-    B 站上限 80 字，超了依次去掉：英文演出名里的年份 → 中文演出名里的年份（年份留在英文名里）→ 两边的年份
-    → 英文演出名 → 英文艺人名 → 中文演出名 → 歌名中文。
-    （中英文演出名都要尽量留着；中文歌手、中文歌名、中文演出名最后才动：观众看的是中文）"""
-    import re
-    no_year = lambda x: re.sub(r"\s*\(?\d{4}\)?$", "", x or "").strip()
-    zh, en = (artist_zh or "").strip(), (artist_en or "").strip()
-    head = [f"{zh or en}《{song}》{en if en and en != zh else ''}".strip()]   # 艺人名和《》之间不空格
-    sz = "" if not song_zh or song_zh.strip().lower() == song.strip().lower() else song_zh.strip()
-    ez, ee = (event_zh or "").strip(), (event_en or "").strip()
-    for a in {zh, en} - {""}:   # 演出名不带艺人名（HKT48 7周年公演2018 -> 7周年公演2018）
-        ez, ee = (re.sub(rf"^{re.escape(a)}\s*", "", x).strip() for x in (ez, ee))
-    title = ""
-    short = [f"{zh or en}《{song}》"]   # 不带英文艺人名
-    for parts in (head + [sz, ez, ee], head + [sz, ez, no_year(ee)], head + [sz, no_year(ez), ee],
-                  head + [sz, no_year(ez), no_year(ee)], head + [sz, ez], short + [sz, ez],
-                  short + [sz, no_year(ez)], short + [sz], short):   # 艺人名 / 歌名太长（串烧、合作）：先去英文，最后才去中文
-        title = " ".join([TITLE_PREFIX, *[x for x in dict.fromkeys(parts) if x], subs]).strip()
-        if len(title) <= TITLE_MAX:
-            return title
-    print(f"警告：标题 {len(title)} 字，超过 {TITLE_MAX}，请手动缩短")
-    return title
+def build_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs, **kwargs):
+    from bili_title import build_title as fixed_title
+    return fixed_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs, **kwargs)
 
 
 def subs_tag(langs):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-srt 原文歌词 -> 双语 ass（原文 \\N ♪ 中文 ♪），时间轴严格不变。
+srt 原文歌词 -> 双语 ass（原文 \\N 中文），时间轴严格不变。
 
 中文来源二选一:
   1) 默认调用 OpenAI 兼容接口，供应商配置与 Takit 一致，密钥放在仓库根目录 .env
@@ -157,7 +157,7 @@ def translate_title(title, cache):
 
 def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None, speech_start=None):
     """默认样式，与 lyrics/bzrp_v2.ass 完全一致：384x288 画布、Arial Rounded 23、描边 1、无阴影、底边距 50；
-    标题也作为普通一行放在底部；格式 “原文 \\N♪ 中文 ♪”，不加任何行内标签。"""
+    标题也作为普通一行放在底部；格式 “原文 \\N 中文”，不加任何行内标签。"""
     out = pysubs2.SSAFile()
     out.info.update({"PlayResX": "384", "PlayResY": "288", "ScaledBorderAndShadow": "yes"})
     out.styles["Default"] = pysubs2.SSAStyle(
@@ -175,9 +175,9 @@ def build_ass_bzrp(subs, zh, title, title_duration, title_zh=None, speech_start=
         out.events.append(pysubs2.SSAEvent(start=0, end=min(title_duration, first), text=t))
     for e, z in zip(subs.events, zh):
         text = no_period(e.plaintext.replace("\n", " ").strip())
-        z = no_period(z) if z else z
+        z = no_period(z.strip(" ♪♫♬🎵🎶")) if z else z
         if z and z != text:
-            text += r" \N♪ " + z + " ♪"
+            text += r" \N" + z
         # 整行歌词不拆，长行由渲染器自动换行；字号统一，不按长度缩小（一行大一行小观感差）
         out.events.append(pysubs2.SSAEvent(start=e.start, end=e.end, text=text))
     return out
@@ -207,12 +207,12 @@ def build_ass_modern(subs, zh, title, title_duration, title_zh=None):
         out.events.append(pysubs2.SSAEvent(start=0, end=title_duration, text=t, style="Title"))
     for e, z in zip(subs.events, zh):
         text = no_period(e.plaintext.replace("\n", " ").strip())
-        z = no_period(z) if z else z
+        z = no_period(z.strip(" ♪♫♬🎵🎶")) if z else z
         orig = text
         if CJK_RE.search(text):
             text = r"{\fn" + JA_FONT + "}" + text
         if z and z != orig:
-            text += r"\N{\fn" + CJK_FONT + r"\b1\fs56}♪ " + z + " ♪"
+            text += r"\N{\fn" + CJK_FONT + r"\b1\fs56}" + z
         out.events.append(pysubs2.SSAEvent(start=e.start, end=e.end, text=text))
     return out
 

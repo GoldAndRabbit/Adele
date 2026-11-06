@@ -44,56 +44,220 @@ const state = { concerts: [], concert: null, song: null, cleanup: [] };
 
 // ---------------------------------------------------------------- sidebar
 
+function searchText(text) {
+  return text.normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function renderNavigation(route) {
+  const input = $("#song-search");
+  const query = searchText(input.value);
+  if (!input.value.trim()) {
+    $("#concerts").replaceChildren(...state.concerts.map(x => {
+      const total = x.tracks.length;
+      const done = x.tracks.filter(track => track.portrait_release_ready).length;
+      const rate = total ? Math.round(done / total * 100) : 0;
+      return h("a", {href: `#/${x.slug}`, class: "group-link" + (x.slug === route.slug ? " active" : "")},
+        h("span", {class:"group-name"}, x.title),
+        h("span", {class:"group-metrics"},
+          Number(x.fps) > 0 ? h("span", {class:"group-fps", title:"原片帧率"}, `${Number(Number(x.fps).toFixed(2))} fps`) : null,
+          h("span", {class:"release-rate", title:`竖屏成片率：${done}/${total} 首`,
+            "aria-label":`竖屏成片率 ${rate}%`}, rate + "%")));
+    }));
+    return;
+  }
+  const matches = state.concerts.flatMap(group => (group.tracks || [])
+    .filter(track => query && searchText(track.title).includes(query))
+    .map(track => h("a", {href: `#/${group.slug}/${track.name}`, onclick: () => {
+      input.value = "";
+      renderNavigation(parseRoute());
+    }}, track.title, h("small", {}, [group.title, track.notes].filter(Boolean).join(" · ")))));
+  $("#concerts").replaceChildren(...(matches.length ? matches : ["未找到匹配的歌曲"]));
+}
+$("#song-search").addEventListener("input", () => renderNavigation(parseRoute()));
+
 function renderSidebar(route) {
   const c = state.concert;
-  $("#concerts").replaceChildren(...state.concerts.map((x) =>
-    h("a", { href: `#/${x.slug}`, class: x.slug === route.slug && !route.name ? "active" : null },
-      x.title, h("span", { class: "concert-count" }, `（${x.songs}首）`))));
+  renderNavigation(route);
   const ul = $("#songs");
   if (!c) { ul.replaceChildren(); return; }
   const songs = Object.fromEntries(c.songs.map((s) => [s.name, s]));
+  const songNumbers = new Map(c.songs.map((song, index) => [song.name, String(index).padStart(2, "0")]));
   const pool = h("li", {}, h("a", { href: `#/${c.slug}/~covers`, class: route.name === "~covers" ? "active" : null,
-    title: "整场演唱会的画面都能给任何一首当封面" }, h("span", { class: "ji" }, ""), h("span", { class: "jn" }, "封面池（整场挑封面）")));
-  ul.replaceChildren(pool, ...c.items.map((it) => {
+    title: "整场演唱会的画面都能给任何一首当封面" }, h("span", { class: "pool-link-label" }, "封面池")));
+  const kind = state.concerts.find(x => x.slug === route.slug)?.kind;
+  ul.replaceChildren(...(c.has_cover_pool ? [pool] : []), ...c.items.map((it) => {
     if (it.kind !== "song") return h("li", { class: "tape", title: "过场（预录视频），不出成品" }, `~ ${it.title}`);
     const s = songs[it.name];
     const warn = s.start == null || (s.confidence != null && s.confidence < 0.5) || s.needs_refine;
-    return h("li", {}, h("a", { href: `#/${c.slug}/${it.name}`, class: route.name === it.name ? "active" : null, title: it.title },
-      h("span", { class: "ji" }, it.idx),
-      h("span", { class: "song-list-info" },
-        h("span", { class: "song-list-title" }, it.title),
-        h("span", { class: "song-list-badges" },
-          h("span", { class: `song-cover-status${s.cover_selected ? " selected" : ""}` }, s.cover_selected ? "已选完封面" : "尚未选择封面"),
-          h("span", { class: `song-cover-status${s.subtitles_ready ? " selected" : ""}` }, s.subtitles_ready ? "已产出字幕" : "尚未产出字幕"))),
-      warn ? h("span", { class: "warn", title: s.needs_refine ? "边界改过，需要重跑精校" : "定位置信度低" }, "⚠") : null,
-      h("span", { class: "jd" }, s.start != null ? fmt(s.end - s.start) : "")));
+    const source = kind === "artist" ? s.notes : c.info.title;
+    const artist = s.artist || c.info.artist;
+    const prefix = artist && artist + " - ";
+    const note = prefix && source?.toLowerCase().startsWith(prefix.toLowerCase())
+      ? source.slice(prefix.length) : source;
+    const label = note ? `${it.title} · ${note}` : it.title;
+    const badge = (text, ready, status, extraClass = "") => h("span", {
+      class: `song-cover-status ${extraClass}${ready ? " selected" : ""}`, title: status, "aria-label": status
+    }, text);
+    return h("li", {class: "song-row"}, h("a", { href: `#/${c.slug}/${it.name}`, class: route.name === it.name ? "active" : null, title: label },
+      h("span", {class:"song-number"}, songNumbers.get(it.name)),
+      h("span", { class: "song-list-title" }, it.title),
+      h("span", { class: "song-list-badges" },
+        badge("封", s.portrait_cover_selected, s.portrait_cover_selected ? "已选竖屏封面" : "待选竖屏封面", "portrait-badge"),
+        badge("字", s.subtitles_ready, s.subtitles_ready ? "已产出字幕" : "尚未产出字幕"),
+        badge("详", s.post_ready, s.post_ready ? "抖音投稿文案已就绪" : "待补抖音投稿信息"),
+        badge("成", s.portrait_release_ready, s.portrait_release_ready ? "已有竖屏成片" : "暂无竖屏成片", "portrait-badge")),
+      warn ? h("span", { class: "warn", title: s.needs_refine ? "边界改过，需要重跑精校" : "定位置信度低" }, "⚠") : null));
   }));
 }
 
-// ---------------------------------------------------------------- 总览
+function postPane(song) {
+  const post = song.bili_upload ? JSON.parse(song.bili_upload) : {};
+  const draft = song.draft || {};
+  const title = post["标题"] || draft.title || "";
+  const fields = [["标题", title], ["简介", post["简介"] || draft.intro_text],
+    ["标签", post["标签"] || draft.tags], ["分区", post["分区名称"]], ["转载来源", post["转载来源"]],
+    ["完整投稿 JSON", song.bili_upload]].filter(([, value]) => value?.length);
+  if (!fields.length) return h("div", {class: "post-info"}, "这首歌暂无投稿内容。");
 
-function viewOverview() {
-  const c = state.concert;
-  document.title = "演唱会";
-  const card = h("div", { class: "card" },
-    h("div", { class: "card-head" },
-      h("div", { class: "card-title" }, `歌单 ${c.songs.length} 首`, h("small", {}, `整场 ${hms(c.info.duration)}`)),
-      h("div", { class: "spacer" }),
-      c.info.setlist_url ? h("a", { href: c.info.setlist_url, target: "_blank", rel: "noopener" }, "setlist.fm") : null),
-    timeline(c, null, null),
-    h("div", { class: "table-wrap", style: "max-height:none" }, h("table", { class: "overview" },
-      h("thead", {}, h("tr", {}, ...["#", "封面", "歌名", "开始", "时长", "进度", "审核", "提示"].map((x) => h("th", {}, x)))),
-      h("tbody", {}, ...c.songs.map((s) => h("tr", { onclick: () => { location.hash = `#/${c.slug}/${s.name}`; } },
-        h("td", { class: "t" }, s.idx),
-        h("td", {}, s.thumb ? h("img", { src: s.thumb, loading: "lazy" }) : ""),
-        h("td", {}, s.title),
-        h("td", { class: "t" }, hms(s.start)),
-        h("td", { class: "t" }, s.start != null ? fmt(s.end - s.start) : "–"),
-        h("td", {}, STAGE[s.stage]),
-        h("td", {}, h("span", { class: `chip ${REVIEW[s.review][1]}` }, REVIEW[s.review][0])),
-        h("td", { class: "hint" }, [...s.flags, s.needs_refine ? "边界改过，字幕待重跑" : null].filter(Boolean).join("；"))))))));
-  $("#view").replaceChildren(card);
+  const rows = fields.map(([label, value]) => {
+    const text = Array.isArray(value) ? value.join("、") : value;
+    const copy = h("button", {class:"btn mini", onclick: async () => {
+      try { await navigator.clipboard.writeText(text); copy.textContent = "已复制"; }
+      catch { copy.textContent = "复制失败"; }
+    }}, "复制" + label);
+    return h("section", {class:"post-field" + (label === "简介" ? " post-description" : "")},
+      h("div", {class:"post-field-head"}, h("strong", {}, label),
+        label === "标题" ? h("small", {}, Array.from(title).length + " / 80 字符" + (Array.from(title).length > 80 ? " · 超长待精简" : "")) : null, copy),
+      label === "完整投稿 JSON" ? h("pre", {class:"json-view"}, text) : h("p", {}, text));
+  });
+  return h("div", {class:"post-info bili-post-info"}, ...rows);
 }
+
+function productDuration(seconds) {
+  if (seconds == null) return "—";
+  const rounded = Math.round(seconds);
+  return `${Math.floor(rounded / 60)}分${rounded % 60}秒`;
+}
+
+function productSingleRunTimings(data) {
+  // Historical attempts remain in the manifest; show each production stage once.
+  const aliases = {bilibili_revision2_render:"bilibili-4k60_render_encode"};
+  const stages = [
+    ["source_decode_deinterlace_lossless", "原片解码、去隔行、无损保存"],
+    ["scene_boundary_detection", "切镜边界检测"],
+    ["interpolate50to60_and_lossless_master", "一次插帧与共享母版写入"],
+    ["verify_master", "共享母版校验"],
+    ["prepare_titles_subtitles_masks", "标题、字幕与渐变素材"],
+    ["douyin-1080p60_render_encode", "抖音1080p60合成编码"],
+    ["bilibili-4k60_render_encode", "B站4K60合成编码"],
+    ["verify_both_outputs_decode_and_audio_clock", "双版成品校验"]
+  ];
+  const latest = new Map();
+  for (const row of data.timings || []) {
+    if (Number.isFinite(row.seconds) && row.seconds >= 0) latest.set(aliases[row.stage] || row.stage, row);
+  }
+  return stages.filter(([stage]) => latest.has(stage)).map(([stage, label]) => ({...latest.get(stage), stage, label}));
+}
+
+function productTimingLayout(timings) {
+  let elapsed = 0;
+  const groups = new Map();
+  const rows = timings.map(row => {
+    let start = elapsed;
+    if (row.parallel_group) {
+      if (!groups.has(row.parallel_group)) {
+        const members = timings.filter(other => other.parallel_group === row.parallel_group);
+        groups.set(row.parallel_group, elapsed);
+        elapsed += Math.max(...members.map(other => Math.max(0, other.group_offset_seconds || 0) + other.seconds));
+      }
+      start = groups.get(row.parallel_group) + Math.max(0, row.group_offset_seconds || 0);
+    } else elapsed += row.seconds;
+    return {...row, start_seconds:start};
+  });
+  return {rows, total:elapsed};
+}
+
+function productTimeline(data) {
+  const timings = productSingleRunTimings(data);
+  if (!timings.length) return null;
+  const layout = productTimingLayout(timings);
+  const total = layout.total;
+  const axisMax = Math.max(300, Math.ceil(total / 300) * 300);
+  const ticks = Array.from({length:axisMax / 300 + 1}, (_, i) => i * 300);
+  const rows = layout.rows.map(row => {
+    const start = row.start_seconds;
+    const kind = row.stage.includes("interpolate") ? "interpolation"
+      : row.stage.includes("douyin") ? "douyin"
+      : row.stage.includes("bilibili") ? "bilibili"
+      : row.stage.includes("verify") ? "validation" : "preparation";
+    const label = row.label || row.stage;
+    return h("div", {class:"production-timeline-row"},
+      h("span", {class:"timeline-stage-name", title:label}, label),
+      h("div", {class:"production-timeline-track", style:`--tick-step:${300 / axisMax * 100}%`, title:`${label} · ${productDuration(row.seconds)}`},
+        h("div", {class:`production-timeline-bar ${kind}${row.seconds / axisMax < .075 ? " compact" + ((start + row.seconds) / axisMax > .93 ? " compact-end" : "") : ""}`,
+          style:`left:${start / axisMax * 100}%;width:${row.seconds / axisMax * 100}%`},
+          h("span", {class:"timeline-bar-duration"}, productDuration(row.seconds)))));
+  });
+  return h("section", {class:"production-timeline"},
+    h("strong", {}, "单次制作阶段耗时"),
+    h("p", {class:"hint"}, `单次流程参考耗时 ${productDuration(total)}`),
+    h("p", {class:"hint"}, "按当前版本各有效阶段实测重组，每阶段只计一次，并行阶段重叠计时；不含迁移、试做、历史重做及等待调试。"),
+    h("div", {class:"production-timeline-scroll"},
+      h("div", {class:"production-timeline-chart"},
+        h("div", {class:"production-timeline-scale"}, h("span", {}, "阶段"),
+          h("div", {}, ...ticks.map(seconds => h("span", {}, `${seconds / 60}min`)))),
+        ...rows)), data.engine ? h("p", {class:"hint"}, data.engine) : null);
+}
+
+function productsPlaceholder(c, song) {
+  const data = song.products || {};
+  const renderProduct = (platform, title) => {
+    const item = (data.items || []).find(item => item.platform === platform);
+    const content = h("section", {class:platform === "bilibili" ? "product-output product-horizontal" : "product-output product-portrait",
+      "aria-label":title}, h("strong", {}, title));
+    if (!item) {
+      content.append(h("p", {class:"empty"}, data.status === "running" ? (data.stage || "正在制作") : "暂无成品"));
+      return content;
+    }
+    const video = h("video", {src:item.url, controls:true, playsinline:true, preload:"metadata", class:"product-video", "aria-label":title});
+    state.cleanup.push(() => { video.pause(); video.removeAttribute("src"); video.load(); });
+    if (item.previous) content.append(h("p", {class:"hint"}, "正在更新成品，当前播放上一版"));
+    content.append(video,
+      h("p", {}, `${item.width}×${item.height} · ${item.fps}fps · ${(item.bytes/1024/1024).toFixed(1)} MiB`),
+      h("p", {}, `合成编码 ${productDuration(item.render_seconds)}`),
+      revealFinal(c, song, "products/" + item.file),
+      h("details", {}, h("summary", {}, "文件路径"), h("p", {}, item.path)));
+    return content;
+  };
+  const horizontal = renderProduct("bilibili", "横屏B站版");
+  const portrait = renderProduct("douyin", "竖屏抖音版");
+  const videos = [...horizontal.querySelectorAll("video"), ...portrait.querySelectorAll("video")];
+  videos.forEach(video => video.addEventListener("play", () => videos.forEach(other => { if (other !== video) other.pause(); })));
+  return h("div", {}, h("div", {class:"top stacked-review product-layout"}, horizontal, portrait),
+    data.created_local ? h("p", {class:"product-created"}, "制作时间 " + data.created_local) : null,
+    productTimeline(data));
+}
+
+function postingPane(song) {
+  const tabs = h("div", {class:"song-tabs post-tabs", role:"tablist", "aria-label":"投稿平台"});
+  const panels = [
+    h("section", {role:"tabpanel", "aria-label":"抖音投稿"}, douyinPane(song)),
+    h("section", {role:"tabpanel", "aria-label":"B站投稿"}, postPane(song))
+  ];
+  function select(index) {
+    panels.forEach((panel, i) => {
+      panel.hidden = i !== index;
+      tabs.children[i].setAttribute("aria-selected", String(i === index));
+    });
+  }
+  ["抖音投稿", "B站投稿"].forEach((label, index) =>
+    tabs.append(h("button", {role:"tab", class:"platform-logo-tab", title:label, "aria-label":label, onclick:() => select(index)},
+      h("img", {src:index === 0 ? "icons/douyin.svg" : "icons/bilibili.svg", alt:"", "aria-hidden":"true"}))));
+  select(0);
+  return h("div", {class:"posting-platforms"}, tabs, ...panels);
+}
+
+// ---------------------------------------------------------------- 总览
 
 // 整场时间轴：每首一块，颜色 = 审核状态；点一块跳到那首。now()：当前播放到整场的哪一秒（单曲页用）
 function timeline(c, cur, video, now) {
@@ -122,13 +286,213 @@ function timeline(c, cur, video, now) {
 // ---------------------------------------------------------------- 单曲审核
 // 布局：上面 左 视频（单曲预览 + 外挂字幕 + 边界微调）/ 右 逐句歌词和翻译；下面 左 候选封面 / 右 投稿信息
 
+function formatLabel(format) {
+  return h("small", {class: "video-format"}, format || "规格未知");
+}
+
+function revealFinal(c, song, file) {
+  return h("button", {type: "button", class: "btn mini reveal-final", onclick: async () => {
+    try { await api(`/api/concerts/${c.slug}/songs/${song.name}/reveal_final?file=${encodeURIComponent(file)}`, {}); }
+    catch (error) { toast(error.message, false); }
+  }}, "打开目录");
+}
+
+function douyinPane(song) {
+  const post = song.douyin_submission || {};
+  const cover = song.douyin_cover;
+  function field(label, value, fallback, limit) {
+    const copy = value && h("button", {class:"btn mini", onclick: async () => {
+      try { await navigator.clipboard.writeText(value); copy.textContent = "已复制"; }
+      catch { copy.textContent = "复制失败"; }
+    }}, "复制" + label);
+    return h("div", {}, h("small", {}, limit ? label + " · " + (value || "").length + " / " + limit + " 字符" : label), h("p", {}, value || fallback), copy);
+  }
+  return h("aside", {class:"douyin-pane", "aria-label":"抖音投稿信息"},
+    h("strong", {}, "抖音投稿信息"),
+    field("短标题", post.title, "待补投稿资料", 30),
+    field("作品描述", post.description, "待补投稿资料", 1000),
+    field("竖封面路径", cover?.path, "待选竖屏封面"),
+    field("4:3 横封面路径", cover?.wide_path, "待设计"),
+    field("自主声明", post.declaration, "待补投稿资料"),
+    h("div", {}, h("small", {}, "发布设置参考"), h("p", {}, post.publish_settings || "待补投稿资料")));
+}
+
+function portraitReleaseControls(c, s) {
+  const review = s.portrait_review;
+  if (c.has_cover_pool && !review.selected) {
+    return h("div", {class:"pool-selector-hint"}, h("a", {href:"#/" + c.slug + "/~covers"}, "到封面池选帧"));
+  }
+  const choices = h("div", {class: "portrait-cover-choices"});
+  const timing = review.first == null ? "尚无有效歌词" : "首句前保留 " + (review.released?.lead ?? 0.5) + " 秒 · 首句 " + fmt(review.first)
+    + " · 成品起点 " + fmt(review.released?.start ?? Math.max(0, review.first - 0.5));
+  const dialog = h("dialog", {class: "portrait-cover-dialog", "aria-label": "竖屏封面预览",
+    onclick: event => { if (event.target === dialog) dialog.close(); }});
+  function preview(url, label) {
+    dialog.setAttribute("aria-label", label);
+    dialog.replaceChildren(h("img", {src: url, alt: label}),
+      h("button", {class: "close-preview", "aria-label": "关闭预览", onclick: () => dialog.close()}, "×"));
+    dialog.showModal();
+  }
+  for (const cover of review.covers.filter(row => !c.has_cover_pool || row.file === review.selected)) {
+    const pick = h("button", {type:"button", class:"cover-check", "aria-pressed":String(review.selected === cover.file),
+      "aria-label":"选用封面 " + (cover.pool_frame ? "整场 " : "") + fmt(cover.time), title:"选用这张封面", onclick: async () => {
+        if (choices.dataset.busy) return;
+        choices.dataset.busy = "1";
+        try { const result = await api(`/api/concerts/${c.slug}/songs/${s.name}/vertical_cover`, {cover: cover.file}); s.douyin_cover = result.douyin_cover; }
+        catch (e) { toast(e.message, false); return; }
+        finally { delete choices.dataset.busy; }
+        review.selected = cover.file;
+        const summary = c.songs.find(item => item.name === s.name);
+        if (summary) {
+          summary.portrait_cover_selected = true;
+          summary.post_ready = Boolean(s.douyin_caption && s.douyin_cover);
+        }
+        if (state.song === s) {
+          document.querySelectorAll(".douyin-pane").forEach(pane => pane.replaceWith(douyinPane(s)));
+          if (tabs.children[1].getAttribute("aria-selected") === "true") select(1);
+          toast("已更新竖封面和 4:3 横封面");
+        }
+        if (state.concert === c) renderSidebar(parseRoute());
+        for (const option of choices.querySelectorAll(".cover-check")) {
+          option.setAttribute("aria-pressed", String(option === pick));
+        }
+      }}, "✓");
+    const button = h("button", {type:"button", class:"cover-preview", title:"放大预览",
+      onclick: () => preview(cover.url, "竖屏封面 " + (cover.pool_frame ? "整场 " : "") + fmt(cover.time))}, h("img", {src: cover.url, alt: "竖屏封面 " + (cover.pool_frame ? "整场 " : "") + fmt(cover.time), loading: "lazy"}),
+      h("span", {class:"cover-time"}, (cover.pool_frame ? "整场 " : "") + fmt(cover.time)));
+    choices.append(h("div", {class:"cover-choice"}, button, c.has_cover_pool ? null : pick));
+  }
+  const tabs = h("div", {class:"song-tabs", role:"tablist", "aria-label":"封面比例"});
+  const panel = h("div", {role:"tabpanel"});
+  const labels = ["竖封面3:4", "横封面4:3"];
+  function select(index) {
+    Array.from(tabs.children).forEach((button, i) => button.setAttribute("aria-selected", String(i === index)));
+    panel.setAttribute("aria-label", labels[index]);
+    if (index === 0) {
+      panel.replaceChildren(review.covers.length ? choices : h("p", {}, "暂无竖屏封面候选"));
+    } else if (s.douyin_cover?.wide_path) {
+      const name = s.douyin_cover.wide_path.split("/").pop();
+      const url = "/media/" + [c.slug, "songs", s.name, "vertical", name].map(encodeURIComponent).join("/");
+      panel.replaceChildren(h("button", {class:"wide-cover-preview", type:"button", title:"放大预览",
+        onclick: () => preview(url, labels[index])}, h("img", {src:url, alt:s.title + " 4:3 横封面"})));
+    } else {
+      panel.replaceChildren(h("p", {}, "暂无配套的 4:3 横封面"));
+    }
+  }
+  labels.forEach((label, index) => tabs.append(h("button", {type:"button", role:"tab", onclick: () => select(index)}, label)));
+  select(0);
+  return h("section", {class:"portrait-release-controls", "aria-label":"竖屏作品封面"}, tabs, panel, dialog,
+    review.revision ? h("div", {class:"toolbar"}, h("small", {}, timing)) : null,
+    c.has_cover_pool ? h("a", {href:"#/" + c.slug + "/~covers"}, "到整场封面池标记、分配封面") : null);
+}
+
+function coverDesignPane(c, s, bili) {
+  const raw = h("div", {class:"cover-design-gallery"});
+  const ai = h("div", {class:"cover-design-gallery ai-cover-gallery"});
+  const variants = Array.from({length:3}, ()=>h("div", {class:"cover-design-variants"}));
+  const aiSource = h("aside", {class:"ai-cover-source"});
+  const aiStatus = h("p", {class:"hint"});
+  const tabs = h("div", {class:"song-tabs", role:"tablist", "aria-label":"封面设计"});
+  const panels = [
+    h("section", {}, c.has_cover_pool ? h("a", {class:"btn mini", href:"#/"+c.slug+"/~covers"}, "打开整场封面池") : null, raw),
+    h("section", {}, h("div", {class:"ai-cover-workspace"}, aiSource, h("div", {class:"ai-cover-results"}, h("h4", {}, "生成结果"), aiStatus, ai))), h("section", {}, variants[0], bili),
+    h("section", {}, h("p", {class:"hint"}, "AI 母图直接加字 · 3:4 / 4:3"), variants[2]),
+    h("section", {}, variants[1], portraitReleaseControls(c, s))
+  ];
+  const labels = ["候选帧", "AI 生成", "B站封面", "抖音纯 AI 生成", "抖音旧模板生成"];
+  let loaded = false;
+  let loading = false;
+  async function loadImages() {
+    if (loaded || loading) return;
+    loading = true;
+    raw.replaceChildren(h("p", {class:"hint"}, "正在加载候选帧…"));
+    ai.replaceChildren(h("p", {class:"hint"}, "正在加载 AI 生成图…"));
+    try {
+      const data = await api("/api/concerts/"+c.slug+"/songs/"+s.name+"/cover_design");
+      function gallery(target, rows, empty, isFrame) {
+        target.replaceChildren(...(rows.length ? rows.map(row =>
+          h("button", {class:"cover-design-image", type:"button", title:"点击放大", onclick:()=>lightbox(row.url)},
+            row.ratio ? h("span", {class:"cover-ratio-label"}, (row.ratio === "3x4" ? "竖版 " : "横版 ") + row.ratio.replace("x", ":") + (row.dimensions ? " · " + row.dimensions.join(" × ") : "")) : null,
+            h("img", {src:row.status === "source_offline" ? undefined : row.url, alt:isFrame ? "候选帧 "+hms(row.t) : row.file, loading:"lazy"}),
+            h("span", {}, isFrame ? (SHOT[row.kind] || "画面")+" · 原片 "+hms(row.t)+" · "+(row.origins || []).join(" / ")+(row.status === "source_offline" ? " · 原片离线" : "") : (row.label || row.file).replace(/\.[^.]+$/, ""))))
+          : [h("p", {class:"hint"}, empty)]));
+      }
+      gallery(raw, data.frames, "暂无原片候选帧", true);
+      gallery(ai, data.generated, "暂无 AI 生成图", false);
+      aiStatus.textContent = (data.failed_candidates || []).map(row=>row.label+"："+row.reason).join("；");
+      aiStatus.hidden = !aiStatus.textContent;
+      const references = [...new Map(data.generated.filter(row=>row.reference_url).map(row=>[row.reference_url,row])).values()];
+      if (references.length) aiSource.replaceChildren(
+        h("h4", {}, "已选参考帧"),
+        ...references.map(reference=>h("button", {class:"cover-design-image", type:"button", onclick:()=>lightbox(reference.reference_url)},
+          h("img", {src:reference.reference_url, alt:"已选原片参考帧"}),
+          h("span", {}, (references.length > 1 ? reference.label+" · " : "原片 · ")+hms(reference.source_time)))),
+        h("p", {class:"hint"}, "Seedream · 点击图片放大"));
+      else aiSource.replaceChildren(h("h4", {}, "参考帧"), h("p", {class:"hint"}, "尚无已选参考帧"));
+      ["bili", "douyin", "douyin-ai"].forEach((platform, index)=>{
+        const rows = (data.variants || []).filter(row=>row.platform === platform);
+        variants[index].replaceChildren(...[...new Set(rows.map(row=>row.master))].map(master=>{
+          const grid = h("div", {class:"cover-design-gallery"});
+          gallery(grid, rows.filter(row=>row.master === master), "", false);
+          const name = data.generated.find(row=>row.file === master)?.label || "AI 母图试排";
+          const note = data.generated.find(row=>row.file === master)?.quality_note;
+          return h("section", {class:"cover-variant-group"}, h("h4", {}, name), note ? h("p", {class:"hint"}, note) : null, grid);
+        }));
+        if (!rows.length) variants[index].append(h("p", {class:"hint"}, "暂无预览"));
+      });
+      for (const panel of variants) panel.querySelectorAll("img").forEach(img=>{img.style.aspectRatio="auto";});
+      loaded = true;
+    } catch (error) {
+      for (const panel of [raw, ai]) panel.replaceChildren(h("p", {class:"hint"}, "加载失败："+error.message),
+        h("button", {class:"btn mini", onclick:loadImages}, "重试"));
+    } finally { loading = false; }
+  }
+  function select(index) {
+    panels.forEach((panel, i) => {
+      panel.hidden = i !== index;
+      tabs.children[i].setAttribute("aria-selected", String(i === index));
+      tabs.children[i].tabIndex = i === index ? 0 : -1;
+    });
+    loadImages();
+  }
+  labels.forEach((label, i) => {
+    const id = "cover-design-"+i;
+    panels[i].id = id;
+    panels[i].setAttribute("role", "tabpanel");
+    panels[i].setAttribute("aria-labelledby", id+"-tab");
+    tabs.append(h("button", {id:id+"-tab", type:"button", role:"tab", "aria-controls":id,
+      onclick:()=>select(i), onkeydown:event=>{
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === "Home" ? 0 : event.key === "End" ? 3 : (i + (event.key === "ArrowRight" ? 1 : 3)) % 4;
+        select(next); tabs.children[next].focus();
+      }}, label));
+  });
+  select(0);
+  return h("div", {class:"cover-design"}, tabs, ...panels);
+}
+
 async function viewSong(route) {
   const c = state.concert;
   const s = await api(`/api/concerts/${c.slug}/songs/${route.name}`);
+  if (parseRoute().slug !== route.slug || parseRoute().name !== route.name) return;
   state.song = s;
   document.title = "演唱会";
+  const artist = s.artist || c.info.artist;
+  const groupedSingle = c.slug.startsWith("artist_") || c.slug === "singles" || c.slug.startsWith("singles_");
+  const source = groupedSingle ? s.notes : c.info.title;
+  const version = /^official music video$/i.test(source || "") ? "官方 MV" : source;
+  const context = [artist && !version?.toLowerCase().startsWith(artist.toLowerCase()) ? artist : null, version]
+    .filter(Boolean).join(" · ");
   const head = h("div", { class: "card-head" },
-    h("div", { class: "card-title" }, s.title, h("small", {}, `${hms(s.start)} – ${hms(s.end)}（${fmt(s.end - s.start)}）`)),
+    h("div", {class:"source-specs", "aria-label":"原片规格"},
+      ...(s.source_format?.files || [s.source_format || {}]).map(file =>
+        h("div", {class:"source-file-specs"},
+          ...[["filename", "原始文件"], ["resolution", "原片分辨率"], ["fps", "原片帧率"], ["audio", "原片音频格式"]].map(([key, label]) => {
+            const value = (file[key] || "未知") + (key === "filename" && file.size_gb != null ? ` · ${file.size_gb} GB` : "");
+            return h("span", {class:"source-spec" + (key === "filename" ? " source-filename" : ""), title:label + " " + value}, value);
+          })))),
+    h("div", { class: "card-title" }, s.title, context ? h("small", {}, context) : null),
     h("div", { class: "spacer" }),
     ...(s.genius_urls || []).map((u, i) => h("a", { href: u, target: "_blank", rel: "noopener" }, s.genius_urls.length > 1 ? `歌词 ${i + 1}` : "Genius 歌词")));
   // 布局：上面 左 视频 / 右 歌词和翻译（跟着播放滚动）；中间 成品 + B 站投稿 JSON；下面 候选封面（没有成品时 JSON + 封面一行）
@@ -136,44 +500,189 @@ async function viewSong(route) {
   const covers = coverPane(s);
   // 歌词栏：逐句表格；视频上的字幕用诗意版（和成品一致），这首没有诗意版时用直译版
   const x = s.exp;
-  const lyricsPane = h("div", { class: "pane lyrics-pane" },
-    x ? expTable(x, player.video, player.offset, player.delay) : h("div", { class: "empty" }, "还没有字幕（refine 阶段）"));
   if (x && player.setAss) await player.setAss(x.ass_poetic || x.ass_literal || x.ass);
   // 注释入口放在歌名旁边：显示这首有几条注释，点开是列表
   const nNotes = x ? x.rows.filter((r) => r.note && !r.removed).length : 0;
   if (nNotes) head.querySelector(".card-title").append(
-    h("a", { class: "notes-link", href: "javascript:void 0", onclick: () => showNotes(x, player, s) }, `注释 ${nNotes}`));
-  // 还没有成品时：B 站投稿 JSON 和候选封面并排一行；有成品时成品 + JSON 一行，封面在下面
-  const side = player.finals && !player.finals.querySelector(".final-wrap");
-  if (side) player.finals.append(covers.el);
-  const card = h("div", { class: "card" }, head,
-    h("div", { class: "top" }, player.el, lyricsPane),
-    player.finals,
-    side ? null : h("div", { class: "bottom" }, covers.el));
+    h("a", { class: "notes-link", href: "javascript:void 0", onclick: () => { selectTab(0); watermarks.querySelector(".note-block").scrollIntoView({block:"nearest"}); } }, `注释 ${nNotes}`));
+  const portrait = s.vertical_preview;
+  const players = [];
+  let portraitPane, livePortrait;
+  if (s.browser_portrait) {
+    const live = livePortrait = browserPortrait({...s.browser_portrait, watermark:s.watermark});
+    player.addPeer?.(live.video);
+    players.push({video: live.video, offset: -s.browser_portrait.start, delay: () => 0,
+      start: s.browser_portrait.start});
+    state.cleanup.push(live.destroy);
+    portraitPane = live.el;
+  } else if (portrait) {
+    const portraitVideo = portrait ? h("video", {controls: true, playsinline: true, preload: "metadata",
+      src: portrait.url, "aria-label": s.title + "竖屏预览"}) : null;
+    if (portraitVideo) {
+      player.addPeer?.(portraitVideo);
+      players.push({video: portraitVideo, offset: -portrait.start, delay: () => 0,
+        start: portrait.start, end: portrait.start + portrait.duration});
+      state.cleanup.push(() => { portraitVideo.pause(); portraitVideo.removeAttribute("src"); portraitVideo.load(); });
+    }
+    portraitPane = h("div", {class: "pane portrait-player"},
+      portraitVideo, portraitVideo && formatLabel(portrait.format),
+      s.source_note ? h("small", {}, s.source_note) : null);
+  }
+  const originalPanes = [];
+  const originals = s.originals || (s.source_review && s.preview
+    ? [{key: "ts", label: "TS 原片片段", url: s.preview, format: s.preview_format, start: 0}] : []);
+  for (const source of originals) {
+    const shared = livePortrait && source.url === s.browser_portrait.url;
+    const video = shared ? livePortrait.video : source.url ? h("video", {src: source.url, controls: true, playsinline: true,
+      preload: "metadata", "aria-label": s.title + " " + source.label}) : null;
+    if (shared) {
+      video.classList.remove("browser-portrait-source");
+      video.classList.add("shared-review-source");
+      video.removeAttribute("aria-hidden");
+      video.setAttribute("aria-label", s.title + " 横竖同步预览");
+      video.controls = true;
+    }
+    if (video && !shared) {
+      player.addPeer?.(video);
+      // The old cut has a different clock: do not seek it with TS subtitle times.
+      if (source.key === "ts") players.push({video, offset: -source.start, delay: () => 0, start: source.start});
+      state.cleanup.push(() => { video.pause(); video.removeAttribute("src"); video.load(); });
+    }
+    const marks = (s.source_differences || []).map(difference => {
+      const [start, end] = difference[source.key];
+      return h("div", {class: "source-difference"},
+        h("button", {class: "btn mini", disabled: !video, onclick: () => {
+          video.currentTime = Math.max(0, start - source.start);
+          video.scrollIntoView({block: "nearest"});
+        }}, `${fmt(start)}–${fmt(end)}`), h("small", {}, difference.label));
+    });
+    let originalStage = video;
+    if (shared && x) {
+      if (s.browser_portrait.horizontal_caption_band) {
+        const band = horizontalCaptionBand(video, s.browser_portrait);
+        originalStage = band.el;
+        state.cleanup.push(band.destroy);
+      } else {
+        originalStage = h("div", {class:"stage"},video);
+        const ass = parseAss(await (await fetch(x.ass_poetic || x.ass_literal || x.ass, {cache:"no-store"})).text());
+        new SubOverlay(originalStage, video, ass, -source.start);
+      }
+    }
+    originalPanes.push(h("div", {class: "pane original-player"},
+      originalStage || h("div", {class: "empty"}, "原片播放文件准备中，稍后刷新"),
+      source.start ? h("small", {}, `此片段从单曲 ${fmt(source.start)} 开始`) : null,
+      marks.length ? h("small", {}, "差异核对窗口 · 单曲片段时间（点击跳转）") : null, marks));
+  }
+  let finishedVideos;
+  const comparisons = s.review_mode === "browser" ? [] : [
+    [s.portrait_nonts60, "非 TS 成品插帧 · 1080 × 1920 · 60 fps", s.portrait_review?.released?.start ?? 0, "vertical/compare-nonts-1080p60.mp4", s.portrait_nonts60_format],
+    [s.portrait_ts60, "TS 原片 · 1080 × 1920 · 60 fps", s.portrait_review?.released?.start ?? 0, "vertical/compare-ts-1080p60.mp4", s.portrait_ts60_format],
+    [s.portrait_60, "竖屏对比 · 720 × 1280 · 60 fps 插帧版", 0, "vertical/compare-720p60.mp4", s.portrait_60_format],
+  ];
+  for (const [src, title, start, file, format] of comparisons) {
+    if (!src) continue;
+    const video = h("video", {src, controls: true, playsinline: true, preload: "none",
+      class: "final-video portrait-comparison", "aria-label": title});
+    player.addPeer?.(video);
+    players.push({video, offset: -start, start, delay: () => 0});
+    state.cleanup.push(() => { video.pause(); video.removeAttribute("src"); video.load(); });
+    finishedVideos ??= h("div", {class: "portrait-comparisons"});
+    finishedVideos.append(h("div", {class: "final-wrap portrait-final"},
+      h("div", {class: "final-title"}, title), video, formatLabel(format), revealFinal(c, s, file)));
+  }
+  const released = s.portrait_review?.released;
+  let releasePane;
+  if (released) {
+    const video = h("video", {src: released.url, controls: true, playsinline: true, preload: "none",
+      poster: s.portrait_review.covers.find(c => c.file === released.cover)?.url,
+      class: "final-video portrait-comparison", "aria-label": "审核通过的竖屏成品"});
+    player.addPeer?.(video);
+    players.push({video, offset: -released.start, delay: () => 0, start: released.start,
+      end: s.slice ? s.slice[1] - s.slice[0] : undefined});
+    state.cleanup.push(() => { video.pause(); video.removeAttribute("src"); video.load(); });
+    releasePane = h("div", {class: "pane portrait-player"}, video, formatLabel(released.format), released.previous ? h("small", {}, "上一版成品") : null, revealFinal(c, s, "vertical/" + released.file));
+    if (s.originals) {
+      finishedVideos ??= h("div", {class:"portrait-comparisons"});
+      finishedVideos.append(releasePane);
+      releasePane = null;
+    }
+  }
+  const lyricsPane = targets => h("div", {class: "pane lyrics-pane"},
+    x ? expTable(x, targets) : h("div", {class: "empty"}, "还没有字幕（refine 阶段）"));
+  const reviewLyrics = lyricsPane(players);
+  const reviewPortrait = h("div", {class:"review-right"},
+    portraitPane || h("div", {class:"empty"}, "暂无竖屏预览"), releasePane);
+  const watermarks = h("div", {class:"review-notes preview-watermarks"}, watermarkPane(s), notesPane(s));
+  const horizontalGroup = h("div", {class:"review-horizontal-group"},
+    watermarks, h("div", {class:"review-horizontal-videos"}, ...originalPanes));
+  const reviewLeft = h("div", {class:"review-left"}, horizontalGroup, reviewLyrics);
+  const reviewPosting = h("div", {class:"review-posting"}, postingPane(s));
+  const reviewLayout = originalPanes.length
+    ? h("div", {class:"top stacked-review"}, reviewLeft, reviewPortrait, reviewPosting)
+    : h("div", {class:releasePane ? "top vertical-review with-release" : "top vertical-review"},
+        portraitPane || h("div", {class:"empty"}, "暂无竖屏预览"), releasePane, reviewLyrics, reviewPosting, watermarks);
+  const sections = [["字幕预览", h("section", {}, reviewLayout, finishedVideos)]];
+  sections.push(["产物", h("section", {}, productsPlaceholder(c, s))],
+    ["封面设计", h("section", {}, coverDesignPane(c, s, covers.el))]);
+  const panels = sections.map(([, panel]) => panel);
+  const tabs = h("div", {class: "song-tabs", role: "tablist", "aria-label": "单曲审核"});
+  function selectTab(index) {
+    state.activeReviewVideo = index === 0 ? players[0]?.video : null;
+    panels.forEach((panel, i) => {
+      panel.hidden = i !== index;
+      panel.setAttribute("role", "tabpanel");
+      tabs.children[i].setAttribute("aria-selected", String(i === index));
+      if (panel.hidden) panel.querySelectorAll("video").forEach(video => video.pause());
+    });
+  }
+  sections.forEach(([label], i) =>
+    tabs.append(h("button", {role: "tab", onclick: () => selectTab(i)}, label)));
+  if (parseRoute().slug !== route.slug || parseRoute().name !== route.name) return;
+  selectTab(0);
+  if (route.at != null && players[0]?.video) {
+    players[0].video.currentTime = Math.max(0, players[0].offset + route.at + players[0].delay());
+  }
+  const headerTools = h("div", {class:"review-header-tools"}, tabs, head.querySelector(".source-specs"));
+  headerTools.append(...head.childNodes);
+  head.append(headerTools);
+  const card = h("div", {class: "card"}, head, ...panels);
+  if (parseRoute().slug !== route.slug || parseRoute().name !== route.name) return;
   $("#view").replaceChildren(card);
+  if (originalPanes.length) {
+    const observer = new ResizeObserver(() => {
+      const height = reviewPortrait.getBoundingClientRect().height;
+      if (height > 0) {
+        reviewLeft.style.height = height + "px";
+        reviewPosting.style.maxHeight = height + "px";
+        watermarks.style.maxHeight = originalPanes[0].getBoundingClientRect().height + "px";
+      }
+    });
+    observer.observe(reviewPortrait);
+    state.cleanup.push(() => observer.disconnect());
+  }
+
 }
 
-// 所有顶部注释和对应原文（当前版本）：页面内弹层，点一条跳到那一句
-function showNotes(x, player, s) {
-  const rows = x ? x.rows.filter((r) => r.note && !r.removed) : [];
-  const close = () => { box.remove(); window.removeEventListener("keydown", onKey, true); };
-  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
-  const list = rows.length ? h("table", { class: "notes-list" },
-    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", {}, "原文"), h("th", {}, "中文"), h("th", {}, "注释"))),
-    h("tbody", {}, ...rows.map((r) => h("tr", { onclick: () => {
-      if (player.video) { player.video.currentTime = player.offset + r.start + player.delay(); player.video.play(); }
-      close();
-    } }, h("td", { class: "t" }, fmtMs(r.start_ms + Math.round((player.offset || 0) * 1000))), h("td", {}, r.text),
-      h("td", {}, r.zh2 || r.zh || ""), h("td", { class: "note" }, r.note)))))
-    : h("div", { class: "empty" }, "这首没有顶部注释");
-  const box = h("div", { class: "lightbox notes-box", onclick: (e) => { if (e.target === box) close(); } },
-    h("div", { class: "notes-panel" }, h("div", { class: "notes-title" }, `${s.title} · 顶部注释 ${rows.length} 条`,
-      h("button", { class: "lb-close", title: "关闭（Esc）", onclick: close }, "×")), list));
-  window.addEventListener("keydown", onKey, true);
-  document.body.append(box);
+function notesPane(song) {
+  const notes = (song.exp?.rows || []).filter(row => row.note && !row.removed && !row.watermark);
+  return h("section", {class:"post-info review-notes notes-only"},
+    h("section", {class:"note-block"}, h("h3", {}, "备注"),
+      song.notes ? h("p", {}, song.notes) : null,
+      ...notes.map(row => h("div", {}, h("strong", {}, `${fmt(row.start)} · ${row.text}`), h("p", {}, row.note))),
+      !song.notes && !notes.length ? h("p", {}, "暂无备注") : null));
 }
 
-// 看大图：页面内弹层（不开新标签页——审核页可能是独立窗口，新开的页没法关），× / Esc / 点图外面都能关
+function watermarkPane(song) {
+  const marks = song.watermark?.items || [];
+  const pct = value => `${Math.round(value * 100)}%`;
+  return h("section", {class:"watermark-block"}, h("h3", {}, "水印信息"),
+    marks.length ? h("p", {}, `宽度 ${pct(song.watermark.width ?? .12)} · 不透明度 ${pct(song.watermark.opacity ?? .6)}`) : null,
+    ...marks.map(mark => h("p", {}, `${fmt(mark.t)} – ${fmt(mark.t + mark.dur)}`,
+      h("br"), `距左 ${pct(mark.x)} · 距顶 ${pct(mark.y)}`,
+      h("br"), `淡入淡出各 ${mark.fade} 秒`)),
+    !marks.length ? h("p", {}, "暂无水印记录") : null);
+}
+
 function lightbox(src) {
   const close = () => { box.remove(); window.removeEventListener("keydown", onKey, true); };
   const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
@@ -200,8 +709,13 @@ function dlButton(attrs) {
 }
 
 function coverPane(s) {
+  if (state.concert.has_cover_pool) {
+    return { el: h("div", { class: "pane" }, h("div", { class: "section-label" }, "封面",
+      h("span", { class: "cover-selection-status" + (s.cover_selected ? " selected" : "") },
+        s.cover_selected ? "已选择" : "未选择"))) };
+  }
   const entry = s.review_entry || {};
-  const st = { chosen: entry.cover || null, ratio: "169" };
+  const st = { chosen: s.selected_cover_id || entry.cover || null, ratio: "169" };
   const box = h("div", { class: "covers" });
   const selectionStatus = h("span", { class: "cover-selection-status", role: "status", "aria-live": "polite" });
   const draw = () => {
@@ -255,34 +769,27 @@ function coverPane(s) {
         },
       }));
     };
-    // 排过序（cover_rank）：算法推荐 Top3 一组，其余按分数一组；没排过就照旧按景别平铺
-    const ranked = s.covers.some((x) => x.rank != null);
-    const groups = ranked
-      ? [["算法推荐 Top3", s.covers.filter((x) => x.rank <= 3)], ["其他（按分数）", s.covers.filter((x) => !(x.rank <= 3))]]
-      : [[null, s.covers]];
+    const groups = [];
+    const group = (label, rows) => { if (rows.length) groups.push([label, rows]); };
+    const original = s.covers.filter(x => !x.reconstructed);
+    const recommended = original.filter(x => x.rank != null && x.rank <= 3);
+    group("算法推荐 Top3", recommended);
+    const remaining = original.filter(x => !recommended.includes(x));
+    for (const kind of [...new Set(remaining.map(x => x.id.split("_")[0]))]) {
+      group(SHOT[kind] || "其他候选", remaining.filter(x => x.id.startsWith(kind + "_")));
+    }
+    group("重构版本", s.covers.filter(x => x.reconstructed));
     box.replaceChildren(...(s.covers.length ? groups.flatMap(([label, xs]) =>
       xs.length ? [label ? h("div", { class: "cover-group" }, label) : null, ...xs.map(card)].filter(Boolean) : [])
       : [h("div", { class: "placeholder" }, "还没有候选封面（package 阶段）")]));
   };
   draw();
-  const sw = h("div", { class: "seg" }, ...[["169", "16:9"], ["43", "4:3"]].map(([k, l]) =>
-    h("button", { class: k === st.ratio ? "on" : null, "data-k": k, onclick: () => {
+  const sw = h("div", { class: "seg", role:"tablist", "aria-label":"B站封面比例" }, ...[["43", "首页推荐封面（4:3）"], ["169", "个人空间封面（16:9）"]].map(([k, l]) =>
+    h("button", { class: k === st.ratio ? "on" : null, role:"tab", "aria-selected":String(k === st.ratio), "data-k": k, onclick: () => {
       st.ratio = k; draw();
-      sw.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.k === k));
+      sw.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b.dataset.k === k); b.setAttribute("aria-selected", String(b.dataset.k === k)); });
     } }, l)));
   return { el: h("div", { class: "pane" }, h("div", { class: "section-label" }, "候选封面（点选一张）", selectionStatus, sw), box), state: st };
-}
-
-// B 站投稿 JSON（post/bili_upload.json）：上传时原样提交的全部字段，只展示（要改走对话）
-function biliJson(s) {
-  const label = h("div", { class: "json-label" }, "B 站投稿 JSON（上传时原样提交，要改跟我说）");
-  const btn = h("button", { class: "btn mini", onclick: async (e) => {
-    e.preventDefault();
-    try { await navigator.clipboard.writeText(s.bili_upload); btn.textContent = "已复制"; } catch (err) { btn.textContent = "复制失败"; }
-    setTimeout(() => { btn.textContent = "复制"; }, 1500);
-  } }, "复制");
-  label.append(btn);
-  return h("div", { class: "bili-json" }, label, h("div", { class: "hint" }, s.bili_upload_path), h("pre", { class: "json-view" }, s.bili_upload));
 }
 
 async function videoPane(c, s, at) {
@@ -296,24 +803,11 @@ async function videoPane(c, s, at) {
   const seekAbs = (t) => { video.currentTime = Math.max(0, Math.min(clip1 - clip0, t - clip0)); };
   const subOffset = (s.slice ? s.slice[0] : s.start) - clip0;   // 字幕时间 0 = 切音频时的片段起点
   const edges = { start: s.start, end: s.end };
-  const video = h("video", { src: s.preview, controls: true, preload: "auto", playsinline: true,
+  const video = h("video", { src: s.preview, controls: true, preload: "none", playsinline: true,
     controlslist: "nofullscreen", disablepictureinpicture: true });
   // 左上角（logo_corner = right 时右上角）叠朝阳 Adele 的 logo（只是预览：和成品 render.py 一样的比例和位置——宽度约为画面的 10.25%、离画面内容左上角 15/3840；
   // 宽银幕片源上下有黑边，放在内容区域 s.box 里，不放在黑边上；不改视频文件，只是一张图片叠在播放器上）
-  const logo = h("img", { src: "adele-logo.png", class: "preview-logo", alt: "" });
-  const stage = h("div", { class: "stage" }, video, logo);
-  const placeLogo = () => {
-    const W = video.clientWidth, H = video.clientHeight;
-    const ar = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
-    const cw = Math.min(W, H * ar), ch = cw / ar;   // 画面按 contain 居中，算出实际画面区域
-    const x0 = (W - cw) / 2, y0 = (H - ch) / 2;
-    const b = s.box || { x: 0, y: 0, w: 1 };
-    // 片源左上角有台标的场次（logo_corner = right）放画面内容的右上角，离右边同样 15/3840
-    const lx = s.logo_corner === "right" ? x0 + cw * (b.x + b.w - 15 / 3840 - 0.1025) : x0 + cw * (b.x + 15 / 3840);
-    Object.assign(logo.style, { left: `${lx}px`, top: `${y0 + ch * (b.y + 15 / 2160)}px`, width: `${cw * 0.1025}px` });
-  };
-  new ResizeObserver(placeLogo).observe(video);
-  video.addEventListener("loadedmetadata", placeLogo);
+  const stage = h("div", {class:"stage"}, video);
   // 歌曲中间随机出现的半透明水印（预览）：按 watermark.json 的时间、位置淡入淡出
   const wm = s.watermark && s.watermark.items && s.watermark.items.length ? s.watermark : null;
   if (wm) {
@@ -362,8 +856,8 @@ async function videoPane(c, s, at) {
   applyLead();
   const el = h("div", { class: "pane" },
     // 字幕预览版：720p 预览视频 + 网页上叠字幕（只用来核字幕和边界，不是成品；成品 4K 在下面）
-    h("div", { class: "pane-title" }, "字幕预览版", h("span", { class: "pane-sub" }, "720p · 字幕叠加预览，用来核字幕和起止点")),
-    stage,
+    h("div", { class: "pane-title" }, "字幕预览版", h("span", { class: "pane-sub" }, "字幕叠加预览，用来核字幕和起止点")),
+    stage, formatLabel(s.preview_format),
     h("div", { class: "toolbar tight" },
       leadSwitch,
       h("div", { class: "spacer" }),
@@ -373,11 +867,11 @@ async function videoPane(c, s, at) {
   // 所有视频同时只播一个
   const players = [video];
   // 整行横跨页面，一行两列：成品视频 + 右边的 B 站投稿 JSON
-  const finals = (s.finals || []).length || s.bili_upload ? h("div", { class: "finals" }) : null;
+  const finals = (s.finals || []).length ? h("div", { class: "finals" }) : null;
   const solo = (v) => v.addEventListener("play", () => players.forEach((x) => x !== v && x.pause()));
   solo(video);
   for (const f of s.finals || []) {
-    const fin = h("video", { src: f.url, controls: true, preload: "metadata", playsinline: true, class: "final-video" });
+    const fin = h("video", { src: f.url, controls: true, preload: "none", playsinline: true, class: "final-video" });
     players.push(fin);
     solo(fin);
     // 成品在本机的完整路径：可以复制，或者直接在 Finder 里定位到这个文件
@@ -385,9 +879,7 @@ async function videoPane(c, s, at) {
       try { await navigator.clipboard.writeText(f.path); copyBtn.textContent = "已复制"; } catch (e) { copyBtn.textContent = "复制失败"; }
       setTimeout(() => { copyBtn.textContent = "复制路径"; }, 1500);
     } }, "复制路径");
-    const revealBtn = h("button", { class: "btn", onclick: () =>
-      fetch(`/api/concerts/${c.slug}/songs/${s.name}/reveal_final?file=${encodeURIComponent(f.file)}`, { method: "POST" }) },
-      "在 Finder 中显示");
+    const revealBtn = revealFinal(c, s, f.file);
     // 完整路径默认隐藏（长路径会折行，两列视频就对不齐了），点「显示路径」再展开
     const pathCode = h("code", { hidden: true }, f.path);
     const pathBtn = h("button", { class: "btn", onclick: () => {
@@ -395,9 +887,8 @@ async function videoPane(c, s, at) {
       pathBtn.textContent = pathCode.hidden ? "显示路径" : "隐藏路径";
     } }, "显示路径");
     finals.append(h("div", { class: "final-wrap" }, h("div", { class: "final-title" }, `成品 4K60 · ${f.label} · ${f.gb} GB（字幕和水印已烧进画面）`),
-      h("div", { class: "final-path" }, pathBtn, copyBtn, revealBtn, pathCode), fin));
+      h("div", { class: "final-path" }, pathBtn, copyBtn, revealBtn, pathCode), fin, formatLabel(f.format)));
   }
-  if (finals && s.bili_upload) finals.append(biliJson(s));   // 右边：B 站投稿 JSON
 
   // 加载字幕文件，叠在预览视频上
   const setAss = async (url) => {
@@ -407,7 +898,8 @@ async function videoPane(c, s, at) {
     else overlay = new SubOverlay(stage, video, ass, subOffset);
     applyLead();   // 里面会立即画一次（视频可能已经跳到位，暂停时不会再有 timeupdate）
   };
-  return { el, finals, video, offset: subOffset, setAss, delay: () => BAKED_LEAD - lead };
+  return { el, finals, video, offset: subOffset, setAss,
+    addPeer(peer) { players.push(peer); solo(peer); }, delay: () => BAKED_LEAD - lead };
 }
 
 // 逐句表格；每行时间怎么定的（几个来源投票）在「判定」的鼠标悬停说明里
@@ -417,15 +909,16 @@ const VERDICT = { ok: ["✓", "ok"], warn: ["黄", "warn"], bad: ["红", "bad"],
 const LANG = { en: ["🇬🇧", "英语"], es: ["🇪🇸", "西班牙语"], it: ["🇮🇹", "意大利语"], pt: ["🇵🇹", "葡萄牙语"], fr: ["🇫🇷", "法语"],
   ja: ["🇯🇵", "日语"], zh: ["🇨🇳", "中文"], ko: ["🇰🇷", "韩语"] };
 const flag = (l) => (LANG[l] ? LANG[l][0] : l || "");
-const langTd = (r) => h("td", { class: "lang", title: LANG[r.lang] ? LANG[r.lang][1] : r.lang || "" }, flag(r.lang));
+const langLabel = (r) => h("span", { class: "lang", title: LANG[r.lang] ? LANG[r.lang][1] : r.lang || "" }, flag(r.lang));
 // 唱法：唱 / 说唱 / 讲话（按音高稳定度 + 语速判断）
 const STYLE = { sing: ["唱", ""], rap: ["说唱", "rap"], speech: ["讲话", "speech"], crowd: ["观众合唱?", "crowd"],
   title: ["歌名歌手", ""], wm: ["水印", "wm"], crowd_ok: ["观众合唱", "crowd"], crowdseg: ["合唱检测", "crowdseg"] };
-const styleTd = (r) => h("td", { class: `style ${(STYLE[r.style] || ["", ""])[1]}`,
+const styleLabel = (r) => h("span", { class: `style ${(STYLE[r.style] || ["", ""])[1]}`,
   title: r.style === "crowd" ? `人声左右声道相关性比本首中位低 ${-r.steady}（观众合唱是现场环境话筒收的，左右差别大），而且没有很准地对上 Genius；估计，请审听`
     : r.steady != null ? `音高稳定度 ${r.steady}（唱歌停在音上，高；说唱 / 讲话音高一直在滑，低）` : "" },
   r.speech && r.verdict !== "title" ? "讲话" : (STYLE[r.style] || [""])[0]);
-function expTable(x, video, offset, delay = () => 0) {
+function expTable(x, players) {
+  const offset = players[0]?.offset || 0;
   const data = x.rows;
   // 直译版中文（只显示，不在页面上编辑：修改都通过对话由我改定稿表）：定稿 / 审校改过的标出来，顶部注释挂在下面
   const zh2Cell = (r) => {
@@ -443,16 +936,23 @@ function expTable(x, video, offset, delay = () => 0) {
   const rows = data.map((r) => h("tr", {
     class: [r.removed ? "removed" : "", r.speech ? "speech" : "", `v-${r.verdict}`].join(" ").trim(),
     onclick: () => {
-      if (!video || r.start_ms == null) return;
-      if (r.watermark) { video.pause(); video.currentTime = offset + (r.start + r.end) / 2; return; }   // 水印：停在 3 秒的正中间
-      video.currentTime = offset + r.start + delay(); video.play();
+      if (r.start_ms == null) return;
+      const active = players.find(p => p.video === state.activeReviewVideo) || players[0];
+      const coversTime = p => p?.video && !(r.start < p.start || r.start >= p.end);
+      const target = coversTime(active) ? active : players.find(coversTime);
+      if (!target) return;
+      activate(target);
+      if (r.watermark) { target.video.pause(); target.video.currentTime = target.offset + (r.start + r.end) / 2; return; }
+      target.video.currentTime = Math.max(0, target.offset + r.start + target.delay());
+      target.video.play().catch(error => { if (error.name !== "AbortError") toast(error.message, false); });
+
     },
   },
   // 时间按左边播放器的时间显示（预览视频比这首歌多留了开头，字幕时间 + offset 才和播放器对得上）
-  h("td", { class: "t", title: r.start_ms != null ? `歌曲内 ${fmtMs(r.start_ms)}` : "" },
-    r.start_ms != null ? fmtMs(r.start_ms + Math.round((offset || 0) * 1000)) : "–"),
-  langTd(r),
-  styleTd(r),
+  h("td", { class: "t timing-meta" },
+    h("span", {title: r.start_ms != null ? `歌曲内 ${fmtMs(r.start_ms)}` : ""},
+      r.start_ms != null ? fmtMs(r.start_ms + Math.round((offset || 0) * 1000)) : "–"),
+    langLabel(r), styleLabel(r)),
   h("td", { class: "g gcol" }, r.genius || (r.verdict === "title" || r.speech ? "" : h("span", { class: "none" }, "（Genius 没有）"))),
   h("td", { class: "heard" }, r.verdict === "title" ? h("span", { class: "none" }, r.strategy) : r.qwen || ""),
   h("td", { class: "o" }, r.text || h("span", { class: "none" }, "（没有字幕）"),
@@ -467,27 +967,37 @@ function expTable(x, video, offset, delay = () => 0) {
   h("td", { class: `vd ${VERDICT[r.verdict] ? VERDICT[r.verdict][1] : ""}`, title: r.strategy },
     (VERDICT[r.verdict] || [""])[0])));
   const wrap = h("div", { class: "table-wrap" }, h("table", { class: "lines-table exp-table" },
-    h("thead", {}, h("tr", {}, h("th", {}, "时间"), h("th", { class: "lang" }, "语言"), h("th", { class: "lang" }, "唱法"),
+    h("thead", {}, h("tr", {}, h("th", {title:"时间 / 语言 / 唱法"}, "时间"),
       h("th", { class: "gcol" }, "Genius 原句"), h("th", {}, M.asr),
       h("th", {}, "校准字幕"),
       ...(hasZh3 ? [h("th", { title: `诗意版：${x.zh3_model || ""}` }, "诗意版")] : []),
       h("th", { title: hasZh2 ? `翻译：${x.zh2_model || ""}` : "" }, hasZh3 ? "直译版" : "中文"),
       h("th", {}, "判定"))),
     h("tbody", {}, ...rows)));
-  if (video) {
-    let last = -1;
-    video.addEventListener("timeupdate", () => {
-      if (!wrap.isConnected) return;
-      const t = video.currentTime - offset - delay();   // 和画面上的字幕用同一个提前量
-      const i = data.findIndex((r) => !r.removed && !r.watermark && !r.crowdseg && t >= r.start && t < r.end);
-      if (i === last) return;
-      if (last >= 0) rows[last].classList.remove("now");
-      last = i;
-      if (i >= 0) {
-        rows[i].classList.add("now");
-        wrap.scrollTo({ top: rows[i].offsetTop - wrap.clientHeight / 2, behavior: "smooth" });
-      }
-    });
+  let last = -1;
+  function highlight(player) {
+    if (!wrap.isConnected || state.activeReviewVideo !== player.video) return;
+    const t = player.video.currentTime - player.offset - player.delay();
+    const i = data.findIndex(r => !r.removed && !r.watermark && !r.crowdseg && t >= r.start && t < r.end);
+    if (i === last) return;
+    if (last >= 0) rows[last].classList.remove("now");
+    last = i;
+    if (i >= 0) {
+      rows[i].classList.add("now");
+      wrap.scrollTo({top: rows[i].offsetTop - wrap.clientHeight / 2, behavior: "smooth"});
+    }
+  }
+  function activate(player) {
+    state.activeReviewVideo = player.video;
+    for (const other of players) if (other !== player) other.video?.pause();
+    highlight(player);
+  }
+  for (const player of players) {
+    if (!player.video) continue;
+    player.video.addEventListener("play", () => activate(player));
+    player.video.addEventListener("pointerdown", () => activate(player));
+    player.video.addEventListener("focus", () => activate(player));
+    player.video.addEventListener("timeupdate", () => highlight(player));
   }
   const n = (v) => data.filter((r) => r.verdict === v).length;
   const p = x.profile;
@@ -520,54 +1030,80 @@ const fmtMs = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) 
 // ---------------------------------------------------------------- 封面池（整场挑封面）
 
 // 整场演唱会挑出来的画面（workflow/live/cover_pool.py）：点一下标记「适合做封面」，再点取消；
-// 标记完跟我说，我把标记的画面随机分给这次要做的歌（cover_pool assign），每首按歌名排好 16:9 + 4:3 存成封面
+// 标记完跟我说，我把标记的画面随机分给这次要做的歌（cover_pool assign），每首按当前歌名排好 3:4 竖封面和同帧 4:3 横封面 存成封面
 async function viewCoverPool(route) {
   const c = state.concert;
   document.title = "演唱会";
-  const { frames, songs, selected = [] } = await api(`/api/concerts/${c.slug}/cover_pool`);
+  const { frames, songs, selected = [], quality_stage } = await api(`/api/concerts/${c.slug}/cover_pool`);
   const titleOf = Object.fromEntries(c.songs.map((s) => [s.name, s.title]));
   const st = { kind: "all" };
   const kindBar = h("div", { class: "seg" });
   const count = h("span", { class: "hint" });
-  const grid = h("div", { class: "covers pool" });
+  const grid = h("div", { class: "covers pool raw-pool-grid" });
   const upd = () => {
     const n = frames.filter((f) => f.marked).length;
-    count.textContent = `已标记 ${n} 张 · 这次要做 ${songs.length} 首：${songs.join("、")}`;
+    count.textContent = `共 ${frames.length} 张合格原片候选 · 已标记 ${n} 张 · 待分配 ${songs.length} 首${["checking", "extracting"].includes(quality_stage) ? " · 正在筛选补充" : ""}`;
   };
-  const card = (f) => {
-    const el = h("button", { class: `cover${f.marked ? " on" : ""}`, title: "点一下标记 / 取消（双击看大图）",
-      ondblclick: () => lightbox(f.url),
-      onclick: async () => {
-        try {
-          await api(`/api/concerts/${c.slug}/cover_pool/mark`, { file: f.file, on: !f.marked });
-          f.marked = !f.marked;
-          el.classList.toggle("on", f.marked);
-          mark.hidden = !f.marked;
-          upd();
-        } catch (err) { toast(`标记失败：${err.message || err}`, false); }
-      } },
-      h("img", { src: f.url, loading: "lazy" }),
-      h("span", { class: "ct" }, `${f.score != null ? `${f.score} 分 · ` : ""}${SHOT[f.kind] || ""} ${hms(f.t)}${f.song ? ` · ${titleOf[f.song] || f.song}` : ""}`));
-    if (f.why) el.title = `${f.why}（点一下标记 / 取消，双击看大图）`;
-    const mark = h("span", { class: "pick", hidden: !f.marked }, "已标记");
-    el.append(mark);
-    return el;
-  };
+  const dialog = h("dialog", {class:"pool-frame-dialog", "aria-label":"原片候选帧放大",
+    onclick:event=>{if(event.target===dialog)dialog.close();}});
+  const buttons = new Map();
+  async function toggle(f) {
+    if(f.busy)return;
+    f.busy=true;
+    try {
+      await api(`/api/concerts/${c.slug}/cover_pool/mark`, {file:f.file,on:!f.marked});
+      f.marked=!f.marked;
+      for(const button of buttons.get(f.file)||[]) {
+        button.setAttribute("aria-pressed",String(f.marked));
+        button.textContent=f.marked?"✓":"选定";
+        button.closest(".pool-frame-card")?.classList.toggle("on",f.marked);
+      }
+      upd();
+    } catch(err) {toast(`标记失败：${err.message||err}`,false);}
+    finally {f.busy=false;}
+  }
+  function pickButton(f) {
+    const button=h("button",{type:"button",class:"pool-frame-pick","aria-label":"选定原片帧 "+hms(f.t),
+      "aria-pressed":String(f.marked),onclick:event=>{event.stopPropagation();toggle(f);}},f.marked?"✓":"选定");
+    if(!buttons.has(f.file))buttons.set(f.file,[]);
+    buttons.get(f.file).push(button);return button;
+  }
+  function enlarge(f) {
+    dialog.replaceChildren(h("img",{src:f.url,alt:"原片候选帧 "+hms(f.t)}),pickButton(f),
+      h("button",{type:"button",class:"pool-frame-close","aria-label":"关闭放大",onclick:()=>dialog.close()},"×"));
+    dialog.showModal();
+  }
+  const card = f => h("div",{class:`cover pool-frame-card${f.marked?" on":""}`,onclick:()=>enlarge(f)},
+    h("button",{type:"button",class:"pool-frame-image",title:f.why||"点击放大原片帧"},
+      h("img",{src:f.url,alt:"原片候选帧 "+hms(f.t),loading:"lazy"})),
+    h("span",{class:"ct"},hms(f.t)),pickButton(f));
   const draw = () => {
     kindBar.replaceChildren(...[["all", "全部"], ["closeup", "特写"], ["half", "半身"], ["scene", "舞台"]].map(([k, l]) =>
       h("button", { class: k === st.kind ? "on" : null, onclick: () => { st.kind = k; draw(); } }, l)));
     const xs = frames.filter((f) => st.kind === "all" || f.kind === st.kind);
     grid.replaceChildren(...(xs.length ? xs.map(card)
-      : [h("div", { class: "placeholder" }, frames.length ? "这一类没有画面" : "封面池还在生成")]));
+      : [h("div", { class: "placeholder" }, frames.length ? "这一类没有画面" : "这场演唱会还没有可挑选的画面")]));
   };
   // 标记完成：标记的画面随机分给要做的歌，每首按歌名排好存成封面；结果列在按钮下面
-  const result = h("div", { class: "covers pool" });
+  const result = h("div", { class: "covers pool selected-portrait-pool" });
   const selectedLabel = h("div", { class: "section-label" });
+  const ratioTabs = h("div", {class:"song-tabs",role:"tablist","aria-label":"已选封面比例"});
+  let selectedRows = selected;
+  let wide = false;
   const showSelected = (rows) => {
+    selectedRows = rows;
+    selectedLabel.hidden = ratioTabs.hidden = result.hidden = !rows.length;
     selectedLabel.textContent = `已选封面（${rows.length}首）`;
-    result.replaceChildren(...rows.map((x) => h("button", { class: "cover", title: `${x.title}（双击看大图）`,
-      ondblclick: () => lightbox(x.file) }, h("img", { src: x.file }), h("span", { class: "ct" }, x.title))));
+    result.classList.toggle("r43", wide);
+    Array.from(ratioTabs.children).forEach((tab, i) => tab.setAttribute("aria-selected", String(Boolean(i) === wide)));
+    result.replaceChildren(...rows.filter(x => !wide || x.file_4x3).map(x => {
+      const url = wide ? x.file_4x3 : x.file;
+      return h("button", {class:"cover", title:x.title, onclick:() => lightbox(url)},
+        h("img", {src:url, alt:x.title, loading:"lazy"}), h("span", {class:"ct"}, x.title));
+    }));
   };
+  ["竖封面3:4", "横封面4:3"].forEach((label, i) => ratioTabs.append(h("button", {type:"button", role:"tab",
+    onclick:() => { wide = Boolean(i); showSelected(selectedRows); }}, label)));
   showSelected(selected);
   const done = h("button", { class: "btn ok", onclick: async () => {
     if (done.disabled) return;
@@ -580,16 +1116,16 @@ async function viewCoverPool(route) {
       toast(`已分配 ${r.songs.length} 首的封面`);
     } catch (err) { toast(`分配失败：${err.message || err}`, false); }
     done.disabled = false;
-    done.textContent = "标记完成，分配封面";
-  } }, "标记完成，分配封面");
+    done.textContent = "标记完成";
+  } }, "标记完成");
   draw();
   upd();
   $("#view").replaceChildren(h("div", { class: "card" },
     h("div", { class: "card-head" }, h("div", { class: "card-title" }, "封面池",
-      h("small", {}, `整场挑出 ${frames.length} 张画面；点选适合做封面的，标记完点「标记完成」，随机分给要做的歌`))),
-    h("div", { class: "pool-body" }, h("div", { class: "pool-head" }, count, kindBar), grid,
-      h("div", { class: "actions" }, done, h("span", { class: "hint" }, "每首随机分一张标记的画面，按歌名排好 16:9 + 4:3 存成封面；可以重复点，重新随机")),
-      selectedLabel, result)));
+      h("small", {}, `整场挑出 ${frames.length} 张画面；点击图片放大，右上角选定；标记完成后分配到各首歌曲`))),
+    h("div", { class: "pool-body" }, h("div", { class: "pool-head" }, count, kindBar),
+      h("div", { class: "actions" }, done, h("span", { class: "hint" }, "从已标记的原片帧分配封面，按各曲歌名生成 3:4 竖封面和同帧 4:3 横封面")),
+      grid, selectedLabel, ratioTabs, result, dialog)));
 }
 
 // ---------------------------------------------------------------- 路由
@@ -597,12 +1133,15 @@ async function viewCoverPool(route) {
 function parseRoute() {
   const [slug, rest] = location.hash.replace(/^#\/?/, "").split("/");
   const [name, at] = (rest ? decodeURIComponent(rest) : "").split("@");
-  return { slug: slug || (state.concerts[0] || {}).slug, name: name || null, at: at ? +at : null };
+  const group = state.concerts.find(x => x.aliases?.includes(slug));
+  return { slug: group?.slug || slug || (state.concerts[0] || {}).slug, name: name || null, at: at ? +at : null };
 }
 
 async function refreshConcert(slug) {
   slug = slug || state.concert.slug;
-  state.concert = await api(`/api/concerts/${slug}`);
+  const concert = await api(`/api/concerts/${slug}`);
+  if (parseRoute().slug !== slug) return;
+  state.concert = concert;
   renderSidebar(parseRoute());
 }
 
@@ -610,14 +1149,25 @@ async function render() {
   state.cleanup.forEach((f) => f());
   state.cleanup = [];
   if (state.video) { state.video.pause(); state.video.removeAttribute("src"); state.video.load(); state.video = null; }
+  state.activeReviewVideo = null;
   const route = parseRoute();
-  $("#sidebar").classList.remove("open");
+  if (route.name) $("#sidebar").classList.remove("open");
   if (!route.slug) { $("#view").replaceChildren(h("div", { class: "empty" }, "concerts/ 下还没有场次")); return; }
   try {
+    const requestedHash = location.hash;
     await refreshConcert(route.slug);
+    if (location.hash !== requestedHash) return;
+    if (route.name === "~covers" && !state.concert.has_cover_pool) route.name = null;
     if (route.name === "~covers") await viewCoverPool(route);
     else if (route.name) await viewSong(route);
-    else viewOverview();
+    else {
+      const first = state.concert.songs[0];
+      if (!first) { $("#view").replaceChildren(h("div", {class:"empty"}, "这场还没有歌曲")); return; }
+      route.name = first.name;
+      history.replaceState(null, "", `#/${route.slug}/${route.name}`);
+      renderSidebar(route);
+      await viewSong(route);
+    }
   } catch (err) {
     $("#view").replaceChildren(h("div", { class: "empty" }, `加载失败：${err.message}`));
   }
@@ -629,40 +1179,21 @@ function toggleFullscreen(el) {
   else if (el && el.requestFullscreen) el.requestFullscreen();
 }
 
-// 侧边栏：刷新后默认打开；展开后 10 分钟自动收起（鼠标停在侧边栏上时不收，移开后重新计时）
-const SIDE_AUTO_CLOSE = 10 * 60 * 1000;
-let sideTimer = null;
-function armSideClose() {
-  clearTimeout(sideTimer);
-  sideTimer = setTimeout(() => {
-    if (!$("#sidebar").matches(":hover")) setCollapsed(true);
-  }, SIDE_AUTO_CLOSE);
-}
-function setCollapsed(v) {
-  $("#app").classList.toggle("collapsed", v);
-  if (v) clearTimeout(sideTimer);
-  else armSideClose();
-}
-setCollapsed(false);
-$("#sidebar").addEventListener("mouseleave", () => { if (!$("#app").classList.contains("collapsed")) armSideClose(); });
-$("#side-toggle").addEventListener("click", () => { setCollapsed(true); $("#sidebar").classList.remove("open"); });
-$("#menu").addEventListener("click", () => {
-  if (window.innerWidth <= 720) $("#sidebar").classList.toggle("open");
-  else setCollapsed(false);
-});
+$("#menu").addEventListener("click", () => $("#sidebar").classList.toggle("open"));
 // 快捷键在最外层（捕获阶段）统一处理：空格只做播放/暂停——不让浏览器翻页，也不和视频自带的空格、
 // 刚点过的按钮（焦点还在按钮上，空格会再点一次）重复触发
 window.addEventListener("keydown", (e) => {
+  if (document.querySelector(".portrait-cover-dialog[open]")) return;
   const tag = (e.target && e.target.tagName) || "";
   if (/INPUT|TEXTAREA|SELECT/.test(tag) || e.metaKey || e.ctrlKey || e.altKey) return;
-  const v = state.video;
-  if (!v) return;
+  const v = state.activeReviewVideo || state.video;
+  if (!v || v.closest("[hidden]") || e.target.closest?.(".song-tabs")) return;
   if (e.code === "Space" || e.key === " ") {
     e.preventDefault();
     e.stopPropagation();
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     if (!e.repeat) (v.paused ? v.play() : v.pause());
-  } else if (e.key === "f" || e.key === "F") toggleFullscreen(v.closest(".stage"));
+  } else if (e.key === "f" || e.key === "F") toggleFullscreen(v.closest(".stage") || v);
 }, true);
 window.addEventListener("hashchange", render);
 

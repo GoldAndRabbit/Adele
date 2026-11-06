@@ -9,7 +9,7 @@
     第 4 步 润色（表现力）→ 中文 v2（直译版）
     顶部注释（「原词：解释」）：单独的选注释词流程 song_note_workflow，在审校之后跑
     第 5 步 审校：另一次独立调用挑错；发现的问题（包括意思上的）自动改
-    第 6 步 定稿：你定稿的句子替换、纯语气词留空、去句号、歌词加 ♪
+    第 6 步 定稿：你定稿的句子替换、纯语气词留空、去句号、中文字幕不加音乐符号
     第 7 步 歌名：整首翻完再定，和歌词里同一个词的译法一致
     第 8 步 诗意版（中文 v3，deepseek-v4-pro）：成品和审核页视频默认烧这一版；你定稿的句子照样替换
     输出：subs/lyrics.ass（中文 v1）、subs/lyrics_literal.ass（中文 v2），两份都带片头歌名署名和顶部注释；
@@ -502,6 +502,7 @@ def finalize(d, units):
 def build_outputs(d, out_dir):
     import pysubs2
     from translate_ass import CJK_FONT, build_ass
+    from workflow.subtitle_spelling import display_english
     tdir = out_dir / "translation"
     res = json.loads((tdir / "result.json").read_text())
     from .title_translation import apply as apply_title
@@ -530,14 +531,14 @@ def build_outputs(d, out_dir):
     for ver, key, fname in vers:
         subs = pysubs2.SSAFile()
         for u in lyr:
-            subs.events.append(pysubs2.SSAEvent(start=u["start"], end=u["end"], text=u["orig"]))
+            subs.events.append(pysubs2.SSAEvent(start=u["start"], end=u["end"], text=display_english(u["orig"])))
         ass = build_ass(subs, [u[key] for u in lyr], res.get("title"), 6000, "bzrp", res.get("title_zh"),
                         sp[0]["start"] if sp else None)
         sty = ass.styles["Default"].copy()
         sty.primarycolor = pysubs2.Color(255, 214, 102)
         ass.styles["Speech"] = sty
         for u in sp:
-            text = u["orig"] + (r" \N" + u[key] if u[key] and u[key] != u["orig"] else "")
+            text = display_english(u["orig"]) + (r" \N" + u[key] if u[key] and u[key] != u["orig"] else "")
             ass.events.append(pysubs2.SSAEvent(start=u["start"], end=u["end"], text=text, style="Speech"))
         # 顶部注释「原词：解释」：浅绿色半透明小字、没有描边和底色、顶住画面上边缘居中；跟着对应那句，至少 4 s
         note = ass.styles["Default"].copy()

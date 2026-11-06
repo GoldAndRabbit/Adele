@@ -88,12 +88,14 @@ def speech_spans(d):
 
 
 def run_song(slug, name):
-    from workflow.live.paths import Concert, read_json
+    from workflow.live.paths import Concert, read_json, subtitle_video
     c = Concert(slug)
-    d = c.song_dir(c.item(name))
+    item = c.item(name)
+    d = c.song_dir(item)
     info = read_json(d / "song.json", {})
-    sl, pv = info.get("slice") or [0, 0], info.get("preview") or [0, 0]
-    out = plan(name, sl[1] - sl[0], d / "preview.mp4", sl[0] - pv[0], speech_spans(d), content_box(d), logo_corner(d))
+    start, end = info.get("slice") or [0, 0]
+    video, offset = subtitle_video(c, item, info)
+    out = plan(name, end - start, video, offset, speech_spans(d), content_box(d), logo_corner(d))
     (d / "watermark.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
     print(name, [(x["t"], x["x"], x["y"]) for x in out["items"]])
 

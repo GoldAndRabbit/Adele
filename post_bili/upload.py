@@ -32,6 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 BILIUP = ROOT / "bin" / "biliup"
 COOKIES = ROOT / "post_bili" / "cookies.json"
 
@@ -199,6 +200,8 @@ def dtime_of(at):
 def generate(d, a):
     """从投稿草稿、成品、封面和 DEFAULTS 拼出完整的投稿内容（bili_upload.json 的格式）。"""
     post, source, names = load_post(d)
+    from workflow.bili_title import for_post
+    post = {**post, "title": for_post(d, post)}
     video = d / "post" / f"{d.name} 4K60FPS Sub-WaterMark.mp4"
     cover = Path(a.cover).resolve() if a.cover else picked_cover(d, post)
     rel = lambda p: path_label(p) if p else None
@@ -417,6 +420,13 @@ def main():
         print(f"已有 {path_label(jf)}，按它检查（要按草稿重新生成加 --rebuild）")
     f = from_page(read_json(jf))
     spec, errors = check(f)
+    policy = read_json(d / "metadata_policy.json")
+    if policy is not None:
+        if __package__:
+            from .metadata_quality import issues
+        else:
+            from metadata_quality import issues
+        errors.extend(issues(f, policy))
     show(d, f, spec, errors)
     if errors:
         sys.exit(1)

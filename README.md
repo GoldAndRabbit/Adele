@@ -3,6 +3,36 @@
 给一首歌的视频，或者一整场演唱会，产出 B 站投稿用的整套素材：4K60 成品视频（双语字幕 + logo / 水印 + FLAC Hi-Res）、
 16:9 / 4:3 封面、投稿标题 / 简介 / 标签。演唱会先在审核网页上逐首人工审核，通过的才出 4K。
 
+## 演唱会竖屏预览
+
+完整流程、封面审核和首句前 0.5 秒截取见 [竖屏工作流](vertical_workflow.md)。
+
+AI 封面默认遵循 [AI 封面选帧策略 v1](docs/design/ai_cover_frame_selection.md)：全曲粗扫、不同构图优先、横竖裁切复核，首轮三个参考各生成一张，选定构图后再调风格。接入与缓存规则见 [Seedream 试跑](docs/design/seedream_cover_trial.md)。
+
+实时预览使用单曲原片，由浏览器绘制模糊背景、标题、字幕及下沿渐变，共用原片解码和音轨，不烧录预览文件。字体和颜色统一读取 `workflow/portrait_style.json`；当前片头为英文歌名、中文歌名、英文歌手、中文年份场次，字幕中英文均为纯白，备注为无描边荧光绿。
+
+## 共享一次插帧的双平台成品
+
+完整方案见 [双平台 60fps 工作流](dual_platform_60fps_workflow.md)。当前已验证入口针对 TS 1080i25：去隔行得到50fps，苹果质量优先插帧到60fps，共享母版分别合成 B站4K60、抖音1080p60。最终编码直接引用 `workflow.song.render` 的苹果 HEVC 默认参数，保留首句前0.5秒与完整演出尾段。结果位于字幕预览右侧「产物」，显示单次阶段耗时。
+
+```bash
+.venv/bin/python -m workflow.dual_platform grammys_2014 01_drunk_in_love
+# 显式增加已检查的 AI 封面计划（凭据从进程环境读取）
+.venv/bin/python -m workflow.dual_platform grammys_2014 01_drunk_in_love --covers-only --ai-cover-plan concerts/grammys_2014/songs/01_drunk_in_love/covers/ai/seedream-plan.json
+```
+
+AI 母图派生 B站16:9/4:3、抖音3:4/4:3，另保留抖音旧模板对照；失败不自动重试。`delivery_bundle.json` 汇总成品、投稿文案、AI候选及待处理事项。生成不代替人工选封面，也不自动发布。
+
+## 竖屏歌词气泡预览
+
+独立模块位于 [`lyrics_rolling_video/`](lyrics_rolling_video/README.md)，包含词级对齐、透视歌词气泡动画、本地有声预览和 MP4 导出。
+
+```bash
+python3 lyrics_rolling_video/serve.py
+```
+
+打开 http://127.0.0.1:8765/；首次准备音频、端口冲突和重新生成步骤见模块 README。
+
 ## 项目结构
 
 ```
@@ -37,6 +67,7 @@ adele/
 ├── post_bili/               B 站投稿：upload.py（检查 → --submit 上传）、install.sh（装 bin/biliup），见 post_bili/README.md
 ├── server/app.py             审核页后端（FastAPI，:8160）
 ├── web/                      审核页前端（纯 JS：app.js  subs.js  style.css）
+├── lyrics_rolling_video/     竖屏歌词气泡：对齐 / 本地预览 / MP4 导出，见该目录 README
 ├── tests/                    回归检查（审核时指出过的问题）
 ├── docs/design/              方案文档
 ├── skills/song-mv/           Claude Code skill（单曲流程说明）
@@ -174,9 +205,20 @@ bin/biliup -u post_bili/cookies.json login
 
 ### 外接工作盘
 
-本机可用 `external_storage.json` 启用外接存储（`root` 指向外接盘专用目录，`enabled: true`）。
-`Song.mkdirs()` 创建新单曲时会在外接盘 `posts/<name>` 建目录，并保留项目内同名软链接；已有本机作业保持原位置。
+本机通过 `external_storage.json` 配置归档目录。`processing: local` 使新单曲的工作目录保留在内置盘。
 工作盘未挂载或只读时会报错，避免把外接目录误写回内置磁盘。迁移已有作业应在其未运行时复制、校验后切换软链接。
-本机 AAGold 专用目录为 `/Volumes/AAGold/adele-workflow`；使用后先安全卸载再拔线。
+本机归档盘为 `harddisk_5T`，输入素材和成片存入 `/Volumes/harddisk_5T/adele-workflow`。抽帧、插帧、临时文件和编码使用内置盘。归档前校验卷 UUID，复制并校验文件后才替换本地路径。
 
-当前批处理的插帧缓存采用本机小窗口暂存、SHA-256 校验后持续转存到外接盘 `cache/frame-spill/`；本机路径保留软链接。未转存帧积压约 2 GiB 时暂停生产帧，转存跟上后恢复。当前 NTFS/FUSE-T 挂载曾出现原生程序直接写入空帧，因此不直接让 RIFE 输出到该挂载。成片通过校验后归档外接盘。
+### YouTube 原片下载
+
+音乐视频下载和补源统一使用 `workflow/youtube_download.py`。下载前检查本机 bgutil 的 `/ping` 和插件版本，必要时启动服务。多个任务共用同一服务。视频和元数据查询使用同一组播放器客户端（`default,mweb`）、代理和指定的浏览器会话。PO Token 由插件按请求获取，不写入项目配置。
+
+本机服务入口默认是 `../SubDub/tools/bgutil-pot/server/build/main.js`，可用 `ADELE_BGUTIL_SERVER_DIR` 指向另一份已编译、版本与插件一致的 server 目录。需要 Node；启动时只监听本机 4416 端口。重启电脑后，下一次下载会重新检查并按需拉起服务。
+
+仅下载原片（使用本机代理和已授权的 Chrome 会话）：
+
+```sh
+.venv/bin/python workflow/make_mv.py --name SONG --url 'YOUTUBE_URL' --to download --proxy http://127.0.0.1:7890 --cookies-from-browser chrome
+```
+
+新增补源脚本应通过 `cli_args(url, proxy=..., browser=...)` 构建会话参数，媒体输出、断点和校验由调用方管理。Python 版 yt-dlp 可使用同模块的 `extractor_options(url)`。服务健康只表示本机提供器可用；统计完成数仍以实际下载的音轨、视频轨和时长为准。

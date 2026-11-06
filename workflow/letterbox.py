@@ -9,6 +9,8 @@
 """
 
 import json
+import os
+import shutil
 import re
 import subprocess
 import sys
@@ -19,8 +21,16 @@ SAMPLES = 6        # 歌曲里均匀取几段，每段 10 s
 MIN_BAR = 0.02     # 黑边小于画面 2% 当作没有（压缩噪声、片源本身的细边）
 
 
+def _media_tool(name):
+    search = os.pathsep.join((os.environ.get("PATH", ""), "/opt/homebrew/bin", "/usr/local/bin"))
+    path = shutil.which(name, path=search)
+    if not path:
+        raise FileNotFoundError(f"找不到媒体工具 {name}")
+    return path
+
+
 def _duration(video):
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
+    out = subprocess.run([_media_tool("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
                          capture_output=True, text=True).stdout.strip()
     return float(out or 0)
 
@@ -30,13 +40,13 @@ def detect(video, t0=None, t1=None):
     t0 / t1：只看这一段（整场演唱会里的一首）。"""
     t0 = t0 or 0.0
     dur = (t1 if t1 is not None else _duration(video)) - t0
-    size = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+    size = subprocess.run([_media_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
                            "-of", "csv=p=0", str(video)], capture_output=True, text=True).stdout.strip().split(",")
     W, H = int(size[0]), int(size[1])
     boxes = []
     for k in range(SAMPLES):
         t = t0 + dur * (k + 0.5) / SAMPLES
-        err = subprocess.run(["ffmpeg", "-hide_banner", "-ss", f"{max(0, t - 5):.2f}", "-i", str(video), "-t", "10",
+        err = subprocess.run([_media_tool("ffmpeg"), "-hide_banner", "-ss", f"{max(0, t - 5):.2f}", "-i", str(video), "-t", "10",
                               "-vf", "fps=2,cropdetect=limit=24:round=2:reset=0", "-f", "null", "-"],
                              capture_output=True, text=True).stderr
         m = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", err)

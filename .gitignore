@@ -26,3 +26,8 @@ bin/biliup
 /external_storage
 /external_storage.json
 /server/review_server.log
+
+# 本地队列、耗时记录、媒体与调试产物
+/work/
+/lyrics_rolling_video/alignment.json
+/lyrics_rolling_video/config.json

@@ -17,6 +17,7 @@ import json
 import math
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -1008,20 +1009,28 @@ def crop_ratio(img, ratio):
     return img.crop((x, 0, x + w, img.height))
 
 
-_DET = None
+_face_detectors = threading.local()
+
+
+def detect_cover_faces(image, width):
+    import cv2
+    height = round(width * image.height / image.width)
+    detector = getattr(_face_detectors, "detector", None)
+    if detector is None:
+        detector = cv2.FaceDetectorYN.create(str(YUNET), "", (width, height), .75, .3, 50)
+        _face_detectors.detector = detector
+    detector.setInputSize((width, height))
+    small = np.asarray(image.convert("RGB").resize((width, height)))
+    _, faces = detector.detect(small[:, :, ::-1].copy())
+    return faces
 
 
 def crop_window(img, ratio):
     """crop_ratio 的裁切窗口 (左边 x, 宽)；封面排序（workflow/live/cover_rank.py）按它判断 4:3 有没有裁到脸。
     画面里有清楚的脸就以最大的那张脸为中心；没有再按画面细节找。"""
-    import cv2
-    global _DET
     w = int(img.height * ratio)
-    if _DET is None:
-        _DET = cv2.FaceDetectorYN.create(str(YUNET), "", (960, 540), 0.8, 0.3, 50)
     sw, sh = 960, round(960 * img.height / img.width)
-    _DET.setInputSize((sw, sh))
-    _, faces = _DET.detect(np.asarray(img.convert("RGB").resize((sw, sh)))[:, :, ::-1].copy())
+    faces = detect_cover_faces(img, sw)
     faces = [f for f in (faces if faces is not None else []) if f[14] >= 0.8 and f[3] / sh >= 0.05]
     if faces:
         f = max(faces, key=lambda f: f[3])
@@ -1063,18 +1072,60 @@ def default_cover_event(a):
     return None
 
 
+def layout_faces(image):
+    """Return face rectangles in the final crop's pixel coordinates."""
+    sw = min(640, image.width)
+    sh = round(sw * image.height / image.width)
+    faces = detect_cover_faces(image, sw)
+    if faces is None:
+        return []
+    return faces[:, :4] * np.array(
+        [image.width / sw, image.height / sh, image.width / sw, image.height / sh])
+
+
 def compose(frame, a):
     """按画布实际尺寸排版：logo/徽章按高度定大小，标题按当前宽度自适应，16:9 和 4:3 共用。"""
     # 全小写来源标题统一单词首字母大写，保留已有缩写和人工大小写。
     if a.title.islower():
         a.title = re.sub(r"(^|[\s/\-])([a-z])", lambda m: m[1] + m[2].upper(), a.title)
+    cw, ch = frame.size
+    # Some sources have a clipped broadcaster mark along the very top.
+    settings = ROOT / "posts" / a.name / "cover_source.json"
+    if settings.is_file():
+        trim = float(json.loads(settings.read_text()).get("trim_top", 0))
+        if 0 < trim < .15:
+            top = round(ch * trim)
+            side = round(cw * trim / 2)
+            frame = frame.crop((side, top, cw - side, ch)).resize((cw, ch), Image.LANCZOS)
+    title_key = a.title_font or "cjk"  # 中日英标题统一用冬青黑体 W8，和之前的封面一致
+    if title_key == "cjk":
+        probe = font("cjk", 64)
+        missing = bytes(probe.getmask(chr(0x10FFFF)))
+        if any(not ch.isspace() and bytes(probe.getmask(ch)) == missing for ch in a.title):
+            title_key = "cjk_sc"  # 日文字体缺简体字时使用完整中文字体，避免方框。
+
+    faces = layout_faces(frame)
+    shoulder = len(faces) > 0 or a.sub_fit == "natural"
+    if shoulder:
+        # Reserve the full title's ink height and outline above its baseline.
+        title_font = fit_width(a.title, title_key, int(cw * min(.89, a.title_width)), int(ch * .23))
+        title_top = ch * .79 + title_font.getbbox(a.title, anchor="ms")[1] - title_font.size * .07
+        chin = max((y + h for _, y, _, h in faces), default=0)
+        scale = min(1., (title_top - ch * .025) / max(1, chin))
+        if scale < 1 and not getattr(a, 'preserve_artwork', False):
+            photo = frame.resize((max(1, round(cw * scale)), max(1, round(ch * scale))), Image.LANCZOS)
+            background = frame.filter(ImageFilter.GaussianBlur(ch * .035)).point(lambda v: round(v * .28))
+            background.paste(photo, ((cw - photo.width) // 2, 0))
+            frame = background
+        frame = frame.convert("RGB").point([round(255 * (v / 255) ** .88) for v in range(256)] * 3)
     canvas = frame.convert("RGBA")
     cw, ch = canvas.size
 
     # 下半部分压暗，保证白字可读
     grad = Image.new("L", (1, ch))
     for y in range(ch):
-        grad.putpixel((0, y), int(170 * max(0, (y / ch - 0.4) / 0.6) ** 1.4))
+        opacity = 28 if getattr(a, 'preserve_artwork', False) else (98 if shoulder else 170)
+        grad.putpixel((0, y), int(opacity * max(0, (y / ch - 0.4) / 0.6) ** 1.4))
     dark = Image.new("RGBA", (cw, ch), (0, 0, 0, 255))
     dark.putalpha(grad.resize((cw, ch)))
     canvas.alpha_composite(dark)
@@ -1113,16 +1164,32 @@ def compose(frame, a):
         x -= 20
 
     # 标题 + 副标题，整体底边在安全线以上
-    title_key = a.title_font or "cjk"  # 中日英标题统一用冬青黑体 W8，和之前的封面一致
-    if title_key == "cjk":
-        probe = font("cjk", 64)
-        missing = bytes(probe.getmask(chr(0x10FFFF)))
-        if any(not ch.isspace() and bytes(probe.getmask(ch)) == missing for ch in a.title):
-            title_key = "cjk_sc"  # 日文字体缺简体字时使用完整中文字体，避免方框。
-
     # 标题撑满到接近左右边缘（默认 94% 画布宽），字号再受高度上限约束
     sub_y = int(ch * (a.text_y - a.text_lift))
     subtitle = cover_subtitle(a.subtitle, getattr(a, "artist_zh", None), getattr(a, "event", None) or default_cover_event(a))
+
+    if getattr(a, 'preserve_artwork', False) and len(a.title) > 35:
+        import textwrap
+        lines = textwrap.wrap(a.title, width=30, break_long_words=False)
+        tf = min((fit_width(line, title_key, int(cw * .89), int(ch * .11)) for line in lines), key=lambda f: f.size)
+        for index, line in enumerate(lines):
+            baseline = ch * .81 - (len(lines) - 1 - index) * tf.size * 1.25
+            draw_text(canvas, (cw / 2, baseline), line, tf)
+        if subtitle:
+            sf = fit_width(subtitle, 'sub', int(cw * .90), int(ch * .06))
+            draw_text(canvas, (cw / 2, ch * .91), subtitle, sf)
+        return canvas.convert('RGB')
+
+    if shoulder:
+        tf = title_font
+        title_y = int(ch * .79)
+        draw_text(canvas, (cw / 2, title_y), a.title, tf)
+        if subtitle:
+            sf = fit_width(subtitle, "sub", int(cw * .90), int(ch * .065))
+            subtitle_y = max(int(ch * .865), title_y + tf.getbbox(a.title, anchor="ms")[3]
+                             - sf.getbbox(subtitle, anchor="ms")[1] + int(ch * .014))
+            draw_text_tracked(canvas, cw / 2, subtitle_y, subtitle, sf, 0, .08)
+        return canvas.convert("RGB")
 
     def layout(max_size):
         tf = fit_width(a.title, title_key, int(cw * a.title_width), max_size)
@@ -1188,6 +1255,7 @@ def contact_sheet(covers, cols=3):
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--name", required=True)
+    p.add_argument("--preserve-artwork", action="store_true", help="AI 母图保持铺满，不缩图补暗底，减轻文字区遮罩")
     p.add_argument("--title", required=True, help="大标题，一般是歌名")
     p.add_argument("--subtitle", help="副标题，如 'Lorde · 中英字幕'")
     p.add_argument("--artist-zh", help="可选中文艺名，补在副标题前，如 埃米纳姆")

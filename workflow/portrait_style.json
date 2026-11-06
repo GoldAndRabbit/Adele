@@ -1,0 +1,42 @@
+{
+  "version": "dark-horse-20261106",
+  "english_font": "Arial Rounded MT Bold",
+  "chinese_font": "PingFang SC",
+  "english_size": 36,
+  "chinese_size": 72,
+  "subtitle_color": "#FFFFFF",
+  "subtitle_outline": 4,
+  "subtitle_y": 1272,
+  "header": [
+    [
+      "song",
+      348,
+      160,
+      "#FFFFFF"
+    ],
+    [
+      "song_zh",
+      463,
+      51,
+      "#FFFFFF"
+    ],
+    [
+      "en",
+      530,
+      40,
+      "#FFFFFF"
+    ],
+    [
+      "event",
+      600,
+      44,
+      "#D99A00"
+    ]
+  ],
+  "title_outline": 3,
+  "header_outline": 1,
+  "header_outline_color": "#000000",
+  "event_color": "#D99A00",
+  "portrait_soft_lower_edge": true,
+  "horizontal_caption_band": true
+}

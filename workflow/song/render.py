@@ -28,13 +28,11 @@ import shutil
 import subprocess
 import sys
 
-from workflow.letterbox import content_box, logo_corner
 from workflow.paths import render_subtitle
 from workflow.live.paths import ROOT, VENV_PY, Concert, read_json
 
 LEAD_EXTRA = 0.6   # 字幕文件里已经统一提前 0.2s；审核页默认「提前 0.8s」= 再提前 0.6s
 LOGO = ROOT / "assets" / "adele-logo.png"
-LOGO_SCALE = 0.10  # 左上角 logo：和 make_mv.py 一样（logo 原图宽 × 0.10，离画面内容左上角 15px）
 W, H, FPS = 3840, 2160, 60
 DEFAULT_ENCODER = "hevc_hw"
 ENCODERS = {   # 成品视频编码参数（--enc）；硬件的码率是和 x264 crf 18 肉眼看不出差别的取值（Levitating 实测）
@@ -97,6 +95,11 @@ def render_ass(d, work):
     f = render_subtitle(d)
     subs = pysubs2.load(str(f))
     print(f"{d.name}：字幕用 {'诗意版' if f.name == 'lyrics_poetic.ass' else '直译版'}", flush=True)
+    import re
+    for event in subs.events:
+        event.text = r"\N".join(
+            re.sub("[♪♫♬🎵🎶]", "", line).strip() if re.search("[\u3400-\u9fff]", line) else line
+            for line in event.text.split(r"\N"))
     ms = round(LEAD_EXTRA * 1000)
     for ev in subs.events:   # 审核页预览是所有字幕一起挪（含片头、注释），这里一样
         ev.start, ev.end = max(0, ev.start - ms), max(0, ev.end - ms)
@@ -133,22 +136,16 @@ def render(d, work, out, frames=None, t_in=0.0, enc=None, log=None):
         frames, src_fps = ["-i", "video_1080.mp4"], f"setpts=PTS-STARTPTS,fps={FPS},"
     else:
         src_fps = ""
-    inputs = (frames or ["-framerate", FPS, "-i", f"frames_out/%08d.{ext}"]) + ["-i", d / "audio.flac", "-i", LOGO]
+    inputs = (frames or ["-framerate", FPS, "-i", f"frames_out/%08d.{ext}"]) + ["-i", d / "audio.flac"]
     shift = src_fps + (f"setpts=PTS+{t_in}/TB," if t_in else "")   # t_in 只给抽查用：从中间某一秒开始的片段，时间对回歌曲内时间
-    box = content_box(d)   # 上下黑边（宽银幕）：logo 放进画面内容里
-    ly = 15 + round(H * box["y"])
-    # 片源左上角有台标的场次（concert.json logo_corner = right）放画面内容的右上角，离右边同样 15px
-    lx = f"{round(W * (box['x'] + box['w'])) - 15}-overlay_w" if logo_corner(d) == "right" else str(15 + round(W * box["x"]))
-    fc = [f"[0:v]{shift}scale=3840:2160:flags=lanczos,ass=burn.ass[s0]",
-          f"[2:v]scale=iw*{LOGO_SCALE}:-1[logo]",
-          f"[s0][logo]overlay=x={lx}:y={ly}:format=auto[v0]"]
+    fc = [f"[0:v]{shift}scale=3840:2160:flags=lanczos,ass=burn.ass[v0]"]
     last = "v0"
     if items:
         img, pad = wm_image(wm, work)
         for k, it in enumerate(items):
             t0, dur, fade = it["t"], it["dur"], it["fade"]   # 水印按画面时间，不跟字幕提前
             inputs += ["-loop", "1", "-framerate", FPS, "-t", f"{t0 + dur + 1:.3f}", "-i", img]
-            fc.append(f"[{3 + k}:v]format=rgba,colorchannelmixer=aa={wm['opacity']},"
+            fc.append(f"[{2 + k}:v]format=rgba,colorchannelmixer=aa={wm['opacity']},"
                       f"fade=t=in:st={t0:.3f}:d={fade}:alpha=1,fade=t=out:st={t0 + dur - fade:.3f}:d={fade}:alpha=1[w{k}]")
             x, y = round(W * it["x"]) - pad, round(H * it["y"]) - pad
             fc.append(f"[{last}][w{k}]overlay={x}:{y}:format=auto:eof_action=pass:enable='between(t,{t0:.3f},{t0 + dur:.3f})'[v{k + 1}]")

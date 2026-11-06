@@ -13,6 +13,7 @@ from collections import Counter
 import numpy as np
 
 from workflow.live import line_match as LM
+from workflow.subtitle_spelling import display_english
 from workflow.live.line_match import LATIN, units, tidy
 from . import listen as L
 from .align import CJK, Lyrics, run_alignment, tokens
@@ -169,6 +170,14 @@ def display_rows(o, ly, cells, next_s=None):
 
 # ---------------------------------------------------------------- 主流程
 
+def medley_reference_matches(heard, reference):
+    """串烧只让与本句现场识别接近的参考歌词参与显示。"""
+    from rapidfuzz import fuzz
+    norm = lambda text: " ".join(re.findall(r"[^\W_]+", text.casefold()))
+    a, b = norm(heard), norm(reference)
+    return bool(a and b and fuzz.ratio(a, b) >= 86)
+
+
 def run(d, lyrics, out_dir, meta=None):
     """meta：{video, offset, title, artist}，观众合唱检测看画面、取录音室版时间轴用。"""
     meta = meta or {}
@@ -219,6 +228,7 @@ def run(d, lyrics, out_dir, meta=None):
         reads = L.drop_crammed(reads + added)
         cells, path, occ = run_alignment(reads, ly)
     n_reads = len(reads)
+    medley = len(_rj(d / "song.json", {}).get("parts") or []) > 1 or opts.get("medley_asr_first", False)
 
     # 顺序校准文字：上一次唱的是 Genius 上一句、下一次是下一句（夹在顺序中间），识别走样或只听到一截也显示整句，标「顺序」；
     # 不是锚点、也不在顺序中间、只对上不到 SHOW_MIN 的零碎匹配，不算歌词（交给歌词外判断）
@@ -243,12 +253,20 @@ def run(d, lyrics, out_dir, meta=None):
         if o.get("live_change") and not o["anchor"] and not lo_a <= o["s"] <= hi_a:
             o["shown"] = False
     occ = [o for o in occ if o["shown"]]
-    occ = fill_by_order(occ, cells, ly, y, SR)
+    if medley:
+        occ = [o for o in occ if medley_reference_matches(o["heard"], ly.lines[o["k"]])]
+    else:
+        occ = fill_by_order(occ, cells, ly, y, SR)
     # 观众合唱检测（song_crowd_workflow）
     from .song_crowd_workflow import detect, place_crowd
-    crowd_segs, lrc = detect(d, out_dir, occ, ly, cells, reads, dur, y, SR, meta.get("video"), meta.get("offset", 0.0),
-                             LM.PITCH, LM.STEREO, meta.get("title", ""), meta.get("artist", ""))
-    occ = place_crowd(occ, crowd_segs, ly, lrc, cells)
+    if medley:
+        # 串烧可能临时换歌或现场改词，不能按录音室时间轴补合唱。
+        (out_dir / "crowd.json").write_text(json.dumps({"segments": [], "lrc_lines": 0}))
+    else:
+        crowd_segs, lrc = detect(d, out_dir, occ, ly, cells, reads, dur, y, SR, meta.get("video"), meta.get("offset", 0.0),
+                                 LM.PITCH, LM.STEREO, meta.get("title", ""), meta.get("artist", ""))
+        occ = place_crowd(occ, crowd_segs, ly, lrc, cells)
+
 
     # 第 4 步：歌词外的段落
     matched = {u for o in occ for u in o["cells"]}
@@ -259,7 +277,7 @@ def run(d, lyrics, out_dir, meta=None):
                 outs.append(cur)
             cur = []
             continue
-        if cur and c["s"] - cells[cur[-1]]["e"] > 1.5:
+        if cur and (c["s"] - cells[cur[-1]]["e"] > (0.6 if medley else 1.5) or (medley and c["s"] - cells[cur[0]]["s"] > 4.5)):
             outs.append(cur)
             cur = []
         cur.append(u)
@@ -318,6 +336,19 @@ def run(d, lyrics, out_dir, meta=None):
         talk = not dup and bool(text) and n >= TALK_WORDS * (2 if CJK.search(text) else 1) and sup >= 0.5 and st < (TALK_STEADY if inside else TALK_STEADY_OUT)
         # 在歌词范围里、在唱、多遍都听到、像词、不是重复：现场加的内容（GIRL LIKE ME 报国家名）
         live = not dup and not talk and inside and sup >= 0.6 and LM.word_like(text, lang)
+        if medley:
+            # 只在当前时间窗内投票。留住相邻时间窗的重复喊话，
+            # 无第二个独立识别片段佐证的词保留在审核表供复核。
+            def in_window(ws):
+                return [w for w in ws if s - 0.12 <= (w["s"] + w["e"]) / 2 <= e + 0.12]
+            agreed = in_window(L.consensus(reads, s, e, latin=ly.main in LATIN))
+            text = LM.AM.text_of(agreed).strip()
+            votes = sum(medley_reference_matches(text, LM.AM.text_of(in_window(ws)))
+                        for ws in L.independent(reads))
+            sup = votes / max(1, len(reads))
+            supported = votes >= 2 and over <= 0.5 * max(0.3, e - s)
+            talk = supported and units(text, lang) >= TALK_WORDS and st < TALK_STEADY
+            live = supported and not talk
         rows.append({"k": None, "genius": "", "text": text[:1].upper() + text[1:] if live else text, "lang": lang,
                      "heard": text, "s": s, "e": e, "A": s, "A_end": e, "starts": {}, "occ": None,
                      "kind": "talk" if talk else "live" if live else "out", "steady": st, "support": sup})
@@ -458,7 +489,7 @@ def run(d, lyrics, out_dir, meta=None):
     lyr_srt, sp_srt = pysubs2.SSAFile(), pysubs2.SSAFile()
     for r in shown:
         (sp_srt if r["kind"] == "talk" else lyr_srt).events.append(
-            pysubs2.SSAEvent(start=int(r["show_s"] * 1000), end=int(r["show_e"] * 1000), text=r["text"]))
+            pysubs2.SSAEvent(start=int(r["show_s"] * 1000), end=int(r["show_e"] * 1000), text=display_english(r["text"])))
     lyr_srt.save(str(out_dir / "lyrics.srt"))
     if sp_srt.events:
         sp_srt.save(str(out_dir / "speech.srt"))
@@ -684,11 +715,11 @@ def run_song(slug, name):
     it = c.item(name)
     d = c.song_dir(it)
     out = d / "subs"
-    from workflow.live.paths import read_json
+    from workflow.live.paths import read_json, subtitle_video
     info = read_json(d / "song.json", {})
-    sl, pv = info.get("slice") or [0, 0], info.get("preview") or [0, 0]
+    video, offset = subtitle_video(c, it, info)
     artist = it.get("artist") or read_json(c.dir / "concert.json", {}).get("artist", "")
-    meta = {"video": d / "preview.mp4", "offset": sl[0] - pv[0], "title": it["title"], "artist": artist}
+    meta = {"video": video, "offset": offset, "title": it["title"], "artist": artist}
     table, prof = run(d, [t for t, _ in acoustic.section_lines(d / "lyrics.txt")], out, meta)
     from .song_translation_workflow import translate as st
     st(d, out, [t for t, _ in acoustic.section_lines(d / "lyrics.txt")], sub_title(c, it))   # 翻译（song_translation_workflow）

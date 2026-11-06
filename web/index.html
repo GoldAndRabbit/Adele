@@ -5,23 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>演唱会</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20261106-horizontal-caption-compact56">
 </head>
 <body>
   <div class="app" id="app">
     <aside class="sidebar" id="sidebar">
-      <div class="brand">
-        <span class="logo">A</span>
-        <div>
-          <div class="brand-name" id="brand-name">演唱会审核</div>
-          <div class="brand-sub" id="brand-sub">整场拆单曲 · 双语字幕</div>
-        </div>
-        <button class="side-toggle" id="side-toggle" title="收起侧边栏" aria-label="收起侧边栏">«</button>
-      </div>
-      <nav class="nav" id="concerts"></nav>
-      <div class="side-title">歌单</div>
+      <section class="concert-nav" aria-label="演唱会或歌手">
+      <input id="song-search" type="search" placeholder="搜索歌名" aria-label="搜索歌名" autocomplete="off">
+      <nav class="nav" id="concerts" aria-label="演唱会或歌手"></nav>
+      </section>
+      <section class="song-nav" aria-label="歌曲">
       <ul class="jobs" id="songs"></ul>
-      <div class="side-foot">审核通过后再跑 <code>python -m workflow.live hd &lt;场次&gt;</code></div>
+      </section>
     </aside>
     <main class="main">
       <header class="topbar">
@@ -31,6 +26,7 @@
     </main>
   </div>
   <script src="subs.js"></script>
+  <script src="portrait-browser.js?v=20261106-horizontal-caption-compact56"></script>
   <script src="app.js"></script>
 </body>
 </html>

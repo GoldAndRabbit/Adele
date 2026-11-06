@@ -1,6 +1,8 @@
 """Optional external storage; existing project paths remain usable through links."""
 import json
 import os
+import plistlib
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,8 +19,21 @@ def external_root():
     volume = root.parent
     if not volume.is_mount() or not root.is_dir():
         raise RuntimeError(f'外接工作盘未挂载：{volume}')
+    expected = data.get('volume_uuid')
+    if expected:
+        info = plistlib.loads(subprocess.check_output(
+            ['diskutil', 'info', '-plist', str(volume)], timeout=10))
+        if info.get('VolumeUUID', '').upper() != expected.upper():
+            raise RuntimeError(f'归档盘 UUID 不匹配：{volume}')
     if os.statvfs(root).f_flag & os.ST_RDONLY:
         raise RuntimeError(f'外接工作盘只读：{volume}')
+    return root
+
+
+def archive_root():
+    root = external_root()
+    if root is None:
+        raise RuntimeError('未配置归档盘')
     return root
 
 

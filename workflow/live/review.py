@@ -93,6 +93,6 @@ def song_status(c, it):
         stage = "new"
     # 边界在精校之后被改过：字幕时间轴已经不对了，要重跑 refine
     sliced = info.get("slice")
-    stale_refine = bool(seg and sliced and [round(seg["start"], 2), round(seg["end"], 2)] != sliced)
+    stale_refine = bool(seg and sliced and [round(seg["start"], 2), round(seg["end"], 2)] != [round(x, 2) for x in sliced])
     span = f"{seg['start']:.0f}-{seg['end']:.0f}s" if seg and seg.get("start") is not None else ""
     return {"stage": stage, "review": effective(c, it, entry), "span": span, "needs_refine": stale_refine}

@@ -11,7 +11,7 @@ refine：逐首切音频 + 字幕。按 segments.json 从整场 audio.flac / voc
 import subprocess
 import sys
 
-from .paths import ROOT, VENV_PY, read_json, write_json
+from .paths import ROOT, VENV_PY, SEP_PY, read_json, write_json
 from .util import hms, run
 
 # 按旧时间轴算的缓存：边界一改就对不上（Dai Dai 切掉开头 30 s 后没清，字幕流程用的切点整体错位 30 s）
@@ -40,6 +40,24 @@ def cut_audio(c, it, seg, force=False):
     """片段边界变了就重切，并清掉按旧时间轴算的缓存（翻译缓存保留，不用重翻）。返回是否重切了。"""
     d = c.song_dir(it)
     info = read_json(d / "song.json", {})
+    selected = read_json(c.dir / "vertical_source.json", {}).get("songs", {}).get(it["name"])
+    if selected:
+        from workflow.vertical_source import prepare
+        identity = {"source": selected["source"], "slice": selected["slice"]}
+        if not force and read_json(d / "audio_source.json") == identity and (d / "audio.flac").is_file() and (d / "vocals.wav").is_file():
+            return False
+        source = prepare(c, it)
+        for f in TIMELINE_CACHES:
+            (d / "reports" / f).unlink(missing_ok=True)
+        run(["ffmpeg", "-v", "error", "-y", "-i", source, "-vn", "-c:a", "flac", "-ar", "48000", "-sample_fmt", "s32", d / "audio.selected.flac"])
+        (d / "audio.selected.flac").replace(d / "audio.flac")
+        # Separate the selected song's audio; never cut the old broadcast's vocal track with TS times.
+        run([SEP_PY, ROOT / "workflow/separate_roformer.py", d / "audio.flac", "-o", d / "vocals.selected.wav"])
+        (d / "vocals.selected.wav").replace(d / "vocals.wav")
+        info["slice"] = selected["slice"]
+        write_json(d / "song.json", info)
+        write_json(d / "audio_source.json", identity)
+        return True
     span = [round(seg["start"], 2), round(seg["end"], 2)]
     if info.get("slice") == span and (d / "audio.flac").exists() and (d / "vocals.wav").exists() and not force:
         return False
@@ -80,7 +98,7 @@ def refine_one(c, it, seg, a):
 
 
 def stage_refine(c, a):
-    if not c.vocals.exists():
+    if not c.vocals.exists() and not read_json(c.dir / "vertical_source.json", {}):
         sys.exit("缺少整场人声 vocals.wav，先跑 separate")
     todo = selected(c, a)
     bad = []
