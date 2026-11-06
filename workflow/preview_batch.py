@@ -117,12 +117,13 @@ def one_cover(c,it):
     return 'generated'
 
 
-def run():
+def run(concert_filter=None, wait=False):
     BASE.mkdir(parents=True,exist_ok=True)
     with (BASE/'run.lock').open('a') as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        fcntl.flock(lock,fcntl.LOCK_EX if wait else fcntl.LOCK_EX|fcntl.LOCK_NB)
         rows=inventory();write_json(BASE/'inventory.json',rows)
         for row in rows:
+            if concert_filter and row['concert'] != concert_filter:continue
             if (BASE/'PAUSED').exists(): break
             c=Concert(row['concert']);it=c.item(row['song'])
             target=BASE/f'{c.slug}--{it["name"]}.json'
@@ -160,8 +161,10 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run',action='store_true')
     parser.add_argument('--inventory',action='store_true')
+    parser.add_argument('--concert',help='Only process this concert, preserving the full inventory')
+    parser.add_argument('--wait',action='store_true',help='Wait for the current library worker to finish')
     args=parser.parse_args()
-    if args.run:run()
+    if args.run:run(args.concert,args.wait)
     else:
         BASE.mkdir(parents=True,exist_ok=True)
         rows=inventory();write_json(BASE/'inventory.json',rows)
