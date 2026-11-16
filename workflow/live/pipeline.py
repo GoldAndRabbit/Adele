@@ -111,17 +111,31 @@ def batch_tasks(config, batch, stages, options):
 
 
 def write_collections(batch, config, snapshot):
+    from workflow.bili_collection import storage_path
     groups = []
     for slug, songs in snapshot.items():
         concert = Concert(slug)
+        metadata_path = storage_path(concert, slug)
+        metadata = read_json(metadata_path, {})
         rows = []
         for name, status in songs.items():
-            manifest = read_json(concert.song_dir(concert.item(name)) / "products/products.json", {})
-            rows.append({"name": name, "status": status,
-                         "files": [{**row, "path": str((concert.song_dir(concert.item(name)) / "products" / row["file"]).resolve())}
+            item = concert.item(name)
+            directory = concert.song_dir(item)
+            manifest = read_json(directory / "products/products.json", {})
+            submission = read_json(directory / "delivery_bundle.json", {}).get("bilibili", {})
+            ready = products_ready(directory, ["bilibili"])
+            video = next((row for row in manifest.get("items", []) if row.get("platform") == "bilibili"
+                          and row.get("status") == "ready"), {})
+            rows.append({"name": name, "title": submission.get("合集显示名称") or item["title"],
+                         "status": "ready" if ready else status if status != "delivered" else "available",
+                         "input_video_path": str((directory / "products" / video["file"]).resolve()) if ready else None,
+                         "run_id": manifest.get("run_id") if ready else None,
+                         "files": [{**row, "path": str((directory / "products" / row["file"]).resolve())}
                                    for row in manifest.get("items", [])]})
-        groups.append({"concert": slug, "tracks": rows,
-                       "status": "ready" if rows and all(row["status"] == "delivered" for row in rows) else "producing"})
+        groups.append({"concert": slug, "platform": "bilibili", "tracks": rows,
+                       "title": metadata.get("title"), "cover_path": metadata.get("cover_path"),
+                       "metadata_path": str(metadata_path.resolve()),
+                       "status": "ready" if rows and all(row["status"] == "ready" for row in rows) else "producing"})
     write_json(batch / "collections.json", {"platforms": list(collection_platforms()),
                                             "published": False, "collections": groups})
 

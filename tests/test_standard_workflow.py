@@ -256,6 +256,30 @@ class StandardWorkflowTests(unittest.TestCase):
                 stages.split(concert, {})
             self.assertTrue(concert.segments.is_file())
 
+    def test_collection_export_preserves_the_submission_contract(self):
+        from workflow.bili_collection import storage_path
+        with tempfile.TemporaryDirectory() as tmp:
+            concert = self.concert(tmp)
+            directory = concert.song_dir(concert.item("one"))
+            products = directory / "products"
+            products.mkdir()
+            (products / "video.mp4").write_bytes(b"finished")
+            write_json(products / "products.json", {"status": "ready", "run_id": "finished-run", "items": [
+                {"platform": "bilibili", "status": "ready", "file": "video.mp4"}]})
+            write_json(directory / "delivery_bundle.json", {"bilibili": {"合集显示名称": "One 第一首"}})
+            metadata = storage_path(concert, "show")
+            metadata.parent.mkdir(parents=True)
+            write_json(metadata, {"title": "正式合集名", "cover_path": "/approved/cover.jpg"})
+            with patch.object(pipeline, "Concert", return_value=concert):
+                pipeline.write_collections(Path(tmp), {}, {"show": {"one": "delivered"}})
+            row = read_json(Path(tmp) / "collections.json")["collections"][0]
+            self.assertEqual(row["title"], "正式合集名")
+            self.assertEqual(row["cover_path"], "/approved/cover.jpg")
+            self.assertEqual(row["tracks"][0]["title"], "One 第一首")
+            self.assertEqual(row["tracks"][0]["run_id"], "finished-run")
+            self.assertEqual(row["tracks"][0]["status"], "ready")
+            self.assertEqual(row["tracks"][0]["input_video_path"], str((products / "video.mp4").resolve()))
+
 
 if __name__ == "__main__":
     unittest.main()
