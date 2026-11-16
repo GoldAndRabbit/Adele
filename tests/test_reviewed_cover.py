@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from PIL import Image, ImageDraw
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from workflow.fibo_reference import reselect
 from workflow.fibo_concert import generate_one
@@ -58,7 +58,8 @@ class ReviewedCoverTests(unittest.TestCase):
             spec = dict(reference=source.name, source_time=99,
                         reference_lock=dict(source_time=99, reference_sha256=digest(source)))
             source.write_bytes(b'different frame')
-            with self.assertRaisesRegex(ValueError, '已确认'):
+            # Reference validation must not wait for a real production GPU slot.
+            with patch('workflow.fibo_concert.Path.home', return_value=root), self.assertRaisesRegex(ValueError, '已确认'):
                 generate_one(concert, {'name':'song'}, spec, root, root/'weights')
 
     def test_full_ai_request_rejects_source_treatment(self):
