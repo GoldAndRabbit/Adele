@@ -245,7 +245,7 @@ async function refreshPosting(song, slug) {
 function coverPathFields(platform, selected, generated = {}) {
   return Object.entries(selected).flatMap(([ratio, path]) => {
     const value = path || generated[ratio]?.[0];
-    return value ? [[platform + " " + ratio + " 封面路径", value]] : [];
+    return value ? [[platform + " " + ratio + "封面路径", value]] : [];
   });
 }
 

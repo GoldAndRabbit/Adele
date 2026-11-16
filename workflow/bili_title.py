@@ -1,6 +1,8 @@
 """Deterministic Bilibili title, independent from Douyin metadata."""
 import re
 
+from workflow.templates import BILI_KEYWORDS, TITLE_MAX, ordered_bili_fields
+
 if __package__:
     from .artist_nicknames import artist_nicknames
 else:
@@ -37,7 +39,7 @@ def posting_artist(song, info):
     return chinese, english
 
 
-def build_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs=None, *, year=None, nicknames=None, limit=80):
+def build_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs=None, *, year=None, nicknames=None, limit=TITLE_MAX):
     """Fit whole fields while preserving the performance's identity."""
     def clean(value):
         return re.sub(r"\s+", " ", str(value or "")).strip()
@@ -83,8 +85,9 @@ def build_title(artist_zh, artist_en, song, song_zh, event_zh, event_en, subs=No
     represented = any(event_in_title(track, event) or event_in_title(translated, event) for event in events)
     event = '' if represented else (events[0] if events else '')
     def fields():
-        return list(filter(None, [chinese_artist, track, *aliases, english_artist, translated, event]))
-    keywords = ['欧美现场', 'Billboard', 'Grammy', '中英字幕']
+        return ordered_bili_fields(artist_zh=chinese_artist, song=track, nicknames=aliases,
+                                   artist_en=english_artist, song_zh=translated, event=event)
+    keywords = list(BILI_KEYWORDS)
     if limit is not None:
         lead = " ".join(filter(None, [chinese_artist, track]))
         if len(lead) > limit:
@@ -114,7 +117,7 @@ def concert_directory(directory):
     return Path(__file__).resolve().parents[1] / 'concerts' / slug
 
 
-def reviewed_title(directory, *, limit=80):
+def reviewed_title(directory, *, limit=TITLE_MAX):
     import json
     from pathlib import Path
     path = concert_directory(directory) / 'review.json'
@@ -129,7 +132,7 @@ def reviewed_title(directory, *, limit=80):
     return title
 
 
-def for_post(directory, post, *, limit=80):
+def for_post(directory, post, *, limit=TITLE_MAX):
     """Use concert metadata when present; cached upload JSON uses the same rule."""
     from pathlib import Path
     import json

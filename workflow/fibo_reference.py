@@ -70,7 +70,12 @@ def reselect(concert, item, *, excluded_times=()):
     spec.pop('face_reference',None)
     from workflow.fibo_identity import add_identity_detail
     spec=add_identity_detail(concert,item,spec)
-    plans[item['name']] = spec
-    write_json(path,plans)
+    from workflow.runtime import locked
+    with locked(concert.dir/'.reference-plan.lock', blocking=True):
+        # Other songs can finish vision selection while this request waits.
+        # Merge against the latest plan instead of overwriting their entries.
+        plans = read_json(path, {})
+        plans[item['name']] = spec
+        write_json(path,plans)
     write_json(folder/'reselection.json',dict(result,source_time=at,excluded=excluded))
     return spec

@@ -1,25 +1,16 @@
 # -*- coding: utf-8 -*-
-"""
-package：每首歌的候选封面 + 投稿标题 / 介绍草稿，给审核页用。
-  - 封面：workflow/make_cover.py 的默认流程（正脸特写 6 张、半身 3 张、全身 3 张，共 12 张，Real-ESRGAN 高清化），
-    只在这首歌的时间段里用 ffmpeg -ss 取单帧（不落地帧序列）；副标题正常字号、居中，带艺人中文名 -> songs/<nn>/covers/
-  - 标题：固定格式（post_title），不让模型写
-  - 介绍：workflow/make_meta.py 的提示词，事实材料换成演唱会信息 + 歌单备注，歌曲介绍 + 演出介绍各 300 字左右，
-    合成一段（空行分开）-> songs/<nn>/post_draft.json
+"""Canonical posting drafts and cover text/candidate compatibility helpers.
+
+Metadata generation is called by live.stages.posting. AI image production and
+release belong to workflow.covers; this module never owns a batch or model queue.
 """
 
 import json
 import re
 from pathlib import Path
-import subprocess
-from concurrent.futures import ThreadPoolExecutor
 
-from .paths import ROOT, VENV_PY, read_json, write_json
-from .refine import selected
+from .paths import ROOT, read_json, write_json
 
-PER_SHOT = "closeup=16,half=16,full=0"   # 正脸特写 16 张、半身 16 张；全身脸太小、当封面看不清人，不要
-CLOSEUP_MIN = 0.14  # 脸高占画面 14% 以上算特写：转播里 22% 以上的大特写很少（GIRL LIKE ME 只有 6 帧候选），凑不够 6 张
-TEXT_LIFT = 0.08   # 标题 + 副标题整体上移画面高度的 8%（0.82 -> 0.74）：底部 17% 压暗遮挡转播的推广条，字压在上面太靠下
 LANG_ZH = {"es": "西班牙语", "en": "英语", "it": "意大利语", "ja": "日语", "pt": "葡萄牙语", "fr": "法语"}
 COVER_RE = re.compile(r"^(closeup|half|full|scene|pool|cover)_(\d\d)\.jpg$")   # pool：从整场封面池排的（cover_pool.py）
 FRAME_RE = re.compile(r"^frame_(?:(closeup|half|full|scene|pool)_)?(\d\d)_([\d.]+)s\.jpg$")
@@ -119,37 +110,6 @@ def compact_cover_title(c, item):
     return title
 
 
-def make_covers(c, it, seg, a):
-    """候选封面：make_cover 的默认流程（正脸特写 / 半身各 16 张，去掉糊的，Real-ESRGAN 高清化）。
-    不再按整帧清晰度补 cover_XX：补出来的基本是全景，看不清人。"""
-    import shutil
-    d = c.song_dir(it)
-    out = d / "covers"
-    common = [VENV_PY, ROOT / "workflow" / "make_cover.py", "--name", it["name"], "--title", cover_title(c, it),
-              "--subtitle", subtitle_line(c, it), "--video", c.source, "--out-dir", out, "--sub-fit", "natural",
-              "--start", f"{seg['start']:.2f}", "--end", f"{seg['end']:.2f}", "--text-lift", TEXT_LIFT, "--closeup-min", CLOSEUP_MIN]
-    info = read_json(c.info)
-    if info.get("cover_inpaint_static"):   # 片源角上一直在的台标（Lollapalooza 的舞台台标）：自动找出来，取帧后修补掉
-        common += ["--inpaint-static"]
-    if info.get("cover_inpaint_corners"):  # 转播两角的歌名 / 台标：只修补文字，有推广横幅的帧不选
-        common += ["--inpaint-corners"]
-    elif info.get("cover_mask_bottom"):  # 底部有大块遮挡：整条模糊压暗盖住（纯色背景上会看出一条暗带）
-        common += ["--mask-bottom", str(info["cover_mask_bottom"])]
-    if a.force and out.exists():
-        shutil.rmtree(out)  # 重新挑：旧候选的文件名和时间点都不一样了，留着会混在一起
-    log = d / "logs" / "v2_covers.log"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    layout = {"title": cover_title(c, it), "subtitle": subtitle_line(c, it), "text_lift": TEXT_LIFT, "sub_fit": "natural"}
-    with log.open("a") as fh:
-        existing = any(x["id"].split("_")[0] in ("closeup", "half", "full") for x in cover_candidates(d))
-        if not existing or read_json(out / "presentation_layout.json", {}) != layout:
-            if existing and not any(out.glob("frame_*.jpg")):
-                raise RuntimeError("封面文字已变更但缺少原始帧，不能沿用旧封面")
-            args = ["--recompose"] if existing else ["--per-shot", PER_SHOT]
-            r = subprocess.run([str(x) for x in common + args], stdout=fh, stderr=subprocess.STDOUT)
-            if r.returncode:
-                raise RuntimeError(f"封面失败，见 {log}")
-            write_json(out / "presentation_layout.json", layout)
 
 
 def song_title_zh(c, it):
@@ -189,18 +149,22 @@ def draft_meta(c, it, seg, a):
     dst = d / "post_draft.json"
     from post_bili.upload import description
     existing = read_json(dst, {})
+    from workflow.templates import valid_tags
     complete = (all((existing.get("intro") or {}).get(k) for k in ("song", "performance", "lyrics"))
                 and 1800 <= len(description(existing)) <= 2000
-                and bool(existing.get("tags")))
+                )
     if dst.exists() and not a.force and complete:
         draft = existing
+        if not valid_tags(draft.get("tags")):
+            from workflow.make_meta import generate_tags
+            draft["tags"] = generate_tags(json.dumps({"song": draft.get("song"), "performance": draft.get("performance")}, ensure_ascii=False), draft.get("tags", []))
+            write_json(dst, draft)
         if draft.get("title") != post_title(c, it) or draft.get("intro_text") != description(draft):
             draft["title"] = post_title(c, it)
             draft["intro_text"] = description(draft)
             write_json(dst, draft)
         return
-    import make_meta
-    from llm import chat_json
+    from workflow import make_meta
     info = read_json(c.info)
     song = read_json(d / "song.json", {})
     lang = "、".join(LANG_ZH.get(x, "原文") for x in (song.get("langs") or [song.get("lang", "en")]))
@@ -235,6 +199,8 @@ def draft_meta(c, it, seg, a):
     notes = make_meta.stage_notes(video, begin, finish, d / "stage_notes.json")
     user += make_meta.media_material(notes, make_meta.lyrics_material(d / "lyrics.txt", d / "zh_cache.json"))
     gen = make_meta.generate_intro(user, label=f"元数据 {it['title']}")
+    if not valid_tags(gen.get("tags")):
+        gen["tags"] = make_meta.generate_tags(user, gen.get("tags", []))
     from workflow.bili_title import posting_artist
     artist_zh, artist_en = posting_artist(
         {"artist": gen.get("artist_en"), "artist_zh": gen.get("artist_zh")}, info)
@@ -277,36 +243,3 @@ def validate_presentation(c, it):
     if errors:
         raise ValueError("投稿格式检查失败：" + "；".join(errors))
     return {"title_length": len(title), "cover_subtitle": subtitle}
-
-
-def package_one(c, it, seg, a, *, meta_future=None):
-    try:
-        if meta_future is None:
-            draft_meta(c, it, seg, a)
-        if meta_future is not None:
-            meta_future.result()
-        validate_presentation(c, it)
-        make_covers(c, it, seg, a)
-        # 中途淡入淡出的水印必须在审核前生成，不能等到成片编码才补。
-        from workflow.song.watermark import ensure_song
-        ensure_song(c.slug, it["name"])
-        try:   # 候选排序：算法推荐 Top3（cover_rank.py，Qwen 一首一次调用）；失败不影响封面本身
-            from .cover_rank import rank
-            rank(c.song_dir(it).resolve(), force=a.force)
-        except Exception as e:  # noqa: BLE001
-            print(f"{it['idx']:>2} {it['title']}: 封面排序失败（{e}）", flush=True)
-        n = len(cover_candidates(c.song_dir(it)))
-        print(f"{it['idx']:>2} {it['title']}: 封面候选 {n} 张，介绍草稿 ✓", flush=True)
-        return True
-    except Exception as e:  # noqa: BLE001 一首失败不影响其他
-        print(f"{it['idx']:>2} {it['title']}: ✗ {e}", flush=True)
-        return False
-
-
-def stage_package(c, a):
-    todo = selected(c, a)
-    # 介绍最多 3 首并发，和逐首封面同时进行；Real-ESRGAN 始终只跑一首。
-    with ThreadPoolExecutor(3) as ex:
-        metas = [ex.submit(draft_meta, c, *x, a) for x in todo]
-        res = [package_one(c, *x, a, meta_future=meta) for x, meta in zip(todo, metas)]
-    print(f"\npackage：{sum(res)}/{len(todo)} 首完成")

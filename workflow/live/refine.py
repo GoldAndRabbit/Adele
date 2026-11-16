@@ -1,18 +1,13 @@
 # -*- coding: utf-8 -*-
-"""
-refine：逐首切音频 + 字幕。按 segments.json 从整场 audio.flac / vocals.wav 切出这首的片段（不切视频），
-切审核用的预览视频，然后跑字幕流程（workflow.song.run：多遍识别 → 整首对齐 → 观众合唱检测 → 翻译 → 注释），
-结果在歌曲目录的 subs/。字幕时间以片段起点为 0。
+"""Song selection and legacy boundary-reslice audio helpers.
 
-边界改了：重切音频，按旧时间轴算的缓存（节拍 / 音高 / 立体声）一起清掉，再重跑字幕流程；
-识别缓存按音频内容记，不用清。
+The standard subtitle stage uses workflow.preparation and workflow.song.run.
+This module does not schedule subtitle jobs or generate duplicate previews.
 """
 
-import subprocess
-import sys
 
-from .paths import ROOT, VENV_PY, SEP_PY, read_json, write_json
-from .util import hms, run
+from .paths import ROOT, SEP_PY, read_json, write_json
+from .util import run
 
 # 按旧时间轴算的缓存：边界一改就对不上（Dai Dai 切掉开头 30 s 后没清，字幕流程用的切点整体错位 30 s）
 TIMELINE_CACHES = ("beats.npy", "pitch.npz", "stereo.npz")
@@ -77,37 +72,3 @@ def sub_title(c, it):
     draft = read_json(c.song_dir(it) / "post_draft.json", {})
     artist = (draft.get("song") or {}).get("artist") or it.get("artist") or read_json(c.info).get("artist", "")
     return f"《{it['title']}》 {artist}".strip()
-
-
-def refine_one(c, it, seg, a):
-    from .preview import make_preview
-    d = c.song_dir(it)
-    changed = cut_audio(c, it, seg, a.force)
-    make_preview(c, it, seg)   # 边界改了预览视频也要跟着重切
-    if not changed and not a.force and (d / "subs" / "lyrics_literal.ass").exists():
-        print(f"{it['idx']:>2} {it['title']}: 已有字幕结果（边界没变；--force 重跑）", flush=True)
-        return True
-    log = d / "logs" / "v4_run.log"
-    log.parent.mkdir(exist_ok=True)
-    print(f"{it['idx']:>2} {it['title']}: 字幕流程开始（{hms(seg['start'])} - {hms(seg['end'])}，日志 {log}）", flush=True)
-    with log.open("w") as fh:
-        r = subprocess.run([str(VENV_PY), "-m", "workflow.song.run", "song", c.slug, it["name"]], cwd=ROOT,
-                           stdout=fh, stderr=subprocess.STDOUT)
-    print(f"{it['idx']:>2} {it['title']}: " + ("✓" if r.returncode == 0 else f"✗ 失败（exit {r.returncode}），见 {log}"), flush=True)
-    return r.returncode == 0
-
-
-def stage_refine(c, a):
-    if not c.vocals.exists() and not read_json(c.dir / "vertical_source.json", {}):
-        sys.exit("缺少整场人声 vocals.wav，先跑 separate")
-    todo = selected(c, a)
-    bad = []
-    for it, seg in todo:   # 一首一首跑：字幕流程里有本地模型（MMS），不并行
-        try:
-            ok = refine_one(c, it, seg, a)
-        except Exception as e:  # noqa: BLE001 一首出错不影响其他歌
-            print(f"{it['idx']:>2} {it['title']}: ✗ {type(e).__name__}: {e}", flush=True)
-            ok = False
-        if not ok:
-            bad.append(it["title"])
-    print(f"\nrefine：{len(todo) - len(bad)}/{len(todo)} 首完成" + (f"；失败：{', '.join(bad)}" if bad else ""))

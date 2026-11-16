@@ -36,24 +36,7 @@ def cover_ffmpeg():
     return executable
 
 
-def original_source(concert, item):
-    directory = concert.song_dir(item)
-    event = concert.load("info")
-    policy = read_json(concert.dir / "vertical_source.json", {})
-    selected = policy.get("songs", {}).get(item["name"])
-    if selected:
-        source = Path(selected.get("source", policy["source"]))
-        if not source.is_file():
-            raise FileNotFoundError("指定片源未挂载，不自动切换版本")
-        return source
-    override = read_json(directory / "song.json", {}).get("source_file")
-    sources = [Path(override or ""), Path(event.get("source_file") or ""), concert.source, directory / "source.mp4"]
-    if concert.slug == "singles":
-        sources.append(POSTS / item["name"] / "source.mp4")
-    source = next((path for path in sources if path.is_file()), None)
-    if source is None:
-        raise FileNotFoundError("封面选帧需要原始视频，请接入原片后重试")
-    return source
+from workflow.sources import original_source
 
 
 def raw_event_label(concert, item):

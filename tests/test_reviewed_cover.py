@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from unittest.mock import Mock
 
-from workflow.delivery_queue import nearby_reference
+from workflow.fibo_reference import reselect
 from workflow.fibo_concert import generate_one
 
 from workflow.reviewed_cover import compose_crop, digest, publish, stage
@@ -44,7 +44,8 @@ class ReviewedCoverTests(unittest.TestCase):
             concert.dir = Path(folder)
             write_json(concert.dir/'fibo-cover-plan.json',
                        {'song': {'reference_lock': {'source_time': 99}}})
-            self.assertFalse(nearby_reference(concert, {'name': 'song'}))
+            with self.assertRaisesRegex(ValueError, 'explicitly reviewed reference'):
+                reselect(concert, {'name': 'song'})
 
     def test_changed_reference_must_not_start_inference(self):
         with tempfile.TemporaryDirectory() as folder:

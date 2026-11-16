@@ -1,27 +1,22 @@
 """Configured delivery: confirmed source -> Apple 60 -> selected HEVC outputs.
 
-python -m workflow.dual_platform CONCERT SONG
+The standard workflow invokes encode_job through workflow.delivery.
 This entry point does not publish or select a cover. AI cover generation is an explicit plan step.
 """
-import argparse,fcntl,hashlib,json,os,shutil,subprocess as sp,time,uuid
+import json,shutil,subprocess as sp,time,uuid
 from concurrent.futures import ThreadPoolExecutor
 from platform import node as hostname
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import numpy as np
-from workflow.live.paths import Concert
+from workflow.runtime import sha
 from workflow import dual_render as render
-from workflow.song.render import DEFAULT_ENCODER,ENCODERS
+from workflow.encoding import DEFAULT_ENCODER,ENCODERS
 from workflow.delivery_config import render_platforms, single_channel_pipeline
 ROOT=Path(__file__).resolve().parents[1]
 FF=['/opt/homebrew/bin/ffmpeg','-nostdin','-v','error','-y']
 def probe(p):return json.loads(sp.check_output(['/opt/homebrew/bin/ffprobe','-v','error','-show_streams','-show_format','-of','json',str(p)]))
-def sha(p):
- h=hashlib.sha256()
- with p.open('rb') as f:
-  for block in iter(lambda:f.read(8*1024**2),b''):h.update(block)
- return h.hexdigest()
 def render_pair(parallel=True, platforms=None):
  """One shared master, two independent ffmpeg processes; never commit partial outputs."""
  selected=render_platforms(platforms)
@@ -36,41 +31,6 @@ def render_pair(parallel=True, platforms=None):
  with ThreadPoolExecutor(max_workers=2) as pool:
   # Exiting the pool waits for both branches, including after a failure.
   return list(pool.map(branch,jobs))
-
-def produce(slug,name,parallel=True,platforms=None):
- import tempfile
- base=Path.home()/'Library/Caches/adele/dual-platform'
- base.mkdir(parents=True,exist_ok=True)
- if base.stat().st_dev != Path('/System/Volumes/Data').stat().st_dev:
-  raise RuntimeError('插帧工作目录必须位于内置数据盘')
- if not os.path.ismount('/Volumes/harddisk_5T'):
-  raise RuntimeError('成品盘 harddisk_5T 未挂载')
- d=Concert(slug).song_dir(Concert(slug).item(name))
- with (d/'render.lock').open('a') as lock:
-  fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-  with tempfile.TemporaryDirectory(prefix='song-',dir=base) as scratch:
-   _produce(slug,name,parallel,Path(scratch),platforms)
-
-def _produce(slug,name,parallel,cache,platforms=None):
- c=Concert(slug);item=c.item(name);d=c.song_dir(item)
- from workflow.content_check import check_for_render,job_certificate
- from workflow.concert_delivery import source_digest
- report=check_for_render(c,item)
- policy=dict(json.loads((c.dir/'vertical_source.json').read_text())['songs'][name])
- policy['delivery_platforms']=list(render_platforms(platforms))
- policy['single_channel_pipeline']=single_channel_pipeline()
- original = policy['kind'] != 'ts' or policy.get('fps') != 50
- source=Path(policy['source']);assert source.is_file()
- w=Path('/Volumes/harddisk_5T/adele-workflow/products')/slug/name/('original-shared60-v1' if original else 'apple-shared60-v1');w.mkdir(parents=True,exist_ok=True)
- link=d/'products'
- if not link.exists() and not link.is_symlink():link.symlink_to(w)
- elif link.resolve()!=w:raise ValueError(f'Preserve existing product directory: {link}')
- render.configure(c,item,w)
- render.assets()
- shutil.copyfile(d/'watermark.json',w/'watermark.json')
- policy['content_check']=job_certificate(report,w,source_digest(source))
- render.save(w/'policy.json',policy)
- encode_job(policy, source, w, cache, d, parallel)
 
 def encode_job(policy, source, w, cache, directory, parallel=True):
  """Encode prepared overlays on the executing Mac; record its actual hostname."""
@@ -172,7 +132,7 @@ def finish_outputs(w, policy, manifest, pending_outputs, parallel=True):
   if v is None or a is None:
    raise ValueError(f'{platform} 成品缺少有效视频或音轨，保留待修复文件，不交付')
   if platform == 'bilibili':
-   from workflow.make_mv import check_hires
+   from workflow.media import check_hires
    check_hires(p)
   assert (v['width'],v['height'],v['avg_frame_rate'],v['codec_name'])==(*size,'60/1','hevc')
   assert abs(float(v['duration'])-duration)<.035 and abs(float(a['duration'])-duration)<.04
@@ -184,23 +144,5 @@ def finish_outputs(w, policy, manifest, pending_outputs, parallel=True):
   dest=p.with_name(p.name.replace('.pending',''))
   if dest.exists():dest.rename(dest.with_name(dest.stem+'-previous-'+str(time.time_ns())+'.mp4'))
   p.replace(dest)
- manifest.update(status='ready',stage='所选平台成品已验证',items=items,validation=checks,timings=json.loads((w/'timings.json').read_text()),created_local=datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M:%S'),encoding={'source':'workflow.song.render','preset':DEFAULT_ENCODER,'args':ENCODERS[DEFAULT_ENCODER]},source_policy=policy,delivery_platforms=list(selected),encode_schedule='parallel' if parallel else 'serial')
+ manifest.update(status='ready',stage='所选平台成品已验证',items=items,validation=checks,timings=json.loads((w/'timings.json').read_text()),created_local=datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M:%S'),encoding={'source':'workflow.encoding','preset':DEFAULT_ENCODER,'args':ENCODERS[DEFAULT_ENCODER]},source_policy=policy,delivery_platforms=list(selected),encode_schedule='parallel' if parallel else 'serial')
  render.save(w/'products.json',manifest);print(w.name,'COMPLETE',flush=True)
-if __name__=='__main__':
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('concert');p.add_argument('song')
- p.add_argument('--serial-encode',action='store_true',help='Encode selected platforms serially when more than one is enabled')
- p.add_argument('--platforms',nargs='+',choices=['bilibili','douyin'],help='Override delivery_defaults.json for this invocation')
- p.add_argument('--ai-cover-plan',type=Path,help='Explicit approved 1–3 composition plan; same master derives platform covers')
- p.add_argument('--skip-failed-covers',action='store_true',help='Explicitly continue unattempted candidates, never retry failed/uncertain requests')
- p.add_argument('--covers-only',action='store_true',help='Run the AI cover stage without re-encoding existing products')
- a=p.parse_args()
- if a.covers_only and not a.ai_cover_plan:p.error('--covers-only requires --ai-cover-plan')
- if not a.covers_only:produce(a.concert,a.song,parallel=not a.serial_encode,platforms=a.platforms)
- from workflow.delivery_bundle import write_bundle
- bundle_concert=Concert(a.concert)
- try:
-  if a.ai_cover_plan:
-   from workflow.seedream_cover import generate_trial
-   generate_trial(bundle_concert,bundle_concert.item(a.song),a.ai_cover_plan,skip_failed=a.skip_failed_covers)
- finally:
-  write_bundle(bundle_concert,bundle_concert.item(a.song))

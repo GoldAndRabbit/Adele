@@ -1,148 +1,123 @@
-# -*- coding: utf-8 -*-
+"""One workflow: source, split, subtitles, posting, preview, covers, delivery.
+
+See docs/workflow.md for project setup, local/dual-Mac runs and pause/resume.
 """
-整场演唱会流程（单曲走 workflow/make_mv.py，见 skills/song-mv）。方案见 docs/design/concert_pipeline.md。
-
-  new      建场次：concerts/<slug>/concert.json
-  run      审核前的阶段，可 --from/--to 断点续跑：
-             ingest    探测、抽字幕轨、整场 FLAC、无损 remux 成 mp4
-             setlist   歌单（setlist.fm API 或 concerts/<slug>/setlist.txt）
-             lyrics    逐首 Genius 歌词
-             separate  整场人声分离
-             segment   字幕轨 + 歌词定位每首歌，音频精修边界 -> segments.json
-             refine    每首切音频 + 预览视频，跑字幕流程（workflow/song/：对齐 / 观众合唱 / 翻译 / 注释）-> subs/
-             preview   每首切审核用的 720p 预览视频（前后多留 10s）-> preview.mp4
-             package   候选封面 + 标题介绍
-  serve    审核网页（http://127.0.0.1:8160）
-  hd       只对审核通过的歌：成品（workflow/song/render.py：插帧 60fps -> 4K + 字幕 + logo / 水印 + FLAC）+ 封面 + 投稿信息
-  status   各首状态
-
-  .venv/bin/python -m workflow.live new shakira_madrid_2026 --source "~/Downloads/xxx.mkv" --artist Shakira \\
-      --date 2026-10-03 --city Madrid --venue "Estadio Shakira" --tour "Las Mujeres Ya No Lloran World Tour"
-  .venv/bin/python -m workflow.live run shakira_madrid_2026
-  .venv/bin/python -m workflow.live run shakira_madrid_2026 --from refine --songs 8,9
-"""
-
 import argparse
+import json
 import os
-import subprocess
-import sys
-import time
-
-from .paths import CONCERTS, ROOT, Concert, read_json, write_json
-
-STAGES = ["ingest", "setlist", "lyrics", "separate", "segment", "refine", "preview", "package"]
+from pathlib import Path
+from .paths import ROOT, Concert, read_json, write_json
+from .pipeline import run_batch, run_project, selected_stages, worker
+from .stages import STAGES
 
 
-def stage_fn(name):
-    import importlib
-    return getattr(importlib.import_module(f".{name}", __package__), f"stage_{name}")
+def create(args):
+    if not args.slug or not all(c.isalnum() or c in "_-" for c in args.slug):
+        raise ValueError("项目名只能包含字母、数字、下划线和连字符")
+    concert = Concert(args.slug)
+    concert.dir.mkdir(parents=True, exist_ok=True)
+    info = read_json(concert.info, {})
+    if args.source:
+        from .ingest import resolve_source
+        info["source_file"] = str(resolve_source(args.source).resolve())
+    fields = {"slug": args.slug, "input_kind": args.kind, "source_url": args.url,
+              "artist": args.artist, "artist_zh": args.artist_zh,
+              "date": args.date, "city": args.city, "venue": args.venue,
+              "tour": args.tour, "title": args.title, "title_zh": args.title,
+              "title_en": args.title_en, "song_title": args.song_title,
+              "setlist_url": args.setlist_url, "broadcast": args.broadcast}
+    info.update({key: value for key, value in fields.items() if value is not None})
+    if args.start is not None or args.end is not None:
+        if args.end is None or args.end <= (args.start or 0):
+            raise ValueError("截取范围需要有效的 --start / --end 秒数")
+        info["source_slice"] = [args.start or 0, args.end]
+    if args.title_box:
+        info["title_box"] = [int(value) for value in args.title_box.split(",")]
+    write_json(concert.info, info)
+    print(concert.info)
 
 
-def start_log(c, label):
-    """输出同时写到 concerts/<slug>/logs/<时间>_<label>.log（含子进程）。"""
-    c.logs.mkdir(parents=True, exist_ok=True)
-    log = c.logs / f"{time.strftime('%Y%m%d-%H%M%S')}_{label}.log"
-    tee = subprocess.Popen(["tee", "-a", str(log)], stdin=subprocess.PIPE)
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
-    os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
-    print(f"日志: {log}", flush=True)
-
-
-def cmd_new(a):
-    from .ingest import resolve_source
-    c = Concert(a.slug)
-    c.dir.mkdir(parents=True, exist_ok=True)
-    info = read_json(c.info, {})
-    info.update({k: v for k, v in {
-        "slug": a.slug, "source_file": str(resolve_source(a.source)), "artist": a.artist, "artist_zh": a.artist_zh,
-        "date": a.date,
-        "city": a.city, "venue": a.venue, "tour": a.tour, "title": a.title, "setlist_url": a.setlist_url,
-        "title_box": [int(x) for x in a.title_box.split(",")] if a.title_box else None,
-        "cover_mask_bottom": a.cover_mask_bottom, "broadcast": a.broadcast,
-    }.items() if v})
-    write_json(c.info, info)
-    print(f"写入 {c.info}")
-
-
-def parse_songs(s):
-    return [x.strip() for x in s.split(",") if x.strip()] if s else None
-
-
-def cmd_run(a):
-    c = Concert(a.slug)
-    if not c.info.exists():
-        sys.exit(f"没有场次 {a.slug}，先 new")
-    stages = STAGES[STAGES.index(a.from_): STAGES.index(a.to) + 1]
-    start_log(c, f"{stages[0]}-{stages[-1]}")
-    a.songs = parse_songs(a.songs)
-    for s in stages:
-        print(f"\n========== [{s}] ==========", flush=True)
-        stage_fn(s)(c, a)
-
-
-def cmd_hd(a):
-    from .hd import run_hd
-    c = Concert(a.slug)
-    start_log(c, "hd")
-    a.songs = parse_songs(a.songs)
-    run_hd(c, a)
-
-
-def cmd_status(a):
-    from .review import song_status
-    c = Concert(a.slug)
-    for it in c.song_items():
-        st = song_status(c, it)
-        print(f"{it['idx']:>3} {it['title'][:34]:<34} {st['stage']:<10} {st['review']:<10} {st.get('span', '')}")
-
-
-def cmd_serve(a):
-    os.execv(str(ROOT / ".venv" / "bin" / "uvicorn"),
-             ["uvicorn", "server.app:app", "--port", str(a.port), "--app-dir", str(ROOT)])
-
-
-def main():
-    p = argparse.ArgumentParser(prog="workflow.live", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    n = sub.add_parser("new", help="建场次")
-    n.add_argument("slug")
-    n.add_argument("--source", required=True, help="整场视频文件（或含视频的目录）")
-    for k in ("artist", "artist-zh", "date", "city", "venue", "tour", "title"):
-        n.add_argument(f"--{k}")
-    n.add_argument("--setlist-url", help="setlist.fm 的这场歌单页（有 SETLISTFM_API_KEY 时用 API 读取）")
-    n.add_argument("--title-box", help="转播画面上歌名字幕的位置 x,y,w,h（1080p 像素），如 Amazon 转播 40,976,660,56")
-    n.add_argument("--cover-mask-bottom", type=float, help="封面底部模糊压暗的比例（盖台标/推广条），如 0.12")
-    n.add_argument("--broadcast", help="转播信息，写介绍用，如 'Amazon Music / Prime Video 全球直播'")
-    n.set_defaults(fn=cmd_new)
-
-    r = sub.add_parser("run", help="审核前的阶段")
-    r.add_argument("slug")
-    r.add_argument("--from", dest="from_", choices=STAGES, default=STAGES[0])
-    r.add_argument("--to", choices=STAGES, default=STAGES[-1])
-    r.add_argument("--songs", help="只处理这些歌（序号或目录名，逗号分隔），lyrics/refine/package 有效")
-    r.add_argument("--force", action="store_true", help="覆盖已有结果")
-    r.set_defaults(fn=cmd_run)
-
-    h = sub.add_parser("hd", help="只对审核通过的歌做高清")
-    h.add_argument("slug")
-    h.add_argument("--songs", help="只做这些歌（必须已通过审核）")
-    h.add_argument("--dry-run", action="store_true", help="只列出会处理哪些歌")
-    h.set_defaults(fn=cmd_hd)
-
-    s = sub.add_parser("status")
-    s.add_argument("slug")
-    s.set_defaults(fn=cmd_status)
-
-    v = sub.add_parser("serve", help="审核网页")
-    v.add_argument("--port", type=int, default=8160)
-    v.set_defaults(fn=cmd_serve)
-
-    a = p.parse_args()
-    CONCERTS.mkdir(exist_ok=True)
-    a.fn(a)
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="workflow.live", description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    new = commands.add_parser("new", help="登记演唱会或单曲输入")
+    new.add_argument("slug")
+    source = new.add_mutually_exclusive_group(required=True)
+    source.add_argument("--source", help="本地原片或视频目录")
+    source.add_argument("--url", help="视频链接")
+    new.add_argument("--kind", choices=["concert", "single"], default="concert")
+    for name in ("artist", "artist-zh", "date", "city", "venue", "tour", "title", "title-en", "song-title", "setlist-url", "broadcast", "title-box"):
+        new.add_argument("--" + name)
+    new.add_argument("--start", type=float)
+    new.add_argument("--end", type=float)
+    run = commands.add_parser("run", help="运行标准模块；默认到封面，不自动做成品或投稿")
+    run.add_argument("slug", nargs="?")
+    run.add_argument("--batch", type=Path)
+    run.add_argument("--from", dest="first", choices=STAGES, default="source")
+    run.add_argument("--to", choices=STAGES, default="covers")
+    run.add_argument("--songs", help="目录名或序号，逗号分隔")
+    run.add_argument("--platforms", nargs="+", choices=["bilibili", "douyin"])
+    machines = run.add_mutually_exclusive_group()
+    machines.add_argument("--remote", help="SSH 用户@地址；默认读取第二台 Mac 配置")
+    machines.add_argument("--local", action="store_true")
+    for name in ("key", "model", "cover-remote-config", "browser", "proxy", "url"):
+        run.add_argument("--" + name)
+    for name in ("auto-review", "replace-covers", "confirmed", "force"):
+        run.add_argument("--" + name, action="store_true", default=None)
+    run.add_argument("--resume", action="store_true", help="清除暂停，接续未完成任务")
+    run.add_argument("--dry-run", action="store_true", help="只显示模块与任务，不处理素材")
+    pause = commands.add_parser("pause", help="当前歌曲收尾，停止后续派工")
+    pause.add_argument("batch", type=Path)
+    status = commands.add_parser("status", help="读取项目或批次状态")
+    status.add_argument("path")
+    serve = commands.add_parser("serve", help="本地审稿页")
+    serve.add_argument("--port", type=int, default=8160)
+    internal = commands.add_parser("worker", help="内部单曲执行器，由统一调度器调用")
+    internal.add_argument("task", type=Path)
+    internal.add_argument("--host", required=True)
+    args = parser.parse_args(argv)
+    if args.command == "new":
+        create(args)
+    elif args.command == "worker":
+        worker(args.task, args.host)
+    elif args.command == "pause":
+        if not args.batch.is_dir():
+            parser.error("批次目录不存在")
+        write_json(args.batch / "PAUSED", {"mode": "drain_current_only"})
+        print("当前歌曲收尾后暂停")
+    elif args.command == "serve":
+        os.execv(str(ROOT / ".venv/bin/uvicorn"), ["uvicorn", "server.app:app", "--port", str(args.port), "--app-dir", str(ROOT)])
+    elif args.command == "status":
+        path = Path(args.path)
+        if not path.is_dir():
+            path = Concert(args.path).dir / "workflow"
+        print(json.dumps(read_json(path / "workflow_status.json", {}), ensure_ascii=False, indent=2))
+    else:
+        if bool(args.slug) == bool(args.batch):
+            parser.error("指定项目名或 --batch，两者不能同时指定")
+        stages = selected_stages(args.first, args.to)
+        defaults = read_json(ROOT / "delivery_defaults.json", {}).get("worker", {})
+        options = {key: value for key, value in vars(args).items()
+                   if key not in {"command", "slug", "batch", "first", "to", "dry_run", "local"}}
+        options["remote"] = "" if args.local else args.remote or (read_json(args.batch / "queue.json", {}).get("remote") if args.batch else None) or defaults.get("remote")
+        options["key"] = args.key or defaults.get("key", "~/.ssh/adele_render_worker")
+        options["model"] = args.model or defaults.get("model")
+        options["cover_remote_config"] = args.cover_remote_config or defaults.get("cover_remote_config")
+        options["songs"] = args.songs.split(",") if args.songs else None
+        if args.dry_run:
+            from .pipeline import batch_tasks
+            if args.batch:
+                jobs, _ = batch_tasks(read_json(args.batch / "queue.json"), args.batch, stages, options)
+            else:
+                concert = Concert(args.slug)
+                jobs = [{"concert": concert.slug, "song": item["name"]} for item in concert.song_items()]
+            print(json.dumps({"stages": stages, "options": options, "jobs": jobs}, ensure_ascii=False, indent=2))
+            return
+        result = (run_batch(args.batch, stages, options, resume=args.resume) if args.batch
+                  else run_project(Concert(args.slug), stages, options))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if result["status"] == "incomplete":
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

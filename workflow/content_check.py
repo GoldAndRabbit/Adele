@@ -63,15 +63,11 @@ def source_identity(path):
 
 
 def selection(concert, item):
-    d = concert.song_dir(item)
-    policy = read_json(concert.dir / 'vertical_source.json', {}).get('songs', {}).get(item['name'])
-    if policy:
-        return policy
-    info = read_json(d / 'song.json', {})
-    source = info.get('source_file') or concert.load('info', {}).get('source_file')
-    if not source or not info.get('slice'):
-        raise ContentCheckFailed('缺少可核查的原片或曲目范围')
-    return {'source': source, 'slice': info['slice']}
+    from workflow.sources import selection as resolve
+    try:
+        return resolve(concert, item)
+    except (FileNotFoundError, ValueError) as error:
+        raise ContentCheckFailed(str(error)) from error
 
 
 def inputs(concert, item):
@@ -493,7 +489,7 @@ def require_job(policy, folder, source=None):
             raise ContentCheckFailed(f'任务字幕或水印已变更：{name}，禁止编码')
     if source is not None and source_identity(source) != cert.get('source_identity'):
         # Remote replicas have different paths/stat values; verify their bytes.
-        from workflow.concert_delivery import source_digest
+        from workflow.runtime import source_digest
         if source_digest(Path(source)) != cert['source_sha256']:
             raise ContentCheckFailed('任务原片与通过检查的版本不同，禁止编码')
     return cert

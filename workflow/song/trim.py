@@ -134,7 +134,7 @@ def main():
         (d / "watermark.json").unlink(missing_ok=True)
         run([sys.executable, "-m", "workflow.song.watermark", "post", d.name])
         if final.exists():
-            print(f"开头改了：4K 成品要重新渲染（workflow.song.render post:{d.name}）")
+            print(f"开头改了：4K 成品要重新渲染（workflow.live run singles --from delivery --to delivery --songs {d.name} --confirmed）")
     print(f"{d.name}：原片 {start:g} s 到 {end_full if end_full is not None else '结尾'}；字幕 {n_lines} 行、翻译 {n_units} 句；改之前的备份 {bak}")
 
 

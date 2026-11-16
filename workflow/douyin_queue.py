@@ -81,9 +81,10 @@ def plan_for(row):
                 account=os.environ.get("DOUYIN_ACCOUNT", "goldandrabbit"))
 
 
-def enqueue_collection(batch):
-    # This explicitly requested Douyin queue is independent of the default
-    # platform policy used when rendering new videos.
+def enqueue_collection(batch, *, explicit=False):
+    from workflow.delivery_config import collection_platforms
+    if not explicit and "douyin" not in collection_platforms():
+        return
     slug = batch["slug"]
     if slug in read_json(QUEUE / "collections.json", {}):
         return

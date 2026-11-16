@@ -31,7 +31,7 @@ class ContentRepairTests(unittest.TestCase):
         (self.d/'audio.flac').write_bytes(b'old clock audio')
 
     def test_cut_extension_keeps_translation_and_old_clock_evidence(self):
-        with patch.object(cr,'assert_idle'),patch('workflow.preview_batch.enable_browser'),\
+        with patch.object(cr,'assert_idle'),patch('workflow.preview.enable_browser'),\
              patch('workflow.song.watermark.ensure_song'),\
              patch('workflow.song.song_translation_workflow.build_outputs'):
             backup=cr.change_cut(self.c,self.item,35,70)
@@ -43,13 +43,13 @@ class ContentRepairTests(unittest.TestCase):
         self.assertFalse((self.d/'audio.flac').exists())
 
     def test_active_worker_assets_cannot_be_changed(self):
-        worker=SimpleNamespace(info={'pid':1,'cmdline':['python','-m','workflow.concert_delivery',
+        worker=SimpleNamespace(info={'pid':1,'cmdline':['python','-m','workflow.delivery',
             'test','--only','01_song']})
         with patch('psutil.process_iter',return_value=[worker]):
             with self.assertRaises(RuntimeError):cr.assert_idle(self.c,self.item)
 
     def test_same_song_name_in_another_concert_does_not_block_repair(self):
-        worker=SimpleNamespace(info={'pid':1,'cmdline':['python','-m','workflow.concert_delivery',
+        worker=SimpleNamespace(info={'pid':1,'cmdline':['python','-m','workflow.delivery',
             'different_concert','--only','01_song']})
         with patch('psutil.process_iter',return_value=[worker]):cr.assert_idle(self.c,self.item)
 

@@ -104,10 +104,7 @@ def from_page(j):
 
 # 标签固定格式：{歌手中文名} {歌手英文名} {演唱会名} + 下面这几个
 TAGS_FIXED = ["Billboard", "格莱美", "双语字幕"]
-TITLE_MAX = 80
-DESC_MIN = 1800
-DESC_MAX = 2000
-TAG_MAX, TAG_LEN = 12, 20   # B 站最多 12 个标签，每个不超过 20 字
+from workflow.templates import TITLE_MAX, DESC_MIN, DESC_MAX, TAG_MAX, TAG_LEN, INTRO_SECTIONS
 DTIME_MIN = 4 * 3600        # 定时发布至少在提交后 4 小时
 
 
@@ -143,7 +140,7 @@ def load_post(d):
 def description(post):
     """Use the three canonical sections; intro_text is a legacy fallback only."""
     intro = post.get("intro") or {}
-    sections = [intro.get(k) for k in ("song", "performance", "lyrics")]
+    sections = [intro.get(k) for k in INTRO_SECTIONS]
     if all(isinstance(x, str) and x.strip() for x in sections):
         return "\n\n".join(x.strip() for x in sections)
     if post.get("intro_text"):

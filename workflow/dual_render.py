@@ -1,13 +1,13 @@
 """Shared dual-platform compositor; encoding uses the existing song render preset."""
 from pathlib import Path
-import json,subprocess as sp,time,math,hashlib,fcntl
+import json,subprocess as sp,time,fcntl
 import pysubs2
 from PIL import Image,ImageDraw,ImageFont
-from workflow.live.paths import Concert
+from workflow.live.paths import write_json
 from workflow.vertical_workflow import subtitle
 from workflow.portrait_header import draw_portrait_header,STYLE,PINGFANG
 from workflow.portrait_browser import preview_data
-from workflow.song.render import DEFAULT_ENCODER, ENCODERS
+from workflow.encoding import DEFAULT_ENCODER, ENCODERS
 R=Path(__file__).resolve().parents[1]
 def configure(concert, item, output):
  global W,C,D,START,DURATION,ITEM,MASTER_DIR
@@ -16,7 +16,7 @@ def configure(concert, item, output):
  START=0;DURATION=policy['slice'][1]-policy['slice'][0]
 FF=['/opt/homebrew/bin/ffmpeg','-nostdin','-hide_banner','-loglevel','warning','-y'];FONT='/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf'
 def save(p,v):
- tmp=p.with_suffix('.tmp');tmp.write_text(json.dumps(v,ensure_ascii=False,indent=2));tmp.replace(p)
+ write_json(p,v)
 def timing(stage,seconds,**kw):
  p=W/'timings.json'
  with (W/'timings.lock').open('a') as lock:

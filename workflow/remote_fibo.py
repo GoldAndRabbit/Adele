@@ -35,6 +35,11 @@ def run_inference(config, args, reference, output, log, reference_area=None):
                                 'images':{name:hashlib.sha256(p.read_bytes()).hexdigest() for name,p in zip(names,images)},
                                 'reference_area':reference_area}))
     scp = ['scp', '-q', '-o', 'BatchMode=yes', '-i', str(Path(worker['identity']).expanduser())]
+    # Deploy the formal worker on each request; keep the installed model and
+    # venv. A stale copied script must not retain a different GPU-lock policy.
+    for name in ('remote_fibo_worker.py', 'local_fibo_generate.py'):
+        subprocess.run([*scp, str(Path(__file__).with_name(name)),
+                        worker['host']+':'+worker['directory'].rstrip('/')+'/'+name], check=True)
     for source, name in [*zip(images,names), (local, 'request.json')]:
         subprocess.run([*scp, str(source), worker['host']+':'+remote+'/'+name], check=True)
     command = [worker['directory']+'/venv/bin/python', worker['directory']+'/remote_fibo_worker.py', remote+'/request.json']

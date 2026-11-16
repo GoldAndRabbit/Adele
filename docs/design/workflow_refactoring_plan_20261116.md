@@ -1,18 +1,18 @@
 # 标准工作流调用链与重构方案
 
-2026-11-16 · 方案稿，尚未实施
+2026-11-16 · 原调用链与迁移方案；实现已收拢至 `workflow.live`，当前操作见 [标准工作流](/Users/gold/repos/adele/docs/workflow.md)。下文保留重构前的调用关系与迁移依据。
 
 最终保留一套完整工作流，覆盖视频下载、演唱会拆分、字幕搜索匹配、投稿信息与审稿、预览、封面和成品制作。本地与双 Mac 使用同一套阶段实现、任务状态和交付规则，区别仅在执行机器。所有改进进入正式模块，批次目录只保存任务参数、日志、结果和历史证据。
 
 原来的标准入口仍然存在：`workflow.live run` 负责准备审核资料，`workflow.live hd` 单独启动成品。当前复杂度主要来自旧成品链、新双 Mac 制作链、批次编排脚本同时存在，以及部分新能力尚未接回原标准入口。重构应收拢这些调用关系，同时保留苹果流式编码、双机派工、缓存、断点续跑、制作计时和投稿信息同步。
 
-本次只梳理并新增本文。业务代码不作改动。依照用户最新指令，当前两台机器各自收尾正在执行的歌曲，批次通过已有 `PAUSED` 标记停止后续派工；这项运行控制独立于重构。
+本文最初为只读梳理。用户随后授权备份至 main 并实施重构，旧批次源码已保存于提交 `5c380b3`；删除清单见 `removed_legacy_scripts.json`，具体文案与封面填字见 [模板规范](/Users/gold/repos/adele/docs/design/publication_templates.md)。
 
 ## 1. 原标准入口及实际调用链
 
 ### 1.1 演唱会准备与审稿
 
-入口：[workflow/live/__main__.py](/Users/gold/repos/adele/workflow/live/__main__.py:33)。`cmd_run` 根据 `--from / --to` 截取固定阶段，再动态导入对应 `stage_<阶段>` 函数。
+入口：[workflow/live/__main__.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/live/__main__.py#L33)。`cmd_run` 根据 `--from / --to` 截取固定阶段，再动态导入对应 `stage_<阶段>` 函数。
 
 ```text
 python -m workflow.live run <slug>
@@ -29,9 +29,9 @@ python -m workflow.live run <slug>
      server / web 审稿页
 ```
 
-`refine` 的主调用为 `refine_one → cut_audio / make_preview → workflow.song.run song <slug> <name>`。字幕流程完成后进入 `song_translation_workflow.translate`，演唱会分支还调用 `watermark.ensure_song`。参考：[refine.py](/Users/gold/repos/adele/workflow/live/refine.py:93)、[song/run.py](/Users/gold/repos/adele/workflow/song/run.py:709)。
+`refine` 的主调用为 `refine_one → cut_audio / make_preview → workflow.song.run song <slug> <name>`。字幕流程完成后进入 `song_translation_workflow.translate`，演唱会分支还调用 `watermark.ensure_song`。参考：[refine.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/live/refine.py#L93)、[song/run.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/song/run.py#L709)。
 
-`preview` 在固定阶段中独立存在，而 `refine` 内也调用预览。已有复用判断可避免部分重复编码，但“谁负责触发预览”的职责仍有重叠。`package` 当前实际生成传统候选封面，并未直接串起后来的 FIBO 封面发布链。参考：[preview.py](/Users/gold/repos/adele/workflow/live/preview.py:18)、[package.py](/Users/gold/repos/adele/workflow/live/package.py:306)。
+`preview` 在固定阶段中独立存在，而 `refine` 内也调用预览。已有复用判断可避免部分重复编码，但“谁负责触发预览”的职责仍有重叠。`package` 当前实际生成传统候选封面，并未直接串起后来的 FIBO 封面发布链。参考：[preview.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/live/preview.py#L18)、[package.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/live/package.py#L306)。
 
 ### 1.2 原成品链
 
@@ -48,13 +48,13 @@ python -m workflow.live hd <slug>
         └─ live.hd.write_post：写旧格式投稿文件
 ```
 
-这说明原来的 `run` 并不包含成品制作或自动投稿，`hd` 才是成品入口。`song.render` 仍保留 RIFE 帧序列及相邻歌曲插帧、编码交错的逻辑；当前新链还从它导入编码预设，不能直接删除整个文件。参考：[live/hd.py](/Users/gold/repos/adele/workflow/live/hd.py:55)、[song/render.py](/Users/gold/repos/adele/workflow/song/render.py:188)。
+这说明原来的 `run` 并不包含成品制作或自动投稿，`hd` 才是成品入口。`song.render` 仍保留 RIFE 帧序列及相邻歌曲插帧、编码交错的逻辑；当前新链还从它导入编码预设，不能直接删除整个文件。参考：[live/hd.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/live/hd.py)、[song/render.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/song/render.py)。
 
 ### 1.3 单曲输入链
 
 单曲原入口为 `workflow/make_mv.py`，阶段是 `download → prep → lyrics → separate → interp`，同样支持 `--from / --to`。准备审核资料通常先执行到 `separate`，再调用 `workflow.song.run post <name>` 等后续模块。
 
-下载阶段已经调用 `youtube_download.cli_args`，统一 PO Token、代理与 Cookie 参数；下载后的音视频轨、时长检查和外盘存储也已有实现。这些应作为正式输入模块保留。参考：[make_mv.py](/Users/gold/repos/adele/workflow/make_mv.py:78)、[youtube_download.py](/Users/gold/repos/adele/workflow/youtube_download.py:89)。
+下载阶段已经调用 `youtube_download.cli_args`，统一 PO Token、代理与 Cookie 参数；下载后的音视频轨、时长检查和外盘存储也已有实现。这些应作为正式输入模块保留。参考：[make_mv.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/make_mv.py)、[youtube_download.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/youtube_download.py#L89)。
 
 演唱会与单曲可以有不同输入适配器，但进入逐首处理后，应共享字幕、投稿资料、预览、封面和成品阶段。不能再为每支 MV 或每场演出复制一份总流程。
 
@@ -91,11 +91,11 @@ flowchart TD
 | 多渠道路径 | `original_master / dual_render` | 共享 60fps 母版后生成所选平台成品；与单渠道流式路径是不同输出策略 |
 | 资料同步 | `delivery_bundle.write_bundle` | 更新成品绝对路径、制作机器、耗时、两平台投稿导出与统一交付包 |
 
-依据：[priority_delivery.py](/Users/gold/repos/adele/workflow/priority_delivery.py:74)、[concert_delivery.py](/Users/gold/repos/adele/workflow/concert_delivery.py:184)、[dual_platform.py](/Users/gold/repos/adele/workflow/dual_platform.py:75)、[stream_delivery.py](/Users/gold/repos/adele/workflow/stream_delivery.py:114)。
+依据：[priority_delivery.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/priority_delivery.py)、[concert_delivery.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/concert_delivery.py)、[dual_platform.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/dual_platform.py#L75)、[stream_delivery.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/stream_delivery.py#L114)。
 
 `concert_delivery` 已支持一场内部双机分配；外层 `priority_delivery` 又按首分配机器，并用 `--single-worker` 调用它。目前通过该参数分工，但存在两层机器分配策略。目标应只留一个调度者，单曲制作函数不再决定“这首交给哪台机器”。
 
-当前默认配置为 B站单渠道、流式编码、关闭制作前额外内容审查。`content_check.check_for_render` 默认生成 `prepared_preview / not_requested` 输入快照，用于确认边界、字幕等未在制作中变化，不代表重新做了一遍听审。严格 ASR／音乐边界检查是另一条可选路径。参考：[delivery_defaults.json](/Users/gold/repos/adele/delivery_defaults.json)、[content_check.py](/Users/gold/repos/adele/workflow/content_check.py:24)。
+当前默认配置为 B站单渠道、流式编码、关闭制作前额外内容审查。`content_check.check_for_render` 默认生成 `prepared_preview / not_requested` 输入快照，用于确认边界、字幕等未在制作中变化，不代表重新做了一遍听审。严格 ASR／音乐边界检查是另一条可选路径。参考：[delivery_defaults.json](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/delivery_defaults.json)、[content_check.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/content_check.py#L24)。
 
 ### 2.2 封面与投稿同步
 
@@ -113,7 +113,7 @@ flowchart TD
 
 `fibo_dual_queue` 当前提供双机按首消费与复用、发布等编排。它的业务步骤要保留，独立机器分配逻辑应逐步接入统一执行层。封面复核仅针对新生成的封面版本，不应在每次成品制作时重新生成、重新审核已有封面。
 
-投稿信息已有统一生成与导出基础：`live.package.draft_meta → make_meta.generate_intro` 生成正文，`bili_title` 生成自动标题，人工修改有明确优先级。页面与完整 JSON 使用 `delivery_bundle.submission_records`，`write_bundle` 导出两平台记录。目标是所有调用方都使用这套接口，退出另写一份投稿信息的旁路。参考：[投稿信息流程](/Users/gold/repos/adele/docs/design/posting_content_flow.md)、[delivery_bundle.py](/Users/gold/repos/adele/workflow/delivery_bundle.py:55)。
+投稿信息已有统一生成与导出基础：`live.package.draft_meta → make_meta.generate_intro` 生成正文，`bili_title` 生成自动标题，人工修改有明确优先级。页面与完整 JSON 使用 `delivery_bundle.submission_records`，`write_bundle` 导出两平台记录。目标是所有调用方都使用这套接口，退出另写一份投稿信息的旁路。参考：[投稿信息流程](/Users/gold/repos/adele/docs/design/posting_content_flow.md)、[delivery_bundle.py](https://github.com/GoldAndRabbit/Adele/blob/5c380b3/workflow/delivery_bundle.py#L55)。
 
 ## 3. 最终一套工作流的七个模块
 

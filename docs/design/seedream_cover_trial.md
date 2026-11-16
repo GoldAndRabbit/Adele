@@ -1,3 +1,7 @@
+# 历史试验：Seedream封面
+
+该试验不是当前默认封面流程。正式流程统一见 [标准工作流](/Users/gold/repos/adele/docs/workflow.md) 与 [模板规范](/Users/gold/repos/adele/docs/design/publication_templates.md)。以下为历史试验记录，所列旧入口已退出，可在提交 `5c380b3` 查阅。
+
 # Seedream 封面试跑
 
 后续选帧默认遵循 [AI 封面选帧策略 v1](ai_cover_frame_selection.md)：三个不同构图各一张。以下 Dark Horse 三配色为早期试验记录。计划现支持每个 candidate 独立指定 reference、source_time、selection_reason；缺省时兼容计划级 reference。抖音另外提供纯 AI 加字预览，与旧模板独立展示。

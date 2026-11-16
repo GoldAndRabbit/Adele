@@ -21,7 +21,7 @@ API = "https://api.setlist.fm/rest/1.0/setlist/{}"
 
 
 def from_api(c, url):
-    from llm import load_env
+    from workflow.llm import load_env
     load_env()
     key = os.environ.get("SETLISTFM_API_KEY")
     if not key or not url:

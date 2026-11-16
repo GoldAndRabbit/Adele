@@ -81,6 +81,14 @@ def branded_cover(concert, item, frame, compact=True, size=(1920, 1080), crop_x=
         if compact:
             subtitle = subtitle.rsplit(" · ", 1)[0]
     title = compact_cover_title(concert, item) if compact else cover_title(concert, item)
+    from workflow.templates import compact_cover_text
+    if compact:
+        # Preserve explicit credits and the existing guest/event resolution;
+        # the same text contract applies to every posting aspect ratio.
+        artist, separator, event = subtitle.partition(' · ')
+        text = compact_cover_text(title, artist, event,
+                                  subtitle_override=copy.get('cover_subtitle') if copy.get('cover_subtitle') else None)
+        title, subtitle = text['title'], text['subtitle']
     args = make_cover.build_parser().parse_args([
         '--preserve-artwork', '--sub-fit', 'natural', '--name', item['name'],
         '--title', title, '--subtitle', subtitle,

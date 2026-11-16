@@ -8,6 +8,7 @@ import errno
 import re
 
 from workflow.live.paths import ROOT, read_json
+from workflow.templates import cover_filename
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
@@ -29,7 +30,7 @@ def cover_path(directory, source, platform, ratio):
     # Different revisions can be generated within the same minute. Give each
     # a distinct directory so the user-facing basename remains exact.
     revision = hashlib.sha256(os.fsencode(path) + f":{stat.st_ino}:{stat.st_mtime_ns}".encode()).hexdigest()[:20]
-    target = exports / revision / f"{platform}_ai_{ratio}_{stamp}{path.suffix.lower()}"
+    target = exports / revision / cover_filename(platform, ratio, stamp, path.suffix)
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
         try:

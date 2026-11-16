@@ -21,9 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from llm import chat_json, vision_json  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 TITLE_PREFIX = "[4K60帧/Hi-Res]"
-TITLE_MAX = 80  # B 站标题上限
-INTRO_MAX = 2000  # B 站简介上限（三段加空行一起算）
+from workflow.templates import TITLE_MAX, DESC_MIN, DESC_MAX as INTRO_MAX, INTRO_FLOORS, valid_tags
 
 SYSTEM_PROMPT = """你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。根据给出的原视频信息，输出 JSON：
 {
@@ -58,7 +58,20 @@ SYSTEM_PROMPT = """你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。�
 - 艺人英文名用官方英文/罗马字（如 Thelma Aoyama）
 - intro_song、intro_performance 不引用歌词
 - 不要介绍视频本身的制作（字幕收录了什么、字幕颜色/样式、4K/60帧/画质处理等），观众不需要；只写歌和演出
-- tags 8~12 个，中文为主，含艺人、歌名、节目名、“4K60帧”和字幕标签（字幕语言见“字幕”字段）"""
+- tags 恰好12个，不重复，每个最多20字符，中文为主，包含本曲歌手、歌曲、演出／节目及相关音乐与字幕标签；不编造、不用无关词凑数"""
+
+
+def generate_tags(material, existing=()):
+    """Complete tags without regenerating an already finished introduction."""
+    for attempt in range(2):
+        result = chat_json(SYSTEM_PROMPT,
+            str(material) + "\n只返回{\"tags\":[...]}。需要12个真实相关、不重复、每个不超过20字符的标签。"
+            + "已有标签可复用：" + json.dumps(list(existing), ensure_ascii=False),
+            temperature=.3, label="投稿标签")
+        tags = result.get("tags", [])
+        if valid_tags(tags):
+            return [tag.strip() for tag in tags]
+    raise ValueError("投稿标签未达到12个相关且有效的标签要求")
 
 
 def subs_title_zh(d):
@@ -141,7 +154,6 @@ def intro_text(gen):
     return "\n\n".join(x.strip() for x in (gen.get("intro_song"), gen.get("intro_performance"), gen.get("intro_lyrics")) if x)
 
 
-INTRO_FLOORS = {"intro_song": 350, "intro_performance": 350, "intro_lyrics": 500}
 
 
 def unique_intro(gen):
@@ -161,7 +173,7 @@ def unique_intro(gen):
 
 
 def complete_intro(gen):
-    return (1800 <= len(intro_text(gen)) <= INTRO_MAX
+    return (DESC_MIN <= len(intro_text(gen)) <= INTRO_MAX
             and all(len(gen.get(k, '').strip()) >= floor for k, floor in INTRO_FLOORS.items()))
 
 
@@ -213,7 +225,7 @@ def fit_intro(gen, label=""):
                               key=lambda i: abs(i - (len(rows)-1)/2)))
         for key, index in candidates:
             proposed = "".join(parts[key][:index] + parts[key][index+1:]).strip()
-            if len(proposed) < INTRO_FLOORS[key] or len(intro_text({**gen, key: proposed})) < 1800:
+            if len(proposed) < INTRO_FLOORS[key] or len(intro_text({**gen, key: proposed})) < DESC_MIN:
                 continue
             parts[key].pop(index)
             gen[key] = proposed

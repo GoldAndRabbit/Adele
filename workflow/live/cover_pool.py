@@ -29,10 +29,12 @@ from pathlib import Path
 from PIL import Image
 
 from . import review
-from .package import CLOSEUP_MIN, TEXT_LIFT, save_picked, subtitle_line, cover_title
+from .package import save_picked, subtitle_line, cover_title
 from .paths import ROOT, VENV_PY, Concert, read_json, write_json
 
 POOL_WINDOWS = 10                           # 整场切成 10 段，每段各挑一批（只在整场挑「最好的」会全挤在一两段里）
+CLOSEUP_MIN = 0.14                         # Existing candidate-pool UI compatibility
+TEXT_LIFT = 0.08
 POOL_SHOTS = "closeup=8,half=6,full=0"      # 每段：特写 8、半身 6（舞台全景、大屏幕做不了封面，不挑）
 POOL_KEEP = 160                              # 过了硬条件、打分 + 去重之后最多留这么多给用户标记
 PER_SONG = 20                                # 同一首歌（或两首之间）最多留几张（画面分散到整场）

@@ -6,5 +6,11 @@
     "bilibili"
   ],
   "single_channel_pipeline": "stream",
-  "content_audit_before_render": false
+  "content_audit_before_render": false,
+  "worker": {
+    "remote": "zhaojing@192.168.3.10",
+    "key": "~/.ssh/adele_render_worker",
+    "model": "/Users/gold/Library/Caches/adele/fibo2-edit-turbo-q4",
+    "cover_remote_config": "/Volumes/harddisk_5T/adele-workflow/review-workspace/work/machines/secondary-fibo.json"
+  }
 }

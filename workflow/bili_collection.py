@@ -105,7 +105,7 @@ def validate(body, options):
         raise ValueError("分组小节必须为开启或关闭")
     source_id = body.get("source_id")
     if source_id and not any(row["id"] == source_id for row in options):
-        raise ValueError("指定的合集底图已不可用")
+        source_id = options[0]["id"] if options else None
     return {"title": title.strip(), "description": description, "sections_enabled": enabled,
             "source_id": source_id or (options[0]["id"] if options else None)}
 

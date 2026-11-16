@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 from workflow import dual_render
 from workflow.live.paths import Concert
-from workflow.song.render import DEFAULT_ENCODER,ENCODERS
+from workflow.encoding import DEFAULT_ENCODER,ENCODERS
 
 class DualDeliveryTest(unittest.TestCase):
  def test_song_configuration_and_trim_are_not_dark_horse_constants(self):

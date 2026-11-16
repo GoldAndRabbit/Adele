@@ -1,0 +1,1096 @@
+{
+  "snapshot_commit": "5c380b3",
+  "source_backup": "git show 5c380b3:legacy_batch_sources/<path>",
+  "scope": "仅删除已备份且未改动、未在执行的旧批次Python源码；保留全部数据、素材、日志及修改前备份",
+  "removed": [
+    {
+      "path": "posts/concert_delivery_20261110/prepare_chappell.py",
+      "sha256": "26807c1d5af03ed2b7ebf6329c2791d8d39786868a339c97049cd6697dac39d2"
+    },
+    {
+      "path": "posts/concert_delivery_20261110/priority_delivery.py",
+      "sha256": "82bfda4887d8b2ecbcf58d29a778c3255ad628cadc46216644bcbb4bfddf925b"
+    },
+    {
+      "path": "posts/concert_delivery_20261110/chappell_song_preparation.py",
+      "sha256": "e912abd605325320b9c1f1769807fc0863f6717c3424dd1dd8e3e94221f89c33"
+    },
+    {
+      "path": "posts/concert_delivery_20261110/drain_current.py",
+      "sha256": "9928010f9f51918ce5e9eec6b425037a6cf45039142b6ea0dde4c89844064766"
+    },
+    {
+      "path": "posts/concert_delivery_20261110/repair_after_midnight.py",
+      "sha256": "9fb665dddc4545ce4f8e15787b48605cd7d9a1231f83a777f2dcf453589a1b00"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/repair_known_cuts.py",
+      "sha256": "8a6fc8b2a7225740a9def6e538dbd340f0e08a06fc968fac998a5faa6a6482e5"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/repair_music_review.py",
+      "sha256": "921c9ca6c89127c7590caead4a2c420fcb9a79b3f9225950d375e17b4fd83a1d"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/capture_sources.py",
+      "sha256": "5686e171627a10e65b1ccdfecc54f93fac38bd15688d5e54b3f0ac06830ba930"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/extend_pink_intro.py",
+      "sha256": "556845052320bcfa9c3c9a175364ffc1b41422a36e841e6099abe8ebb31ffe81"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/review_all_boundaries.py",
+      "sha256": "b697eb6d7969f762a6f094ae081a091012d079f7308503c784d266cd90f9c275"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/audio_review.py",
+      "sha256": "99113f1bec0e7e767637901a14d3edd311aa2cbc4dfdaff5df0a676842e64649"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/repair_captions_all.py",
+      "sha256": "98f89a187f2b8fc19d5fb05004b64624d52a6a26ef92a9cf00fe1e885ad81058"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/review_boundaries.py",
+      "sha256": "53dbaadc831879e15830c0ce41d037750e6fa8b7d3c2c10f758c301644beaba4"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/release_observed_music.py",
+      "sha256": "dca46eb745be3b47a7ee6efddf653cb1c288cd236d4e636d95aea81b05400cad"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/repair_giver_intro.py",
+      "sha256": "179c87995cce297475771b901f7e11473bf11d56a60613a2d76dc3906f69411f"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/apply_picture_boundaries.py",
+      "sha256": "84bae7811710a5cc429220c3dec8299cc69ead4f1ce6841c1430c28bdb9cc2bd"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/extend_remaining_music.py",
+      "sha256": "de503ebe7ec7b69f4bd54497a8e06c51a72e9a0d0283ce6d5f116883ae476d94"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/repair_batch.py",
+      "sha256": "192757607d57fd5b711a8f670f4178cdd8857fc106af4d5fb7b26b6eec5b9c06"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/review_remaining_music.py",
+      "sha256": "05beaae1c7ba72be746959f25928725da5105f082ef1fba283cff99debe39d07"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/diagnose_audio.py",
+      "sha256": "a229946ebc3a40247dc51e9a6b630a51cd2bc0d463310386c66af946c3c51e37"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/repair_mv_tail.py",
+      "sha256": "b2012fe4bbbea081816b7d1ddfc6d0938f24ff2e5a3d36f7a3a8bcbd74ab8c5e"
+    },
+    {
+      "path": "posts/concert_delivery_20261116/reload_dispatcher.py",
+      "sha256": "2ac32704e2226e40a0e61c6d0799a8c8a5eacd1de43468969156fe3a7866141e"
+    },
+    {
+      "path": "posts/repair_final_archive_20261103/run.py",
+      "sha256": "3b882998da57c407a05279f9de9d963901fd1ef075bf738761701ba928ce4564"
+    },
+    {
+      "path": "posts/finalize_shows_20261101/run.py",
+      "sha256": "9f56f7c7445f86374ae101835b158baa615388dd5f57d50598a16a290cdaae04"
+    },
+    {
+      "path": "posts/finalize_shows_20261101/space_guard.py",
+      "sha256": "722237786fab05148b128eaeeed58ab0f9e3b87d906420995ea9f89454f1cc8a"
+    },
+    {
+      "path": "posts/finalize_shows_20261101/archive.py",
+      "sha256": "ec87630713330ffff04e856570dbf43102d72ade6440599f7ab97e80ba4304c4"
+    },
+    {
+      "path": "posts/queued_after_grammys_20261103/run.py",
+      "sha256": "701927dc8d78d5cc75669a68c6aa60406da66c7f6dac383c6d51eafb6720bd67"
+    },
+    {
+      "path": "posts/queued_after_grammys_20261103/download_worker.py",
+      "sha256": "be1f414a1545a45dd4c5d4c2d7d218078c8545124cc1fe3dcf109a7a8163c5d8"
+    },
+    {
+      "path": "posts/queued_after_grammys_20261103/continue_remaining.py",
+      "sha256": "7955da5f2184b9431c252fb921c200ba34f4a34874e21b49e140618764aaf623"
+    },
+    {
+      "path": "posts/source_archive_20261104/run.py",
+      "sha256": "263ed9fbd2f2b584cef77bd107b7e28a87c26846c710e08108b08e863b3fd2e3"
+    },
+    {
+      "path": "posts/source_archive_20261104/resume_render.py",
+      "sha256": "4f5929b08a81a9c8329d68045953947a9ac90b21f0d2c5cb7c2dde138ecffea1"
+    },
+    {
+      "path": "posts/next_batch_20261031/continue_precision.py",
+      "sha256": "485fb7a1c348ef4829d653029e39b093e6d61891debbc4ef3a3d9e19d3f2f5fa"
+    },
+    {
+      "path": "posts/next_batch_20261031/run.py",
+      "sha256": "3eb137c60f0aa9ced04a02b6fd701e61a41a9a3414048b18a640b98e7e4777f6"
+    },
+    {
+      "path": "posts/next_batch_20261031/fetch_added_references.py",
+      "sha256": "d871367f60cb6a1d9dfd64b82c20d11eb35f6f0002d83de25de6a4feddf24ed6"
+    },
+    {
+      "path": "posts/next_batch_20261031/fetch_references.py",
+      "sha256": "2b19d8720a191def1f89c2d9dc24a1f22193727c33b627eadeea5746f098f159"
+    },
+    {
+      "path": "posts/next_batch_20261031/run_jn2kgdpozz4.py",
+      "sha256": "a5d4135d89f930433f53752c0de5841c48a516c70534042c83471cf93d08eaa9"
+    },
+    {
+      "path": "posts/next_batch_20261031/update_show_cards.py",
+      "sha256": "3e286158cca7da61e1cd02ab219cf0660ab52c14f1f621d077979acbd5fc9c42"
+    },
+    {
+      "path": "posts/next_batch_20261031/prepare_audio.py",
+      "sha256": "0dadd51f1f0b3b961addf89c461974435720327ee3ca8e70659bc0524e58e27a"
+    },
+    {
+      "path": "posts/next_batch_20261031/fetch_2019_references.py",
+      "sha256": "52fc88deaddae1d9081cd95c4d8534cd50dbd12a27bbd5e1aa0393edf4b161be"
+    },
+    {
+      "path": "posts/next_batch_20261031/run_2z3euy1axdy.py",
+      "sha256": "fbeff994a407771e6802708d8c3a3e25c6dd09e7135dc8e0aa3250cd4f91c8f1"
+    },
+    {
+      "path": "posts/next_batch_20261031/prepare_2019.py",
+      "sha256": "77579e2782c3994be7cf97aea2834ffee996ad2c8a4a92c0f291ce3fc8ead603"
+    },
+    {
+      "path": "posts/next_batch_20261031/fetch_bili_references.py",
+      "sha256": "507580e524ed092bf80036c4f9bd417992c49ab49ffd267dda8f44cdee1c5356"
+    },
+    {
+      "path": "posts/next_batch_20261031/prepare_added.py",
+      "sha256": "9d1b76b1ca011ebb07b26f55cd4a3b52af9f70ab0bcc742101395d127b6b032b"
+    },
+    {
+      "path": "posts/finalize_46_20261104/run.py",
+      "sha256": "5e4f07ca3f51f42495c4c36f77720a12fcaff8dcca05c3cfb528e231e0ebb58d"
+    },
+    {
+      "path": "posts/finalize_46_20261104/estimate_space.py",
+      "sha256": "5650198424e50d716f681deb190d37fdcb18e9571c37869b5b6fa40be6b0d316"
+    },
+    {
+      "path": "posts/finalize_46_20261104/sample_queue.py",
+      "sha256": "744e39a85ee7d6f64b8b85c8e8a4d84692ca414a15c70fa8997ecb182891ded1"
+    },
+    {
+      "path": "posts/finalize_46_20261104/maintenance.py",
+      "sha256": "d6fcce8f91995b41df0e533ffbd074eef2dd3d86befc352f09ebb70b900ab6b8"
+    },
+    {
+      "path": "posts/finalize_46_20261104/space_guard.py",
+      "sha256": "91ca91377a26f27ff5efb94a1ae476b4343ef5d75be7d2ea40e4c9a0b556cb88"
+    },
+    {
+      "path": "posts/finalize_46_20261104/handoff_serial.py",
+      "sha256": "d833b7e1474a3b99ec96d2ee2d102043e40688dba6232b28aebb8dbe3d724541"
+    },
+    {
+      "path": "posts/finalize_46_20261104/serial_submit.py",
+      "sha256": "db4f383c197a311eb7924b747f39335a74fc861ae447889768890867990729d2"
+    },
+    {
+      "path": "posts/finalize_46_20261104/drain_current.py",
+      "sha256": "0697255e51934ad7d032ead34ca88b8e10673e37f6ffc02ce31d98d01949f53f"
+    },
+    {
+      "path": "posts/finalize_46_20261104/review_copy.py",
+      "sha256": "de6471659891b2c75ccbfef974e05b982eb8e5142fac540a1a8f58c18ab0b87a"
+    },
+    {
+      "path": "posts/repair_space_20261103/run.py",
+      "sha256": "4b332c83d81f1f3c76b877dd4f0b3a6ec1d444e7ce8749b51179ef77747915fb"
+    },
+    {
+      "path": "posts/bili_super_bowl_20261115/sync_remaining.py",
+      "sha256": "96c5bff41fab531758d3921fcbaa3e4861970f030af0afad77ff6c2d0bca4c05"
+    },
+    {
+      "path": "posts/bili_super_bowl_20261115/prepare.py",
+      "sha256": "61e88e2f679bd96d1a3ed39b3210340708109cce35ebe972b167b6dd67ea138a"
+    },
+    {
+      "path": "posts/upload_batch_20261031/spill_frames.py",
+      "sha256": "db41d8dd0be960091be9fb190cb91902cbff8d3ed182b073423a570453644f64"
+    },
+    {
+      "path": "posts/upload_batch_20261031/run.py",
+      "sha256": "9f103a5e8f0e60599b93360b6175886f925ffbd8b4e2160443a7b5f333dcc5b8"
+    },
+    {
+      "path": "posts/upload_batch_20261031/bbc_receipt_retry.py",
+      "sha256": "24a5bae9781bbc6c133a6de0f63608270f4c32e9370c0e9bd3a751a40586d7cb"
+    },
+    {
+      "path": "posts/upload_batch_20261031/continue_after_current.py",
+      "sha256": "eeaf17b96a07b60797e97885da9843d5782380bbd1f25d434a1501553e913048"
+    },
+    {
+      "path": "posts/upload_batch_20261031/archive.py",
+      "sha256": "ec87630713330ffff04e856570dbf43102d72ade6440599f7ab97e80ba4304c4"
+    },
+    {
+      "path": "posts/upload_batch_20261031/restore_local_frames.py",
+      "sha256": "1d21e5e5e99d21bf95dee6b1f80c843c8d8e08aa5208a79fc043bebe9a8b1f98"
+    },
+    {
+      "path": "posts/storage_archive_20261101/run.py",
+      "sha256": "9508957ac91e339e225eef5feb8e69ab8fee9e856e51676b1b6fa5d56150657a"
+    },
+    {
+      "path": "posts/eminem_batch_20261030/run.py",
+      "sha256": "cbaf113cffc6a11592b418b645a4e7b1d80364dee74197d67ced63358c2bab15"
+    },
+    {
+      "path": "posts/eminem_batch_20261030/fix_cover_layouts.py",
+      "sha256": "0312797d7811ef4349e7d4339c91457dbb7e493b1168268e40e65af7730d4743"
+    },
+    {
+      "path": "posts/eminem_batch_20261030/resume.py",
+      "sha256": "32fe7bf2be1d5449995b61152bd5e75d383f175c44729f68546e8131fc93b041"
+    },
+    {
+      "path": "posts/eminem_batch_20261030/download.py",
+      "sha256": "6435ddc7b1202ece1fdecc27f8b64bdc784fdac3129d6f734827227173c8bdc7"
+    },
+    {
+      "path": "posts/eminem_batch_20261030/prepare.py",
+      "sha256": "8551d2c66a464a85eb413bd2c93d92e16f6e39d9af8a931e23cc0d2c7e26250e"
+    },
+    {
+      "path": "posts/taiyuan_city_song/align_recordings.py",
+      "sha256": "ca4fdf5002dbf05fc3b46a6cd01e2a632e477f6c0c780f33759e763417de582c"
+    },
+    {
+      "path": "posts/taiyuan_city_song/transcribe_timings.py",
+      "sha256": "94b87995a2db9c14e0cf3259a3eed5d693dc7076a161fc2eb360d29d9db3120d"
+    },
+    {
+      "path": "posts/taiyuan_city_song/import_recording.py",
+      "sha256": "2aacadb0070e043e0c1e55c03809854daa24d22d58db0395d135d90c0eae3ad7"
+    },
+    {
+      "path": "posts/bili_full_20261114/finish_olivia.py",
+      "sha256": "0bc5ab7453d7df979169cfade48534ae25c83f1a98b86ddfd8db0c459918d412"
+    },
+    {
+      "path": "posts/bili_full_20261114/restart_at_upload_boundary.py",
+      "sha256": "28414e4398ac32f9d131bff08350170af5b89279b4052c8809a77e69bc0a7ae2"
+    },
+    {
+      "path": "posts/bili_full_20261114/fix_title_boundaries.py",
+      "sha256": "63ca05c0edbcfa8cc91f9999947720300c702c0f33f11eaa88394974fd631d65"
+    },
+    {
+      "path": "posts/bili_full_20261114/find_missing_original_descriptions.py",
+      "sha256": "ea49e212a1b8b1cc46d71ef3cb5d30ab1f7c70bda308d9ae7fcd7f3e5b4e5cab"
+    },
+    {
+      "path": "posts/bili_full_20261114/continue_after_audio.py",
+      "sha256": "73751115b4e453d33e5e827b470258f5d4959befafc319623572ffaefe4b9268"
+    },
+    {
+      "path": "posts/bili_full_20261114/finalize_pending.py",
+      "sha256": "75f64f1a731f37de816883e676c348b81db03cfb8359350f33df49f68cf87951"
+    },
+    {
+      "path": "posts/bili_full_20261114/sync_medley_titles.py",
+      "sha256": "8968c6939adb7205b4fd05d18c431ea7435e33478b2aabd309140d71a213cfe3"
+    },
+    {
+      "path": "posts/bili_full_20261114/snapshot_current_library.py",
+      "sha256": "cad8eed1f32b228aec2762c246d742ffb296fbb78674011e74c4df4f7909d360"
+    },
+    {
+      "path": "posts/bili_full_20261114/audit_all_online_titles.py",
+      "sha256": "716ea1401a68f02bdf41b23d7374cf78241c5520f0bc4e6d79b7426fac267704"
+    },
+    {
+      "path": "posts/bili_full_20261114/repair_final_audio.py",
+      "sha256": "f208659f92cfe6cab514da8e57e6baf44a616af3402fb96557a48c2273686b49"
+    },
+    {
+      "path": "posts/bili_full_20261114/sync_title_boundaries.py",
+      "sha256": "9664af85ce093e2520a269f2bc3581380b2457a3a2bf3121ede9386508161762"
+    },
+    {
+      "path": "posts/bili_full_20261114/finish_shakira.py",
+      "sha256": "0a0e320528459201d719b521b48cdd641890587e162e3d3d15f90c2f16117461"
+    },
+    {
+      "path": "posts/bili_full_20261114/finish_lorde.py",
+      "sha256": "147ae344498e53d2ed7c0a48b893fcb8bb5464c8d14212715859ec99d73b9138"
+    },
+    {
+      "path": "posts/bili_full_20261114/review_intro_additions.py",
+      "sha256": "040b0869b7ad0d6fc9f92dc1ad2bcc251fa746fe7126fb07b22a0d35c745cc8b"
+    },
+    {
+      "path": "posts/additional_batch_20261030/run.py",
+      "sha256": "ecc4ef9f8130bc6f6b5fe7c07fd9a98fcc129b9009108cb6f34c93cbb3bab666"
+    },
+    {
+      "path": "posts/additional_batch_20261030/download.py",
+      "sha256": "6435ddc7b1202ece1fdecc27f8b64bdc784fdac3129d6f734827227173c8bdc7"
+    },
+    {
+      "path": "posts/additional_batch_20261030/supervise.py",
+      "sha256": "372c4c314883f224bc83417ce3d6b92afbbded0f754a22e555fda7f8673be088"
+    },
+    {
+      "path": "posts/source_restore_20261104/shakira.py",
+      "sha256": "7e1104c7211ea0297634a058f079272b71010b3ac542a12b9e18ea81f9df0b81"
+    },
+    {
+      "path": "posts/source_restore_20261104/retry_after_resume.py",
+      "sha256": "1ec363a1ceaac952f18127eeec3b06cd6a633f00d607e482550f65aaeefc43ee"
+    },
+    {
+      "path": "posts/source_restore_20261104/bind_grammy.py",
+      "sha256": "f344cc67cae9a6825b369aa7fbf47afc41adea79d1da8b37cadc7d9cc1fe2e24"
+    },
+    {
+      "path": "posts/source_restore_20261104/restore.py",
+      "sha256": "1b55b71e667858f5a4625933f56e931d1a4bfbc8797f51bf7a402f7386c5bc1e"
+    },
+    {
+      "path": "work/bili-four-concerts-20261116/runner.py",
+      "sha256": "e07886bdd7746496d5e6ec025d8ec293a1cc824cd2367f3f874f90f0cf01d194"
+    },
+    {
+      "path": "work/bili-four-concerts-20261116/prepare_chile.py",
+      "sha256": "2cf2c54bb84477a108cd5f3993e392330973ce438634115760376516405e372e"
+    },
+    {
+      "path": "work/chappell-lowlands-cover-reselect-20261116-152941/run.py",
+      "sha256": "397f818aaf5e975ff6bfb51d0aae21536a2a60881795c85541f03300eb15bcc0"
+    },
+    {
+      "path": "work/navigation-20261115/check.py",
+      "sha256": "8d50e0452764d4593ea93fabaf206107c34493422cfa9a8c442c86fe56e50d07"
+    },
+    {
+      "path": "work/dual-dark-horse/hardware_finish.py",
+      "sha256": "1ebe9a0aa5a04a9b67948dff558ae0bc18c825c9573a2a38687f63e333ba04c5"
+    },
+    {
+      "path": "work/dual-dark-horse/render_products.py",
+      "sha256": "8745c3fcc8eebc64326fb8fbfe2e84d0e84ac20c15fdbe4294a3aa0a201ae48f"
+    },
+    {
+      "path": "work/dual-dark-horse/benchmark.py",
+      "sha256": "2e7a53d4c956496e25b8b5ed91860ccc0f15ab9f0793ea6f61921bb5d1d69543"
+    },
+    {
+      "path": "work/dual-dark-horse/final_inspect.py",
+      "sha256": "c0d6b3075b76b12d1c00dd554e0a32c57a6118042a84e3fa18f9c7f65e15d502"
+    },
+    {
+      "path": "work/dual-dark-horse/master.py",
+      "sha256": "c327f61ec26554053ab8c07eee9ae676e4b89c853fbb578f38e7052efa7d7a98"
+    },
+    {
+      "path": "work/dual-dark-horse/fix_landscape.py",
+      "sha256": "0245b6bcd4518c4015a85d4ea93d1a8af2b7767f86d4fa6f8d33d06c66c9fba4"
+    },
+    {
+      "path": "work/dual-dark-horse/check_hardware_ui.py",
+      "sha256": "2c52cef31ebfadffacd1525cd461a29c08c356aa38849ad8e6ae560796095f1c"
+    },
+    {
+      "path": "work/dual-dark-horse/check_timeline.py",
+      "sha256": "4d777e19a2c90fbd66ade673a4ec087c51a3d17893a8445af70d9762d4a254f1"
+    },
+    {
+      "path": "work/dual-dark-horse/migrate.py",
+      "sha256": "0402d38ba6ea1cd30dffa1ac7f649f317a197b4966a65fa5989f80b7c180b5a1"
+    },
+    {
+      "path": "work/dual-dark-horse/prepare.py",
+      "sha256": "ab00aac7829a7c749a66d5118cd3f02088e92d8b8433c62b2cc866b686547c94"
+    },
+    {
+      "path": "work/dual-dark-horse/finish.py",
+      "sha256": "68795a3e20a6d78730d6a32fa54480d2eb112a831829cc51902daec8268a64d2"
+    },
+    {
+      "path": "work/cover-pool-upgrade/run.py",
+      "sha256": "b7bf7de565c12f189847f7f99ed7d39d718bd1ea90339aea199a5a5a5226f2f7"
+    },
+    {
+      "path": "work/cover-pool-upgrade/ui_check.py",
+      "sha256": "9225460713f8c1938d6c9ec321cca23e3b5a5eca554f7ebff625e584b8337a03"
+    },
+    {
+      "path": "work/chappell-cover-reselect-20261116-150749/run.py",
+      "sha256": "397f818aaf5e975ff6bfb51d0aae21536a2a60881795c85541f03300eb15bcc0"
+    },
+    {
+      "path": "work/cover-expression-20261114/release.py",
+      "sha256": "e221b0c9595fd849193fb515c5f8052497591c8942aaa65753e0acd5c57f8c60"
+    },
+    {
+      "path": "work/cover-expression-20261114/results.py",
+      "sha256": "976ab985fca2a23f5d9661c0fae85f2e5eba0a1b79801c145fc7dbe5dd259ada"
+    },
+    {
+      "path": "work/cover-expression-20261114/generate.py",
+      "sha256": "d54b552872ead22c50cf66c212e512156f206e253a52590573d622cf2e4ae177"
+    },
+    {
+      "path": "work/cover-expression-20261114/preview-candidates.py",
+      "sha256": "367b5823d4be5c712a1a16112b15592b2d6299aa4250611a401a92ed3e6ff9d7"
+    },
+    {
+      "path": "work/cover-expression-20261114/fine.py",
+      "sha256": "7c9e4406b0a24f80766e6e27336e1d3d0cb57d72fcb1dd4ac633aa192051cc51"
+    },
+    {
+      "path": "work/cover-expression-20261114/stage.py",
+      "sha256": "0b82478cb082f12e4e7c5dcb1df17da8ff29ab53aa552168395e360a68ef607a"
+    },
+    {
+      "path": "work/cover-expression-20261114/shortlist.py",
+      "sha256": "6fc2cbd7f8b4569f7d5de0e2ff64957285b785c98e0703bbc5ab5f3e0216148c"
+    },
+    {
+      "path": "work/cover-expression-20261114/prepare.py",
+      "sha256": "2a51aea4d4d2557fbddf91390918948a9036b6a3477af842a150ff571c65893f"
+    },
+    {
+      "path": "work/grammy-ts-review/run.py",
+      "sha256": "8c674487213c782956e0f415dbc4bfba8ab6a615bac3caa2537e4b867671713d"
+    },
+    {
+      "path": "work/grammy-ts-review/asr.py",
+      "sha256": "21ab4d0d93b945eb97842ef5246160c6a66c8222c5ed6f9cae2ec1f7fa4fc162"
+    },
+    {
+      "path": "work/grammy-ts-review/speed_check.py",
+      "sha256": "4034fbefe3cb919379358716047f935e6eef2ccef384af4a7cb70099ae42c56b"
+    },
+    {
+      "path": "work/grammy-ts-review/source_check.py",
+      "sha256": "be178927a40348d8db44c43a5ab3a467b19f359c3d8d5b819585b53ba7950214"
+    },
+    {
+      "path": "work/grammy-ts-review/qwen.py",
+      "sha256": "0f2eadaf53170fb8543020282b048aa6a55a6183ed36a8a796c197ed900e61d3"
+    },
+    {
+      "path": "work/grammy-ts-review/spot.py",
+      "sha256": "50a3d27bf2e1167a6d52f062b3a9f38be0b8ca074c477604470ddc474b33c984"
+    },
+    {
+      "path": "work/grammy-ts-review/full_asr.py",
+      "sha256": "a2aea14c5c3856d90ade082abe08bd18cdabe44798a221f68f72598d9b9ddf07"
+    },
+    {
+      "path": "work/grammy-ts-review/migrate.py",
+      "sha256": "3a5f7d453edcb39d811d3e15b58b73dd46fec1451eca33aa1f098df59c9083bc"
+    },
+    {
+      "path": "work/grammy-ts-review/extract.py",
+      "sha256": "2e8864fde057b54fb875e406e4418d38576748ea674bdaa76fbcd641686003d8"
+    },
+    {
+      "path": "work/grammy-ts60/sync.py",
+      "sha256": "49a7ed124e695fca4f9dbf1937a4b3838a5cf028ccbdf7b046f8937355096fd9"
+    },
+    {
+      "path": "work/grammy-ts60/align.py",
+      "sha256": "b7681cc9e862bfab2542d7d5c180a91340c7305ef798b6e32adaabf54dcaffb2"
+    },
+    {
+      "path": "work/grammy-ts60/render.py",
+      "sha256": "08a9070022a2932f6e91403237ce97c15fc43401259f96174e3deb3f7e6ecb16"
+    },
+    {
+      "path": "work/grammy-ts60/hybrid.py",
+      "sha256": "8525aa52f2248fd125f9e573ffe9aee15437d0625db7aa16a1874c3134e70f95"
+    },
+    {
+      "path": "work/grammy-ts60/batch.py",
+      "sha256": "962931eccbbcc25de2b6e92114f0d6e0b9acd32c48c1c514af5a877b41578224"
+    },
+    {
+      "path": "work/grammy-ts60/edits.py",
+      "sha256": "dab8a29bf4b1f53dc3a9cb16f8baced56d44303db6a08b97bef781eba17aa70a"
+    },
+    {
+      "path": "work/grammy-ts60/verify_clock.py",
+      "sha256": "811b3eea397226e1283d2065ca33f0d3b6f2968bac60b74ad20444cf87fb77fc"
+    },
+    {
+      "path": "work/grammy-ts60/listen.py",
+      "sha256": "fc155ea2acf9973071caeca8608fba6b8e01bd87bbfed7596f3731bad5dfc9b9"
+    },
+    {
+      "path": "work/dua-cbs/run.py",
+      "sha256": "d302dc87004220f01ef703bd1713c2b14b4ee48164504a403dfd97f3fc4f00b0"
+    },
+    {
+      "path": "work/dua-cbs/tail.py",
+      "sha256": "aaf65c2e7bb5484bbd023635f47e66c6a6d861d0b9026a355511db6ad6eb310c"
+    },
+    {
+      "path": "work/dua-cbs/pool_check.py",
+      "sha256": "1ca935c53b7eb2a65563e00620e5660ca532cae40758905829345f98591588d9"
+    },
+    {
+      "path": "work/dua-cbs/ui_check.py",
+      "sha256": "447befed65b8f1f414d95ef865c41b51ab34ae74313155f0bbeba3469baba493"
+    },
+    {
+      "path": "work/portrait-review-nov10/resume_verify.py",
+      "sha256": "2e71fb5aeace3a296ec5a661115c3959c2bfb7c6b1af7d9a857496590aaa2607"
+    },
+    {
+      "path": "work/portrait-review-nov10/resume_generate.py",
+      "sha256": "ea40b82da39053c3c63f342e2ee7857ac368e09b5b261fdc8dfba516c5f64fa0"
+    },
+    {
+      "path": "work/portrait-review-nov10/resume_publish.py",
+      "sha256": "21b1362d1888f36031aada042281da3d4129ae1585c78811f6b965ef53372aec"
+    },
+    {
+      "path": "work/chappell-reading-lowlands-20261116/finish_verification.py",
+      "sha256": "c2081a647154ba1725f713c347a08732e7edde2fd544b404a4856ac0e937619b"
+    },
+    {
+      "path": "work/chappell-reading-lowlands-20261116/refine_locations.py",
+      "sha256": "b342d10769a378c2900d099dc890a8b214a6c16c6f1d50f9fdc332bb51f3b39b"
+    },
+    {
+      "path": "work/chappell-reading-lowlands-20261116/pipeline.py",
+      "sha256": "60881cd3862a3e8bf2b98f05cbf834a3eb2dab6219e5638a6916fa11efb7809f"
+    },
+    {
+      "path": "work/chappell-reading-lowlands-20261116/resume_after_drain.py",
+      "sha256": "237d2f4e332d4fe8e0f35856a6c607e850f61c27320aa43f7c7ff395f43a8d91"
+    },
+    {
+      "path": "work/dual-encode-benchmark/run.py",
+      "sha256": "c0160f932752d3066d72ac57853df61a48f8a85a91b6b890578fdb94a60a4b41"
+    },
+    {
+      "path": "work/browser-library/run.py",
+      "sha256": "41147cb8b7a0be2faa39845f1eb9dc01d89939eb7bad29dfc0616f668acd5312"
+    },
+    {
+      "path": "work/browser-library/refine_chile.py",
+      "sha256": "02dd81441d919106a8cd1c947992737f6579349ffb7b0f139b2084d9d51e98da"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/local_audio_queue.py",
+      "sha256": "ab2ace4709f336eda713a0e08abec872001640542de4a679071c081207b683a0"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/fibo_remaining.py",
+      "sha256": "99556f45de2e386ccba6c749dc36fed2fe386c05207218a97bda762710b1424f"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/run.py",
+      "sha256": "57da16708b54fcc1b4637bff9e07823524e1e54667c11526f92b7b60cceccba3"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/prefetch_audio.py",
+      "sha256": "d254e6031d6e38509aa967e7d87dc79df456615fb166d778ae59dfc312e1799b"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/identity_trial.py",
+      "sha256": "8d88b08fa377c61524858ce0d24ddc6eb9b76f0e909e6cab2dc0de2f3442d77c"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/cover_prepare.py",
+      "sha256": "14011c10bee9a77989cedf87428f996a6c69d7a5e14bb57d7a46f657484d43c2"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/locate_remaining.py",
+      "sha256": "94f608de0044dc4bbb18634cda156fcbf99f3b305965de4df11d5f41c7ab62d9"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/cover_followup_run.py",
+      "sha256": "e7c63f8a7752ce590abd60938006e5092c92c26af5aa88e5f280e9203a8f7f11"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/remote_audio.py",
+      "sha256": "66695b4e0a8bc712373bc8e9b08ef388a9386a9601c207371fbfe60e9e060bce"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/export_worker_model.py",
+      "sha256": "a656130817d54a6bba414780a5e03dbd3ed07accaa7fd27147db7c28e308675d"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/review_style_cases.py",
+      "sha256": "acb597ed082e4331781cf94b46b6a28a7d1224c453144a2986975102e94387f0"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/repair_remaining_boundaries.py",
+      "sha256": "f3b32e7292b59b94ed2d281768a37230050f781601776ee1320ee4340de57285"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/final_acceptance.py",
+      "sha256": "5656e431adc8512f029d6599b2c4651d61928015e28d4e9bf5f4dbe392ff0f0b"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/repair_abracadabra.py",
+      "sha256": "c1fb23cd290a5ab110ba51ad6cf9ccd82cedbc604930e42f1a4aa301e84630ed"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/supervise.py",
+      "sha256": "0f64c187cf02c307ab03ea107933609f4b157e50e27852fe7743935c1ab32c57"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/restart_when_idle.py",
+      "sha256": "1ecfeee48f880c6e527b339e0c342be8651ac629a1ee3d2e649613ed28e5957d"
+    },
+    {
+      "path": "work/three-concert-subtitles-20261114/finish_killah.py",
+      "sha256": "1305c996f8acd410680f79576433d2b45707e968c7f2d0afd120ffc2f637434f"
+    },
+    {
+      "path": "work/lorde-new-previews/verify-trims.py",
+      "sha256": "5e2b894abe022a0009dc99a48fb0902f1be4649ae67ed8be1a28ba76c0f0bb38"
+    },
+    {
+      "path": "work/lorde-new-previews/mexico-trims.py",
+      "sha256": "8b1f7aeeb41613e627c0553ed74903293201139c7d2b5b6e10d222e660ca779d"
+    },
+    {
+      "path": "work/lorde-new-previews/setup.py",
+      "sha256": "09c24c5038c5e0b16079ebf564df6ef8391d2df076e8852758e20260b12be655"
+    },
+    {
+      "path": "work/lorde-new-previews/singles.py",
+      "sha256": "531030726365b531b1c6ede337073bce9928af2f4eb7e56f821bab61da7d5ecb"
+    },
+    {
+      "path": "work/lorde-new-previews/concert.py",
+      "sha256": "cdf5bbf6d800bd4c021ca9cdaecc20468e22ecb294ea29871485543cede1b24f"
+    },
+    {
+      "path": "work/bili-title-20261114/update.py",
+      "sha256": "27bbebe021dbe2e009097994b2610be61d66d8ab7b8d537e8f7c23372841b7ab"
+    },
+    {
+      "path": "work/lyrics-bubble/build.py",
+      "sha256": "50949db315c879cc6581a63740b009d2069816bd5eff4d0740523a05818a7fcb"
+    },
+    {
+      "path": "work/lyrics-bubble/build_aligned.py",
+      "sha256": "e0ee64918647586d78bfe723514f95dcc80732148f43da3c080964a72e787c64"
+    },
+    {
+      "path": "work/lyrics-bubble/package_project.py",
+      "sha256": "b187e0c90e6d8efac4a99840e0dba8b2a7895ea72ce66601b27528f1a5cce93c"
+    },
+    {
+      "path": "work/lyrics-bubble/render.py",
+      "sha256": "5d94337b05e8dcb42c6773b3ce8549ee493b3535ae6c4c74010803afdc9ecf29"
+    },
+    {
+      "path": "work/lyrics-bubble/force_align.py",
+      "sha256": "d1a6cf52ee734dac5f4db9103ab1a19883267fbe11f67eb303ad663ff221eb50"
+    },
+    {
+      "path": "work/lyrics-bubble/locate.py",
+      "sha256": "220ff9807e98fd6bd45ab71b5cc8358a076787f8382ea6c18b8ec09cd6b06e77"
+    },
+    {
+      "path": "work/lyrics-bubble/locate60.py",
+      "sha256": "aa8217f91c91c3c96f2e47329c6f7924bf65954f2f93710442c6fdf1cfa37edf"
+    },
+    {
+      "path": "work/lyrics-bubble/check_aligned.py",
+      "sha256": "23391cafd89d0c3aa1b4e39e90e06aa9219e4b0aca7de5b57bf42e9c126b95fc"
+    },
+    {
+      "path": "work/local-flux3/fetch.py",
+      "sha256": "fdd5704efb78ab833bf4879695fcaf99fc65cd8efe0293de8a1f670fa8d5c102"
+    },
+    {
+      "path": "work/local-flux3/compare-fibo.py",
+      "sha256": "1190fce14466fdf58030f4d2cc91495d377be498b4f21d154216d8661c0e2213"
+    },
+    {
+      "path": "work/local-flux3/check.py",
+      "sha256": "e600cd530e748ded35f5338c6fed62729b420d57679a9d071c930723d6636c58"
+    },
+    {
+      "path": "work/local-flux3/full_shapes.py",
+      "sha256": "3134b8bb15b93b9e6524d7092f511caaa405e7e53e594fb16c94bcb4c69c0362"
+    },
+    {
+      "path": "work/local-flux3/fetch-q8.py",
+      "sha256": "ceb0fb920c05b4dce5367356eea8b4419908dbbced841b7385a712e069b5a069"
+    },
+    {
+      "path": "work/local-flux3/fetch-bf16.py",
+      "sha256": "d10cc06ed56b3c8a33f85567f62d7ae6d20f1d6487a807a74bb760e458bc1918"
+    },
+    {
+      "path": "work/local-flux3/fetch-fibo-official.py",
+      "sha256": "143fc9f59bcada5b80f16f21a2175e4c17ec02c5a0164aed32d9dc0b5b4d203c"
+    },
+    {
+      "path": "work/local-flux3/fetch-fibo.py",
+      "sha256": "6afd00f08e7c9ce102c5f0eda69ac9d818be687b31b4ce330e222fadee059d68"
+    },
+    {
+      "path": "work/local-flux3/check-converted.py",
+      "sha256": "ee855354139476336bbeb4c11bd239efb57f901c19264793405ee6f138c04ec1"
+    },
+    {
+      "path": "work/angel-hammersmith/extras.py",
+      "sha256": "09d535cd3c43af522e151e888d327778a26f27df286666040316a8c7ef34592c"
+    },
+    {
+      "path": "work/angel-hammersmith/net.py",
+      "sha256": "6091fb5277d62a2f03e3ea3b1523b17bc1c194aefd245a4e28eccab0705e7ba8"
+    },
+    {
+      "path": "work/angel-hammersmith/offset.py",
+      "sha256": "9e648e6953c227dbbe6e2e9ff207a04401e2f346281a697064142bda2344464e"
+    },
+    {
+      "path": "work/angel-hammersmith/prepare_new.py",
+      "sha256": "ed414a3d76b1797992905c815a287cf7a38ddb80c4a2d847663daf1ea27f2700"
+    },
+    {
+      "path": "work/angel-hammersmith/transfer.py",
+      "sha256": "64645e2c33c1356eb264cdc5030f879fb05a13b56bed949f462e459d1511a6d0"
+    },
+    {
+      "path": "work/angel-hammersmith/fix.py",
+      "sha256": "9539968d2e464f7ffad3fcc7f6fcf5650778821bb1ed3490b5bb0b02babb3018"
+    },
+    {
+      "path": "work/angel-hammersmith/audio.py",
+      "sha256": "b52e6fed6e83d778ff0a939955ad41ec86570f0bae04ed0c41494c296d97bd01"
+    },
+    {
+      "path": "work/angel-hammersmith/get.py",
+      "sha256": "8cc8985090c4d6b6c33c74fea8f33026c8e15c2733ed03fcae5e6cc83fef658a"
+    },
+    {
+      "path": "work/angel-hammersmith/compare.py",
+      "sha256": "44227d6d7cf7e575737cc50d521f249830336cdc1d1a15e3117ca123f59bed2b"
+    },
+    {
+      "path": "work/external-concerts-followup/repair.py",
+      "sha256": "20dd814e6dc5c2a9856b877d0aef92ba7f819218aeb0bbe756a8f50b7160ebe5"
+    },
+    {
+      "path": "work/external-concerts-followup/instrumental-repair.py",
+      "sha256": "c88f14c569d8e9678c4196f7d7a2faf5346c954e98d9b280beec0531554d69a5"
+    },
+    {
+      "path": "work/external-concerts-followup/run.py",
+      "sha256": "696b058680ea575695ffa4d5103b1050707440fcff9332e80c4a55b9a3b3da5e"
+    },
+    {
+      "path": "work/external-concerts-followup/local-draft.py",
+      "sha256": "0c5508aa951b5d9ab91a3e6f27d65c1c633227d8796df557c0576d859d4ab5b2"
+    },
+    {
+      "path": "work/external-concerts-followup/repair-team.py",
+      "sha256": "92831a3df35f3a695fb28b7d71569b42c24e12203fa000bb680e041a64ff265e"
+    },
+    {
+      "path": "work/external-concerts-followup/finish-repairs.py",
+      "sha256": "1b623461cc0c1ceaf172a4db9fd1bbc51ab1d15751c19ee481a089fcb1bf53eb"
+    },
+    {
+      "path": "work/external-concerts-followup/prepare-next.py",
+      "sha256": "104fafef2eb3d94994a4722cb4473c9985eeee376aa68b08d26407821b657c83"
+    },
+    {
+      "path": "work/external-concerts-followup/locate_remaining.py",
+      "sha256": "24c89c3f984a062224a9d7377df49ed75b301628dbc7f6794ca540504c450682"
+    },
+    {
+      "path": "work/external-concerts-followup/preview-audit.py",
+      "sha256": "32a8f6d9229a0775764b197b9208b4e7b2476f43d96a2289d9957c7006176eb9"
+    },
+    {
+      "path": "work/external-concerts-followup/live-audit.py",
+      "sha256": "010d4eb1923fc3119d4249cd1870861602d798ded5240159246e53fe353a667b"
+    },
+    {
+      "path": "work/external-concerts-followup/complete-translations.py",
+      "sha256": "1b13a9de869533b29d7f35f8d859ee447e2807bb95e6d9f0c6998411c2303a19"
+    },
+    {
+      "path": "work/external-concerts-followup/resume-repairs.py",
+      "sha256": "79e71e5247f3e96c8e3dd37c1b6c411868809641bca1ea2855c07b3e3ddb02bd"
+    },
+    {
+      "path": "work/external-concerts-followup/resume_translation.py",
+      "sha256": "27d927afc64c4806da9c63cea42d75cd00dfd50a7e27fad723c344e56ab950f4"
+    },
+    {
+      "path": "work/external-concerts-followup/resume-primary.py",
+      "sha256": "db2826068c4103dab0d382d8f2077d186546d2bd144cad6ef4624bb58f194dc6"
+    },
+    {
+      "path": "work/external-concerts-followup/verify-completion.py",
+      "sha256": "c3ca72cae8bb3b8b13c7c55b84b188b0f933d13357083870f986cca3bc4f772b"
+    },
+    {
+      "path": "work/subtitle-case-audit/repair.py",
+      "sha256": "ea77575b581a8fce6ac6eea99d50957b1cb09b1125f42f3743b6e41f389bea6c"
+    },
+    {
+      "path": "work/mexico-review/produce.py",
+      "sha256": "c18c4d3f16a4459882aa44ad702744b7a5daff3766575c4b81cad96b4ace8cce"
+    },
+    {
+      "path": "work/mexico-review/verify_mexico.py",
+      "sha256": "d901b4b858fb107866351df0853b68dd20f739a4672fa67222bbeec26480dcd0"
+    },
+    {
+      "path": "work/mexico-review/direct4k.py",
+      "sha256": "de0ce621bbcbeca24d1970edd4f128b62e5e80083e90b13f4cacf668a8798d38"
+    },
+    {
+      "path": "work/mexico-review/align.py",
+      "sha256": "6ecaa9f1798c7523f35b9d1c5c5a2e589356bc17a87cccc2a7b7d74e1a73e552"
+    },
+    {
+      "path": "work/mexico-review/ui.py",
+      "sha256": "62dd8fa59c4b3b937182f717fe1e6e76e05bfd7c82b0950e76fc4f506bcc81af"
+    },
+    {
+      "path": "work/mexico-review/singles.py",
+      "sha256": "d2b41235f8949c896983d80a907a5455f10bf24c34a7bbbda6a45d7d00a5eefd"
+    },
+    {
+      "path": "work/mexico-review/direct.py",
+      "sha256": "989b4edfa94450f58b51b95a3c7167644b3c87b59e7833e9b46c9d20d939b0e2"
+    },
+    {
+      "path": "work/mexico-review/check_crop.py",
+      "sha256": "e220b5ad110fc16a5e5a73c23aa162ded85fbe7458c09f4808f71d44fef64ee4"
+    },
+    {
+      "path": "work/mexico-review/verify.py",
+      "sha256": "03c9fa0d21c20cbbc46b11c1ac9a41860937c11cc4d60727274946b3aada2256"
+    },
+    {
+      "path": "work/mexico-review/verify_other.py",
+      "sha256": "69b336901cdfbef43718d5c49d75b2755f6b7429d401659de5b22553a0a0eb22"
+    },
+    {
+      "path": "work/stream_delivery_20261115/benchmark.py",
+      "sha256": "550c012864d90482926a0066d945831de1c5554e34cfc20039d21d3bf504d856"
+    },
+    {
+      "path": "work/khalid-young-dumb-broke-20261116-154059/run.py",
+      "sha256": "031ab490b92120f901c6c5a54a027cf8492242cb20f6975e6a0889e6608ea2e1"
+    },
+    {
+      "path": "work/shakira-2160/align.py",
+      "sha256": "cb5906aa4d5b12d8ad6993afe8bbb24f435d10f4cb1cbdac9ae08ffb16c43ed1"
+    },
+    {
+      "path": "work/shakira-2160/local_verify.py",
+      "sha256": "578fb862300ac5fd28cb7edfaf56fdb9d0155a53516a7e67723ced507725e54e"
+    },
+    {
+      "path": "work/shakira-2160/finalize.py",
+      "sha256": "50dbaf1527a7917914e5693beebf015018e41ad04c1a4fe53edb5b48b6283f80"
+    },
+    {
+      "path": "work/shakira-2160/pool_check.py",
+      "sha256": "cd71f61002e2c2690710146b20cafd3d1dbc5d90fa9b5723d8eb21a2d4225507"
+    },
+    {
+      "path": "work/shakira-2160/verify.py",
+      "sha256": "f0f81ad26f48f62a64603580bdffd2751ca6d5ab533be4daca68f067c45b1677"
+    },
+    {
+      "path": "work/shakira-2160/ui_check.py",
+      "sha256": "ab678a2c620ea8a2079b311743b68611af8b18aec3d7fdc29097db9baba0c757"
+    },
+    {
+      "path": "work/shakira-2160/migrate.py",
+      "sha256": "7ca0d168aa7a3f558bc16869dc3726485242ee3f266b1621f97eb3091d9e31c6"
+    },
+    {
+      "path": "work/ai-two-songs/run_covers.py",
+      "sha256": "4d35e009e558aad22d21faf265efe8925227004513622886478ed3d69026d058"
+    },
+    {
+      "path": "work/ai-two-songs/fine.py",
+      "sha256": "0215f912f361af62b8c91ea214dac4e574046509124199f5a099ccd022c6ca5c"
+    },
+    {
+      "path": "work/ai-two-songs/check_products.py",
+      "sha256": "613989b5d55d8facdfb5eb0f50eeeaf62bc1a68ba63795df855458a972b713db"
+    },
+    {
+      "path": "work/ai-two-songs/plans.py",
+      "sha256": "a2d8ba12aecb1aab6e9f6763fd18c9bd82c928abfacc35fa48512bb6cb790b18"
+    },
+    {
+      "path": "work/ai-two-songs/check_cover_ui.py",
+      "sha256": "80afdd09776288da0ce320ef7576d97d82032a94e3fa28bc411a16c1b09d2bc6"
+    },
+    {
+      "path": "work/ai-two-songs/contact.py",
+      "sha256": "73fee22f03ffafc2241917a027af73d1e298d39aaab89e49e3f521806d851f32"
+    },
+    {
+      "path": "work/douyin-titles-20261114/update.py",
+      "sha256": "621716e56cb84fd9eaf02cb85c33e0eea5a49515be39f9c257978fdc2482ac44"
+    },
+    {
+      "path": "work/subtitle-metadata-library/repair_metadata.py",
+      "sha256": "783b37693748070628f05e03ac32661166b026437613a1f03a1a3612f954fe0d"
+    },
+    {
+      "path": "work/description-research/restore_three_part.py",
+      "sha256": "9edbccb3c2170928d50da275ccc38d3ea4697d292cead63fd3633167713fa138"
+    },
+    {
+      "path": "work/description-research/verify_three_part.py",
+      "sha256": "de8c9085df67020460f78af97c59a2cc0c0b2d38d110d746252cbab076a088e2"
+    },
+    {
+      "path": "work/cover-berry/verify_library.py",
+      "sha256": "1430ac45555cfa0579985929be5e4802bbdb6ad1c7928ae7ac0e1d9277e89509"
+    },
+    {
+      "path": "work/cover-berry/update_batch.py",
+      "sha256": "9e421c5b49d095699d8541520102f4c598d67caeffa8dff269049c1bc7c2a201"
+    },
+    {
+      "path": "work/cover-berry/ui_check.py",
+      "sha256": "fc16599d46e54ab7b812a784afaa9ff9e7eef488406189691e4d6cfe57644a81"
+    },
+    {
+      "path": "work/vertical-batch/prepare_lorde.py",
+      "sha256": "9aa331b6933740f4c98a8e2fff781590fe0f132d49cca6d5047e8bd146b1ef65"
+    },
+    {
+      "path": "work/vertical-batch/intake_mexico.py",
+      "sha256": "678addd6db1e1ef63572b20a83f6dc8fe9cf8e00b6733450b9ccc6da9ecf77d7"
+    },
+    {
+      "path": "work/vertical-batch/run.py",
+      "sha256": "4d7904d32b373b1edeb29b9af2561f3eeb4316c23f65a2848f508b80f5ba916b"
+    },
+    {
+      "path": "work/vertical-batch/repair_uncertified.py",
+      "sha256": "e549b05098f7b02e63dbe7417a7331586ea6cbbf074b443659e1c1ec4fe9c793"
+    },
+    {
+      "path": "work/vertical-batch/progress.py",
+      "sha256": "c379166b71ea7f328ad1a4603f7afdc94b80f77d8b9f947fb57433ab38f228be"
+    },
+    {
+      "path": "work/vertical-batch/consume_mexico.py",
+      "sha256": "f84de03bc5862c4dd8d35ece64f41f38567d3bd82f8791b29bbaf4a5f77cd4c9"
+    },
+    {
+      "path": "work/grammy-source-policy/prepare_selected.py",
+      "sha256": "748213564da145874eedc0f2f35762824e6e0fdd0edff09bfb40936918129ed2"
+    },
+    {
+      "path": "work/grammy-source-policy/check_seek.py",
+      "sha256": "49c7f03be254d2eb6a19a026275177b96952685baf8d2a2142ccc93f53004bc6"
+    },
+    {
+      "path": "work/grammy-source-policy/migrate.py",
+      "sha256": "971a24122c4189fe2322dfa86ed7a6fb8cc9055c549c0e0c26d7f056232815a6"
+    },
+    {
+      "path": "work/grammys-2025-2026/run.py",
+      "sha256": "f40ace9b54e6d02e060dfab38c9a01501b0152513c105c1eec28f4c2c541e616"
+    },
+    {
+      "path": "work/grammys-2025-2026/boundaries.py",
+      "sha256": "538c10cb62a087d9886fe245be7c0b18a6c2dbd5de52e66f6ade4325fe465dc0"
+    },
+    {
+      "path": "work/grammys-2025-2026/setup.py",
+      "sha256": "45a0f54544b9a47b872c316f39308cd7b0163ca48465be7fcf1869e383501855"
+    },
+    {
+      "path": "work/grammys-2025-2026/complete_tributes.py",
+      "sha256": "a944bf828ec3683a49e13153a5de18338a2359169fa911122efcee0c7d1671f6"
+    },
+    {
+      "path": "work/grammys-2025-2026/prepare.py",
+      "sha256": "d3ebae7e711faa9a4ef89339722fbf605a4db0e6c7cc008292f2c12fbe539c32"
+    },
+    {
+      "path": "work/grammys-2025-2026/finish.py",
+      "sha256": "fa26f0eeede9e0cdc5fd5ef0697d0b538cc8f12bba71a133ff4c11059453b947"
+    },
+    {
+      "path": "work/adele-audience/render_previews.py",
+      "sha256": "868ba8988cc045cb07ce3b7f78a5048e05c428f62cbedf137f8c74f844c590cf"
+    },
+    {
+      "path": "work/adele-audience/subtitles.py",
+      "sha256": "2e834b590d96f9009e4626dfccc16e689ccf743f290dfbb07e787a9db7c1ace5"
+    },
+    {
+      "path": "work/adele-audience/watermarks.py",
+      "sha256": "491166c0e618868f5393a2b91f6a82576aa7c9e75202e884f07f0ffed7bf864f"
+    },
+    {
+      "path": "work/adele-audience/browser_prepare.py",
+      "sha256": "75bf2a479b5e6499d3878cd6abdbdcb2e580d5e6e3c95db5bdee8648163c07b0"
+    },
+    {
+      "path": "work/grammy-nonts60/render.py",
+      "sha256": "4afe284bf6e2bcd296367ddba4b8ef5c702c063311606b3b8e6edf82fc6ea572"
+    },
+    {
+      "path": "work/coachella-lolla-previews/register.py",
+      "sha256": "2d3fd23f5a5c25829d07e0cffc7ede52c0cce7a6f4b451d1e1d97cc317c3af8c"
+    },
+    {
+      "path": "work/coachella-lolla-previews/stage-inputs.py",
+      "sha256": "0c53fad32d8d687771d74c38a80fed12821d17ae0dd285b45cb22af4458a02e1"
+    },
+    {
+      "path": "work/coachella-lolla-previews/add-adele.py",
+      "sha256": "9db7b07416f3bd908e2fda465efb75c19949e27859b2b3785bec8fc5490bbdaa"
+    },
+    {
+      "path": "work/coachella-lolla-previews/locate-adele.py",
+      "sha256": "30b5b784a1662563aa224130bbb7eddc40edf06f5895e8f3522bf0dac508bbe7"
+    },
+    {
+      "path": "work/coachella-lolla-previews/common.py",
+      "sha256": "7d0479c1e50be9362221c54dc38e2eaeced364054cf9371e2fb9b3d563600a30"
+    },
+    {
+      "path": "work/coachella-lolla-previews/prepare.py",
+      "sha256": "3518685f7ec8a66708d56b461656fc7a26f78b13d9d2ebe1812b997515834508"
+    },
+    {
+      "path": "work/grammy-source-comparison/prepare.py",
+      "sha256": "63b175f1d9015a6e22b38038ea2b567f618405b26239802e3e999bd7e8b594b7"
+    }
+  ],
+  "preserved": []
+}

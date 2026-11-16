@@ -153,7 +153,10 @@ def coarse_spans(c, songs, lyrics):
 
 
 def _asr_words(c):
-    """没有字幕轨：人声按 30s 窗口（重叠 5s）跑 Qwen ASR，按字数均分时间，当作字幕词流。"""
+    """没有字幕轨：按30秒窗口识别；已有全场人声则复用，否则用原音频。
+
+    粗定位不先加载整场分离模型。正式分离和精校在逐首字幕模块中执行。
+    """
     import librosa
     from openai import OpenAI
     import llm
@@ -165,7 +168,7 @@ def _asr_words(c):
         return [tuple(x) for x in read_json(cache)]
     llm.load_env()
     client = OpenAI(base_url=ENDPOINT, api_key=os.environ["ALIYUN_BAILIAN_API_KEY"])
-    y, _ = librosa.load(str(c.vocals), sr=SR, mono=True)
+    y, _ = librosa.load(str(c.vocals if c.vocals.is_file() else c.audio), sr=SR, mono=True)
     starts = np.arange(0, len(y) / SR, 25.0)
 
     def one(t):
@@ -455,7 +458,7 @@ def stage_segment(c, a):
     spans, talk = coarse_spans(c, songs, lyrics)
     audio = Audio(features(c)) if c.audio.exists() else None
     if audio and audio.voc is None:
-        print("⚠ 还没有 vocals.wav：不判断歌前讲话（先跑 separate）")
+        print("整场粗定位使用原音频；人声分离与讲话精校在逐曲字幕阶段执行")
     titles = title_spans(title_ocr(c), songs, spans) if c.source.exists() else None
     if titles:
         print(f"歌名字幕定位到 {sum(t is not None for t in titles)}/{len(songs)} 首")

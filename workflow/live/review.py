@@ -34,6 +34,11 @@ def fingerprint(c, it, entry):
     # 审核页展示三版字幕；新增诗意版或更改任一版，都需要重新确认。
     files = ["subs/lyrics.ass", "subs/lyrics_literal.ass", "subs/lyrics_poetic.ass",
              "watermark.json", "post_draft.json"]
+    # Existing approvals retain their original fingerprint contract. New
+    # approvals also bind the active AI revision, without invalidating old
+    # human approvals just because the software was upgraded.
+    if entry.get("cover_review_version"):
+        files.extend(["covers/ai/masters.json", "covers/ai/variants.json"])
     cover = entry.get("cover")
     if cover:
         files.extend([f"covers/{cover}.jpg", f"covers/{cover}_4x3.jpg"])
@@ -63,9 +68,12 @@ def save_entry(c, it, patch):
         entry["status"] = "pending"
     if patch.get("status") == "approved":
         if not entry.get("cover"):
-            raise ValueError("先选一张封面再通过")
+            from workflow.ai_cover import reviewed_revision
+            if not reviewed_revision(c.song_dir(it) / "covers/ai"):
+                raise ValueError("先选一张封面或发布已复核AI封面再通过")
         if not render_subtitle(c.song_dir(it)).is_file():
             raise ValueError("还没有成品字幕（subs/lyrics_poetic.ass 或 lyrics_literal.ass），不能通过")
+        entry["cover_review_version"] = 1
         entry["fingerprint"] = fingerprint(c, it, entry)
         entry["approved_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     entry["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -79,7 +87,8 @@ def song_status(c, it):
     seg = segment_of(c, it["name"])
     entry = load(c)["songs"].get(it["name"], {})
     info = read_json(d / "song.json", {})
-    if (d / "post" / f"{it['name']} 4K60FPS Sub-WaterMark.mp4").exists():
+    from workflow.delivery_config import products_ready
+    if products_ready(d) or (d / "post" / f"{it['name']} 4K60FPS Sub-WaterMark.mp4").exists():
         stage = "hd_done"
     elif (d / "covers").exists() and (d / "post_draft.json").exists():
         stage = "packaged"

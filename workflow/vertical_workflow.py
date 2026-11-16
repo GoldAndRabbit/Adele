@@ -1,19 +1,11 @@
 """Prepare a song for portrait review and export an explicitly approved cut."""
-import argparse
-import concurrent.futures
-import fcntl
 import hashlib
-import json
-import shutil
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 
 from workflow.live.package import cover_candidates
 from workflow.live.paths import Concert, ROOT, read_json, write_json
-from workflow.vertical_preview import render
 from workflow.vertical_cover import cover_image, supplement_moments, COVER_STYLE_VERSION
 
 
@@ -79,21 +71,6 @@ def candidates(concert, item, keep_existing=False, redraw=False):
         manifest.replace(folder / manifest.name)
 
 
-def prepare(concert, item):
-    directory = concert.song_dir(item)
-    draft = read_json(directory / "post_draft.json", {})
-    if not draft.get("title") or not (draft.get("intro_text") or draft.get("intro")):
-        raise ValueError("先完成投稿标题和简介，再进入竖屏审核")
-    subtitle(directory)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        if read_json(directory / "song.json", {}).get("preview_mode") == "browser":
-            from workflow.vertical_source import prepare as prepare_source
-            review = pool.submit(prepare_source, concert, item)
-        else:
-            review = pool.submit(render, concert, item, False, True)
-        covers = pool.submit(candidates, concert, item)
-        review.result()
-        covers.result()
 
 
 def revision(directory):
@@ -119,97 +96,3 @@ def revision(directory):
         if f.is_file():
             h.update(f.read_bytes())
     return h.hexdigest()
-
-
-def release(directory, cover, expected, *, concert=None, item=None):
-    folder = directory / "vertical"
-    with (folder / ".release.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        current = revision(directory)
-        if not expected or expected != current:
-            raise ValueError("审核内容已更新，请刷新后重新检查")
-        if cover not in [r["file"] for r in read_json(folder / "candidates.json", [])]:
-            raise ValueError("请选择当前竖屏候选封面")
-        if not (folder / cover).is_file():
-            raise ValueError("所选封面文件缺失，请重新生成候选")
-        full = folder / "full.mp4"
-        if concert is None:
-            slug = directory.parent.parent.name if directory.parent.name == "songs" else directory.parent.name
-            concert = Concert(slug) if Concert(slug).info.is_file() else Concert("singles")
-        from workflow.content_check import check_for_render
-        check_for_render(concert, item or concert.item(directory.name))
-        if read_json(directory / "song.json", {}).get("preview_mode") == "browser":
-            # A browser review has no burned preview. Render only on an explicit release request.
-            render(concert, item or concert.item(directory.name), True, True)
-        if subtitle(directory).stat().st_mtime_ns > full.stat().st_mtime_ns:
-            raise ValueError("字幕已更新，请先重新生成竖屏审核版")
-        with tempfile.TemporaryDirectory(dir=folder) as tmp:
-            out = Path(tmp) / "release.mp4"
-            shutil.copyfile(full, out)
-            if revision(directory) != current:
-                raise ValueError("生成期间审核内容发生变化，请重新确认")
-            token = hashlib.sha256(f"{current}/{cover}/full-slice".encode()).hexdigest()[:16]
-            name = f"release-{token}.mp4"
-            out.replace(folder / name)
-            record = {"file": name, "cover": cover, "start": 0, "revision": current}
-            write_json(folder / "release.json", record)
-            return record
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("concert")
-    parser.add_argument("song", nargs="?", help="省略时处理整场")
-    parser.add_argument("--covers-only", action="store_true", help="只生成封面候选，不启动视频导出")
-    parser.add_argument("--prepare-inputs", action="store_true",
-                        help="先运行已有演唱会拆分、精校和投稿文案流程，或接入已制作的独立单曲")
-    parser.add_argument("--release", action="store_true", help="仅在收到明确指令后生成指定曲目的竖屏成品")
-    publish = parser.add_mutually_exclusive_group()
-    publish.add_argument("--douyin-preview", action="store_true", help="核对抖音成品、双封面及投稿信息")
-    publish.add_argument("--douyin-submit", action="store_true", help="通过 PostFlow 公开投稿指定曲目")
-    args = parser.parse_args()
-    if args.douyin_preview or args.douyin_submit:
-        if not args.song or args.release or args.prepare_inputs or args.covers_only:
-            parser.error("抖音投稿需要指定一首已生成成品的曲目，不能同时制作素材")
-        from workflow.vertical_publish import run
-        concert = Concert(args.concert)
-        run(concert, concert.item(args.song), submit=args.douyin_submit)
-        return
-    if args.release:
-        if not args.song or args.covers_only or args.prepare_inputs:
-            parser.error("--release 需要指定一首歌，且不能同时准备素材")
-        concert = Concert(args.concert)
-        directory = concert.song_dir(concert.item(args.song))
-        cover = read_json(directory / "vertical/selected.json", {}).get("cover")
-        if not cover:
-            parser.error("请先在审核页选定竖屏封面")
-        print(release(directory, cover, revision(directory), concert=concert)["file"])
-        return
-    if args.covers_only and args.prepare_inputs:
-        parser.error("--covers-only 只处理已有原片，不与 --prepare-inputs 同用")
-    if args.prepare_inputs:
-        if args.concert == "singles":
-            from workflow.live.singles import build
-            if not args.song:
-                parser.error("接入独立单曲需要指定 posts 目录名")
-            build([args.song])
-        else:
-            command = [sys.executable, "-m", "workflow.live", "run", args.concert]
-            if args.song:
-                command += ["--songs", args.song]
-            subprocess.run(command, cwd=ROOT, check=True)
-
-    concert = Concert(args.concert)
-    items = [concert.item(args.song)] if args.song else concert.song_items()
-    if not items:
-        parser.error("场次没有曲目")
-    for item in items:
-        if args.covers_only:
-            candidates(concert, item)
-        else:
-            prepare(concert, item)
-        print("待人工审核", item["name"], flush=True)
-
-
-if __name__ == "__main__":
-    main()

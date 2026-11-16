@@ -415,6 +415,7 @@ def build_concert_index():
                 continue
             out.append({"slug": p.name, "title": concert_display_title(info, p.name, year_first=True), "artist": info.get("artist"),
                         "date": info.get("date"), "fps": info.get("fps"), "songs": len(c.song_items()),
+                        **({"kind": "single"} if info.get("input_kind") == "single" else {}),
                         "tracks": [track(c, it) for it in visible_items(c) if it["kind"] == "song"]})
     concerts = sorted((row for row in out if not row.get("kind")),
                       key=lambda row: row.get("date") or "", reverse=True)

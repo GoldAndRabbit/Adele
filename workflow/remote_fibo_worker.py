@@ -18,7 +18,7 @@ def main():
             raise ValueError('Transferred FIBO auxiliary reference checksum mismatch')
     base = Path.home() / 'Library/Caches/adele/fibo-worker'
     # Share the existing audio worker lock: one heavy job on this Mac in total.
-    slot = Path.home() / 'Library/Caches/adele/subtitle-worker/separator-v3.lock'
+    slot = Path.home() / 'Library/Caches/adele/separator.lock'
     slot.parent.mkdir(parents=True, exist_ok=True)
     with slot.open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

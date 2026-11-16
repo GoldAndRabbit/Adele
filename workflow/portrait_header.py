@@ -6,6 +6,7 @@ from pathlib import Path
 from PIL import ImageDraw, ImageFont
 
 from workflow.portrait_title import HEART, draw_heart_title
+from workflow.templates import cover_text
 
 STYLE = json.loads(Path(__file__).with_name("portrait_style.json").read_text())
 PINGFANG = next(Path("/System/Library/AssetsV2").glob("com_apple_MobileAsset_Font*/*.asset/AssetData/PingFang.ttc"), None)
@@ -39,7 +40,7 @@ def draw_artist_name(draw, name, y, font, color, stroke):
 def draw_portrait_header(canvas, song, en, zh, event, stroke=True, *, song_zh=None):
     draw = ImageDraw.Draw(canvas)
     expanded = bool(song or event)
-    texts = {"song": song, "en": en.upper(), "zh": zh, "song_zh": song_zh or "", "event": event}
+    texts = {**cover_text(song, song_zh, en, event), "zh": zh}
     for field, (y, size, color) in LINES.items():
         text = texts[field]
         outline = (STYLE["title_outline"] if field == "song" else STYLE["header_outline"]) if stroke else 0

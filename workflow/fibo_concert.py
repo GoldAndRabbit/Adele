@@ -1,5 +1,4 @@
 """Generate one FIBO master per concert song and register four platform previews."""
-import argparse
 import fcntl
 import hashlib
 import json
@@ -147,33 +146,3 @@ def _generate_one(concert, item, spec, base, model, worker=None, *, replace_exis
                 status='awaiting_visual_review', stage=str(review_dir), review_hash=review_hash,
                         generation_seconds=stats['generation_seconds'], elapsed_seconds=stats['elapsed_seconds'],
                         peak_process_gb=round(stats['peak_process_bytes']/1e9, 2))
-
-
-def run(concert, model, only=None):
-    plan = read_json(concert.dir / 'fibo-cover-plan.json')
-    songs = concert.song_items()
-    if only:
-        unknown = set(only) - {it['name'] for it in songs}
-        if unknown:
-            raise ValueError(f'Unknown songs: {sorted(unknown)}')
-        songs = [it for it in songs if it['name'] in only]
-    if not {it['name'] for it in songs} <= set(plan):
-        raise ValueError('The reference plan must cover the complete concert setlist.')
-    base = ROOT / 'work/fibo-batch' / concert.slug
-    base.mkdir(parents=True, exist_ok=True)
-    results = []
-    with (base / 'generate.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        for item in songs:
-            results.append(generate_one(concert, item, plan[item["name"]], base, model))
-            write_json(base / 'results.json', results)
-            print(results[-1].get('status', 'verified'), len(results), '/', len(songs), item['name'], json.dumps(results[-1], ensure_ascii=False), flush=True)
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('concert')
-    parser.add_argument('--model', type=Path, required=True)
-    parser.add_argument('--only', nargs='+', help='Generate only the specified song directories')
-    args = parser.parse_args()
-    run(Concert(args.concert), args.model.resolve(), args.only)

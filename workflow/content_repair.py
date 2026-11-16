@@ -51,15 +51,15 @@ def assert_idle(concert, item):
     name = item['name']
     for p in psutil.process_iter(['pid','cmdline']):
         args = p.info['cmdline'] or []
-        if ('workflow.concert_delivery' in args and '--only' in args and name in args and
-                args[args.index('workflow.concert_delivery')+1:][:1]==[concert.slug]):
+        if ('workflow.delivery' in args and '--only' in args and name in args and
+                args[args.index('workflow.delivery')+1:][:1]==[concert.slug]):
             raise RuntimeError(f'{name}: rendering assets are frozen; wait for the worker to exit')
 
 def change_cut(concert, item, start, end):
     """Preserve translations and old audio/cache evidence when extending a cut."""
     from workflow.song.trim import shift_subs
     from workflow.song.song_translation_workflow import build_outputs
-    from workflow.preview_batch import enable_browser
+    from workflow.preview import enable_browser
     from workflow.song.watermark import ensure_song
     assert_idle(concert,item)
     d = concert.song_dir(item); old = selection(concert,item)['slice']

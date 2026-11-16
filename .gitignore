@@ -33,3 +33,7 @@ bin/biliup
 /.offload-original-*
 /lyrics_rolling_video/alignment.json
 /lyrics_rolling_video/config.json
+
+# Generated reports and process locks
+/outputs
+post_bili/*.lock
