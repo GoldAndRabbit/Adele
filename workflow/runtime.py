@@ -9,13 +9,29 @@ from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
 import threading
 import time
 
 from workflow.live.paths import read_json, write_json
 
 CACHE = Path.home() / "Library/Caches/adele"
+
+
+@contextmanager
+def awake():
+    """Keep an unattended Mac awake until the standard run drains or pauses."""
+    executable = Path("/usr/bin/caffeinate")
+    process = subprocess.Popen([str(executable), "-i", "-w", str(os.getpid())],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) if executable.is_file() else None
+    try:
+        yield
+    finally:
+        if process is not None and process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
 
 
 @contextmanager

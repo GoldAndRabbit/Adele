@@ -113,8 +113,10 @@ def main(argv=None):
                 jobs = [{"concert": concert.slug, "song": item["name"]} for item in concert.song_items()]
             print(json.dumps({"stages": stages, "options": options, "jobs": jobs}, ensure_ascii=False, indent=2))
             return
-        result = (run_batch(args.batch, stages, options, resume=args.resume) if args.batch
-                  else run_project(Concert(args.slug), stages, options))
+        from workflow.runtime import awake
+        with awake():
+            result = (run_batch(args.batch, stages, options, resume=args.resume) if args.batch
+                      else run_project(Concert(args.slug), stages, options))
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if result["status"] == "incomplete":
             raise SystemExit(1)
