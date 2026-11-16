@@ -10,6 +10,13 @@ from workflow.reviewed_cover import digest
 
 
 class DualCoverTests(unittest.TestCase):
+    def setUp(self):
+        self.host_cache = tempfile.TemporaryDirectory()
+        self.addCleanup(self.host_cache.cleanup)
+        slots = patch('workflow.runtime.CACHE', Path(self.host_cache.name))
+        slots.start()
+        self.addCleanup(slots.stop)
+
     def test_explicit_replacement_reselects_without_removing_old_release(self):
         from types import SimpleNamespace
         from workflow.live.paths import read_json
