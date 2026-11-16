@@ -156,6 +156,20 @@ class StandardWorkflowTests(unittest.TestCase):
             self.assertIn("elapsed_seconds", row["stages"]["covers"])
             perform.assert_called_once()
 
+    def test_invalid_final_posting_copy_keeps_manual_text_and_allows_preview(self):
+        from workflow.templates import posting_issues
+        self.assertTrue(posting_issues({"标题": "人工标题", "简介": "人工短简介", "标签": ["人工标签"]}))
+        with tempfile.TemporaryDirectory() as tmp:
+            concert = self.concert(tmp)
+            task = Path(tmp) / "task.json"
+            write_json(task, {"concert": "show", "song": "one", "stages": ["posting", "preview"], "options": {}})
+            with patch.object(pipeline, "Concert", return_value=concert), patch.object(pipeline, "perform",
+                    side_effect=[{"status": "needs_review", "issues": ["简介不足"]}, {}]) as perform:
+                row = pipeline.worker(task, "local")
+            self.assertEqual(row["status"], "waiting_for_review")
+            self.assertEqual(perform.call_count, 2)
+            self.assertIn("preview", row["stages"])
+
     def test_paused_batch_does_not_remove_marker_or_start_workers(self):
         with tempfile.TemporaryDirectory() as tmp:
             batch = Path(tmp)

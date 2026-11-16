@@ -46,7 +46,8 @@ def worker(task_path, host):
                     record["status"] = "waiting_for_review"
                     break
             else:
-                record["status"] = "ready"
+                record["status"] = ("waiting_for_review" if any(
+                    row.get("status") == "needs_review" for row in record["stages"].values()) else "ready")
         except (Exception, SystemExit) as error:
             record.update(status="failed", error=str(error))
             raise

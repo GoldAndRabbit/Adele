@@ -34,6 +34,19 @@ def valid_tags(tags):
             and len({tag.strip().casefold() for tag in tags}) == TAG_MAX)
 
 
+def posting_issues(record):
+    """Check the actual exported copy, including explicit review overrides."""
+    title, body = record.get("标题") or "", record.get("简介") or ""
+    issues = []
+    if not isinstance(title, str) or not 1 <= len(title.strip()) <= TITLE_MAX:
+        issues.append("最终投稿标题需为1–80字符")
+    if not isinstance(body, str) or not DESC_MIN <= len(body.strip()) <= DESC_MAX:
+        issues.append("最终投稿简介需为1800–2000字符")
+    if not valid_tags(record.get("标签")):
+        issues.append("最终投稿资料需有12个有效且不重复的标签")
+    return issues
+
+
 def cover_text(song, song_zh, artist_en, event):
     """Approved cover/header order: original title, translation, English artist.
 

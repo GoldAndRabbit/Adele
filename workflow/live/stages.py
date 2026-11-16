@@ -92,7 +92,13 @@ def posting(concert, item, options, host):
     draft_meta(concert, item, dict(start=policy["slice"][0], end=policy["slice"][1]),
                Namespace(force=options.get("force", False)))
     validate_presentation(concert, item)
-    write_bundle(concert, item)
+    bundle = write_bundle(concert, item)
+    from workflow.templates import posting_issues
+    issues = posting_issues(bundle["bilibili"])
+    if issues:
+        # Preserve manual wording and continue preparing previews/covers; mark
+        # the final copy for review instead of reporting the draft as ready.
+        return {"status": "needs_review", "issues": issues}
 
 
 def preview(concert, item, options, host):
@@ -126,6 +132,8 @@ def covers(concert, item, options, host):
                     auto_review=options.get("auto_review", False),
                     replace_existing=options.get("replace_covers", False), executor_host=host)
     status = read_json(folder / "dual-cover-status.json", {})[concert.slug + "/" + item["name"]]
+    if status["status"] == "needs_repair":
+        raise RuntimeError(status.get("error") or "封面生成失败")
     if status["status"] not in {"released", "released_verified"}:
         return {"status": "waiting_for_review", "cover": status}
 
