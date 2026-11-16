@@ -96,7 +96,8 @@ def stage_download(a, w):
                  "bv*[height<=2160]+ba[format_note*=original]/bv*[height<=2160]+ba[language^=en]/bv*+ba/b",
            *session,
            "--merge-output-format", "mp4", "--retries", "10", "--fragment-retries", "10",
-           "--write-subs", "--sub-langs", "all,-live_chat,-danmaku", "--convert-subs", "srt",
+           *([] if getattr(a, 'no_source_subs', False) else
+             ["--write-subs", "--sub-langs", "all,-live_chat,-danmaku", "--convert-subs", "srt"]),
            "--remux-video", "mp4", "-o", str(source_dir / "source.%(ext)s"),
            "-o", "subtitle:" + str(w / "source.%(ext)s")]
     if shutil.which("aria2c"):   # YouTube 单连接常被限速到几百 KB/s；aria2c 16 路并发快好几倍
@@ -345,6 +346,8 @@ def main():
     p.add_argument("--start", help="截取开始时间，如 00:36:37")
     p.add_argument("--end", help="截取结束时间，如 00:40:04")
     p.add_argument("--sub-lang", help="用 YouTube 官方带时间字幕作参考时的语言代码，如 ja；不填就走 Genius 歌词")
+    p.add_argument("--no-source-subs", action="store_true",
+                   help="仅下载音视频；YouTube 字幕接口不可用时，后续仍可从参考歌词制作字幕")
     p.add_argument("--genius-url", help="lyrics 阶段：直接指定 Genius 歌词页")
     p.add_argument("--song-title", help="lyrics 阶段：手动指定歌名（自动识别不准时）")
     p.add_argument("--artist", help="lyrics 阶段：手动指定歌手")

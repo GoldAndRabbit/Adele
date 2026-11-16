@@ -77,6 +77,8 @@ def dump(j):
     """bili_upload.json 的写法：每项一行（标签也横着放一行），行首空一格。"""
     # 派生展示字段，每次序列化重算；from_page 不向投稿接口传递此字段。
     j = {k: v for k, v in j.items() if k != "标题字符数"}
+    if "简介" in j:
+        j["简介字符数"] = len(j["简介"])
     if "标题" in j:
         j = {key: value for k, v in j.items()
              for key, value in ([(k, v), ("标题字符数", len(v))] if k == "标题" else [(k, v)])}
@@ -86,14 +88,15 @@ def dump(j):
 
 def from_page(j):
     """bili_upload.json（中文 key）-> 接口字段；写错的值直接报错退出。"""
-    missing = [k for k in KEYS if k not in j]
+    # Older reviewed exports predate the optional activity fields.
+    missing = [k for k in KEYS if k not in j and k not in ("话题", "话题ID", "活动ID")]
     if missing:
         sys.exit(f"bili_upload.json 缺：{missing}")
     if j["类型"] not in COPYRIGHT or j["可见范围"] not in VISIBLE:
         sys.exit(f"类型只能是 {'/'.join(COPYRIGHT)}，可见范围只能是 {'/'.join(VISIBLE)}")
     f = {"video": j["视频文件"], "cover": j["封面16:9"], "cover43": j["封面4:3"], "title": j["标题"], "copyright": COPYRIGHT[j["类型"]],
          "source": j["转载来源"] or "", "tid": int(j["分区"]), "tid_v2": j["新版分区"] or None, "tag": list(j["标签"]),
-         "topic": j["话题"] or "", "topic_id": j["话题ID"] or None, "mission_id": j["活动ID"] or None,
+         "topic": j.get("话题") or "", "topic_id": j.get("话题ID") or None, "mission_id": j.get("活动ID") or None,
          "desc": j["简介"], "dtime": dtime_of(j["定时发布"]) if j["定时发布"] else None, "is_only_self": VISIBLE[j["可见范围"]]}
     f.update({api: int(bool(j[k])) for k, api in SWITCHES})
     return f
@@ -102,6 +105,7 @@ def from_page(j):
 # 标签固定格式：{歌手中文名} {歌手英文名} {演唱会名} + 下面这几个
 TAGS_FIXED = ["Billboard", "格莱美", "双语字幕"]
 TITLE_MAX = 80
+DESC_MIN = 1800
 DESC_MAX = 2000
 TAG_MAX, TAG_LEN = 12, 20   # B 站最多 12 个标签，每个不超过 20 字
 DTIME_MIN = 4 * 3600        # 定时发布至少在提交后 4 小时
@@ -137,11 +141,14 @@ def load_post(d):
 
 
 def description(post):
-    """简介：演唱会草稿有现成的 intro_text；单曲把歌曲 / 演出 / 歌词三段介绍用空行连起来。"""
+    """Use the three canonical sections; intro_text is a legacy fallback only."""
+    intro = post.get("intro") or {}
+    sections = [intro.get(k) for k in ("song", "performance", "lyrics")]
+    if all(isinstance(x, str) and x.strip() for x in sections):
+        return "\n\n".join(x.strip() for x in sections)
     if post.get("intro_text"):
         return post["intro_text"].strip()
-    intro = post.get("intro") or {}
-    return "\n\n".join(x.strip() for x in (intro.get("song"), intro.get("performance"), intro.get("lyrics")) if x)
+    return "\n\n".join(x.strip() for x in sections if isinstance(x, str) and x.strip())
 
 
 def picked_cover(d, post, r43=False):
@@ -206,7 +213,7 @@ def generate(d, a):
     cover = Path(a.cover).resolve() if a.cover else picked_cover(d, post)
     rel = lambda p: path_label(p) if p else None
     f = {**DEFAULTS, "video": rel(video), "cover": rel(cover), "cover43": rel(picked_cover(d, post, r43=True)), "title": post.get("title") or "", "desc": description(post),
-         "tag": tags_of((read_json(d / "presentation_preferences.json", {}).get("tags") or [*names, DEFAULTS["topic"]])), "source": a.source if a.source is not None else source,
+         "tag": tags_of((read_json(d / "presentation_preferences.json", {}).get("tags") or [*names, DEFAULTS["topic"], *post.get("tags", [])])), "source": a.source if a.source is not None else source,
          "dtime": int(datetime.strptime(a.at, "%Y-%m-%d %H:%M").timestamp()) if a.at else None}
     if a.tid:
         f["tid"] = a.tid
@@ -214,7 +221,25 @@ def generate(d, a):
         f["tid_v2"] = a.tid_v2
     if a.only_self:
         f["is_only_self"] = 1
-    return to_page(f)
+    from workflow.delivery_bundle import posting_paths
+    paths = posting_paths(d)["bilibili"]
+    page = to_page(f)
+    from workflow.bili_title import apply_submission_names
+    apply_submission_names(page, d, post)
+    if paths["input_video_path"]:
+        page["视频文件"] = paths["input_video_path"]
+    if paths["generated_cover_paths"]:
+        page["已生成封面路径"] = paths["generated_cover_paths"]
+    if paths.get("render_host"):
+        page["制作机器"] = paths["render_host"]
+    from workflow.posting_cover import active_cover_set, cover_path
+    released = active_cover_set(d)
+    for field, ratio in (("封面16:9", "16x9"), ("封面4:3", "4x3")):
+        source = released.get(("bili-ai", ratio), page[field])
+        if ratio == "16x9" and a.cover:
+            source = cover
+        page[field] = cover_path(d, source, "bili", ratio)
+    return page
 
 
 def check(f):
@@ -223,8 +248,8 @@ def check(f):
     title, desc, tags = f.get("title") or "", f.get("desc") or "", f.get("tag") or []
     if not title or len(title) > TITLE_MAX:
         errors.append(f"标题 {len(title)} 字（要 1~{TITLE_MAX} 字）")
-    if not desc or len(desc) > DESC_MAX:
-        errors.append(f"简介 {len(desc)} 字（要 1~{DESC_MAX} 字）")
+    if not DESC_MIN <= len(desc) <= DESC_MAX:
+        errors.append(f"简介 {len(desc)} 字（要 {DESC_MIN}~{DESC_MAX} 字）")
     if f.get("topic") and f["topic"] not in tags:
         errors.append(f"参与了话题「{f['topic']}」，标签里也要有它")
     if len(tags) > TAG_MAX or any(len(t) > TAG_LEN for t in tags):
@@ -330,6 +355,8 @@ def show(d, f, spec, errors):
 
 def submit(d, fields, cmd):
     """跑 biliup，输出同时打到终端和 logs/publish_<时间>.log，抓稿件号写 post/publish.json。"""
+    from post_bili.receipt import video_identity
+    identity = video_identity(d, fields["video"])
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log = d / "logs" / f"publish_{stamp}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -338,7 +365,9 @@ def submit(d, fields, cmd):
                                                text=True, bufsize=1, env={**os.environ, "RUST_LOG": "info"}) as p:
         for line in p.stdout:
             sys.stdout.write(line)
+            sys.stdout.flush()
             fh.write(line)
+            fh.flush()
             out.append(line)
     text = "".join(out)
     bvid = (re.findall(r"BV[0-9A-Za-z]{10}", text) or [None])[-1]
@@ -346,7 +375,7 @@ def submit(d, fields, cmd):
     if p.returncode != 0 or not (bvid or aid):
         sys.exit(f"未取得投稿回执，需核对平台后再决定重试（退出码 {p.returncode}），完整输出见 {path_label(log)}")
     rec = {"bvid": bvid, "aid": int(aid) if aid else None, "submitted_at": datetime.now().isoformat(timespec="seconds"),
-           "log": path_label(log), **fields}
+           "log": path_label(log), **fields, "video_identity": identity}
     (d / "post" / "publish.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n")
     print(f"已提交 {bvid or 'av' + str(aid)}，记录在 {path_label(d / 'post' / 'publish.json')}")
 
@@ -406,9 +435,13 @@ def main():
         p.error("要给歌曲目录")
 
     d = song_dir(a.song)
+    from post_bili.receipt import receipt_matches, archive_stale_receipt, video_identity
     done = read_json(d / "post" / "publish.json")
-    if done and not a.again:
+    if done and receipt_matches(d, done) and not a.again:
         sys.exit(f"已经投过：{done.get('bvid') or done.get('aid')}（{done.get('submitted_at')}），要再投加 --again")
+    if done and not receipt_matches(d, done):
+        archive_stale_receipt(d)
+        print("旧成片回执已保留到 publish-history，本次新成品需要独立投稿")
     jf = d / "post" / "bili_upload.json"
     if a.submit:
         if not jf.exists():
@@ -418,7 +451,11 @@ def main():
         print(f"已生成 {path_label(jf)}")
     else:
         print(f"已有 {path_label(jf)}，按它检查（要按草稿重新生成加 --rebuild）")
-    f = from_page(read_json(jf))
+    page = read_json(jf)
+    from workflow.bili_title import apply_submission_names
+    apply_submission_names(page, d, load_post(d)[0])
+    f = from_page(page)
+    video_identity(d, f["video"])
     spec, errors = check(f)
     policy = read_json(d / "metadata_policy.json")
     if policy is not None:

@@ -5,13 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>演唱会</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1">
-  <link rel="stylesheet" href="style.css?v=20261106-horizontal-caption-compact56">
+  <link rel="stylesheet" href="style.css?v=flow-layout-v2">
 </head>
 <body>
-  <div class="app" id="app">
+  <header class="flow-header">
+    <div class="flow-tabs" role="tablist" aria-label="流程">
+      <button type="button" id="selection-tab" role="tab" aria-controls="selection-flow" aria-selected="false" tabindex="-1" data-flow="selection">选品流</button>
+      <button type="button" id="workflow-tab" role="tab" aria-controls="app" aria-selected="true" data-flow="workflow">工作流</button>
+    </div>
+  </header>
+  <section id="selection-flow" class="selection-flow" role="tabpanel" aria-labelledby="selection-tab" hidden>
+    <div class="empty">选品流内容待添加</div>
+  </section>
+  <div class="app" id="app" role="tabpanel" aria-labelledby="workflow-tab">
     <aside class="sidebar" id="sidebar">
       <section class="concert-nav" aria-label="演唱会或歌手">
+      <div class="seg library-tabs" role="tablist" aria-label="曲库分类">
+        <button type="button" role="tab" data-library="concert" aria-controls="concerts">演唱会</button>
+        <button type="button" role="tab" data-library="single" aria-controls="concerts">歌手单曲</button>
+      </div>
       <input id="song-search" type="search" placeholder="搜索歌名" aria-label="搜索歌名" autocomplete="off">
+      <label class="library-sort-label" for="library-sort">排序
+        <select id="library-sort" aria-label="列表排序">
+          <option value="default">默认顺序</option>
+          <option value="published_at">歌曲发布时间 ↓</option>
+          <option value="added_at">进入列表时间 ↓</option>
+        </select>
+      </label>
       <nav class="nav" id="concerts" aria-label="演唱会或歌手"></nav>
       </section>
       <section class="song-nav" aria-label="歌曲">
@@ -22,11 +42,12 @@
       <header class="topbar">
         <button class="menu" id="menu" title="展开侧边栏" aria-label="展开侧边栏">☰</button>
       </header>
-      <section id="view"></section>
+      <section id="view"><div class="empty" role="status">正在加载审核资料…</div></section>
     </main>
   </div>
   <script src="subs.js"></script>
   <script src="portrait-browser.js?v=20261106-horizontal-caption-compact56"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=flow-layout-v2"></script>
+  <script src="selection-flow.js?v=local-preview-v1"></script>
 </body>
 </html>

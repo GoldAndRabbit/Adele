@@ -28,9 +28,17 @@ def read_json(path, default=None):
 def write_json(path, data):
     """先写临时文件再改名：网页和流水线同时读写时不会读到半截文件。"""
     path = Path(path)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    import tempfile
+    # Concurrent review/render writers must not share the same .tmp filename.
+    # Keep the temporary file on this filesystem so replacement stays atomic.
+    with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=path.parent,
+            prefix='.'+path.name+'.',suffix='.tmp',delete=False) as handle:
+        tmp=Path(handle.name)
+        handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    try:
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 class Concert:
@@ -64,11 +72,8 @@ class Concert:
 
     @property
     def has_cover_pool(self):
-        info = self.load("info") or {}
-        artist = (info.get("artist") or "").strip().casefold()
-        return (self.slug != "singles" and bool(artist)
-                and artist not in {"various artists", "群星", "多位艺人"}
-                and info.get("cover_selection_mode") != "song")
+        # Kept for older API clients. All current covers are sourced per performance.
+        return False
 
     def items(self):
         return (self.load("setlist") or {}).get("items", [])

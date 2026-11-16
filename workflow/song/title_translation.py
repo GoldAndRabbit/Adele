@@ -31,6 +31,16 @@ def resolved(d):
     return str(fixed.get("__title__") or record.get("title_zh") or "").strip().strip("《》")
 
 
+def header_translation(directory, title, draft_song):
+    chosen = resolved(directory)
+    if chosen:
+        return chosen
+    fallback = (draft_song.get("title_zh") or "").strip()
+    if fallback.casefold() == title.strip().casefold() and not re.fullmatch(r"[㐀-鿿\s，。！？·]+", fallback):
+        return ""
+    return fallback
+
+
 def apply(d, result):
     draft = Path(d) / "post_draft.json"
     song = (json.loads(draft.read_text()).get("song") or {}) if draft.exists() else {}

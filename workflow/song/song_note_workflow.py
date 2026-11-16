@@ -8,7 +8,7 @@
                  独立判断「普通中国观众看了中文译文能懂这句吗」，能懂的去掉
     第 3 步 写注释：「原词：解释」，≤ 30 字，第三人称，人物第一次出现交代和歌手的关系
     第 4 步 事实核查：逐条核对，不确定或有错的去掉（宁可不注，也不注错）
-    第 5 步 定数量：按重要程度最多 6 条；一条都不剩也可以
+    第 5 步 定数量：按重要程度最多 6 条；审视后没有必要解释的词，可以零条
     最后：你定的注释（歌曲目录 zh_notes.json）覆盖（在 song_translation_workflow.build_outputs 里）
 输出 translation/notes.json：每个候选词保留 / 去掉、原因；final = {行号: 注释}
 
@@ -22,18 +22,19 @@ from .song_translation_workflow import _norm, cached_ask
 
 STEP_VERSION = {"note_candidates": "2", "note_judge": "3", "note_write": "2", "note_check": "1"}
 MAX_NOTES = 6
-CATS = ["专有名词", "真实人物事件", "文化典故梗", "双关"]
+CATS = ["专有名词", "真实人物事件", "文化典故梗", "双关", "习语与文化用法"]
 
 P_CAND = """你是字幕组的注释编辑。下面是一首歌的字幕（每行有行号、原文、中文译文）和「歌曲理解」。
-逐行找出**可能**需要在画面顶部加注释的词或短语，只找这四类：
+逐行找出**可能**需要在画面顶部加注释的词或短语，逐首审视，零条也是完成。只找以下几类：
 - 专有名词：人名、地名、品牌、作品、机构
 - 真实人物事件：歌词影射的真实的人、事、年份、数字
 - 文化典故梗：典故、传说、电影 / 文学作品、网络梗
 - 双关：一个词有两层意思，中文译文只能保留一层
+- 习语与文化用法：中文虽能译出意思，但会漏掉关键用法、行业黑话或约定俗成的文化联想
 不要找：普通词的词义、语法、「这里指什么」、比喻本身、演唱者本人和这首歌本身。
   你（用户）明确否掉过的例子：「home：在此指两人共处的地方」「アルバム：指相册，不是音乐专辑」「レター過ぎ：letter 与すぎ组合」
   「colombiana：夏奇拉是哥伦比亚人」「Shakira：哥伦比亚流行天后」——词义、语法、「这里指什么」、歌手本人，一律不注
-输出 JSON：{"candidates": [{"line": 行号, "term": "原文里的词（保留原写法）", "category": "四类之一", "unknown": "普通中国观众可能不懂的是什么"}]}"""
+输出 JSON：{"candidates": [{"line": 行号, "term": "原文里的词（保留原写法）", "category": "上述类别之一", "unknown": "普通中国观众可能不懂的是什么"}]}"""
 
 P_JUDGE = """你代表一个普通的中国观众（不懂外语、对欧美 / 日本娱乐圈只知道最有名的人和事）。
 下面每一项是一句歌词的中文译文，以及一个候选注释词。判断标准**不是「字面读不读得懂」**，而是：
@@ -73,15 +74,15 @@ def _ask(cache, step, prompt, payload, label, key_field):
 
 def select_notes(cache, units, brief, title):
     """返回 (final {行号: 注释}, log [每个候选词的去向])。"""
-    lines = [{"line": u["i"], "orig": u["orig"], "zh": u.get("v2", "")} for u in units if u["type"] not in ("语气词",)]
-    by_line = {u["i"]: u for u in units}
+    lines = [{"line": u["i"], "orig": u["orig"], "zh": u.get("v2_final", u.get("v2", ""))} for u in units if not u.get("dropped") and u["type"] not in ("语气词",)]
+    by_line = {u["i"]: u for u in units if not u.get("dropped")}
     ctx = {k: brief.get(k) for k in ("theme", "voice", "notes")}
     # 第 1 步 候选
     cands = _ask(cache, "note_candidates", P_CAND, {"歌曲": title, "歌曲理解": ctx, "字幕": lines}, "注释·找候选", "candidates")["candidates"]
     log, seen = [], set()
     # 第 2 步 筛选：程序规则
     who = {_norm(x) for x in re.findall(r"[^\W\d_]+(?:\s+[^\W\d_]+)*", re.sub(r"《[^》]*》", " ", title or ""))}
-    song = _norm(re.search(r"《([^》]*)》", title or "").group(1)) if re.search(r"《([^》]*)》", title or "") else ""
+    # 歌词里与歌名重合的双关和典故仍由观众视角判断。
     kept = []
     for c in cands:
         if not isinstance(c.get("line"), int) or c["line"] not in by_line or not c.get("term"):
@@ -89,10 +90,12 @@ def select_notes(cache, units, brief, title):
         t = _norm(c["term"])
         entry = {"line": c["line"], "term": c["term"], "category": c.get("category", ""), "unknown": c.get("unknown", "")}
         if c.get("category") not in CATS:
-            entry["drop"] = "不在四类里"
+            entry["drop"] = "不在注释类别里"
+        elif t not in _norm(by_line[c["line"]]["orig"]):
+            entry["drop"] = "该行未唱到候选词"
         elif t in seen:
             entry["drop"] = "同一个词前面已经有了"
-        elif t and (t in who or (song and (t in song or song in t)) or any(t and t in w for w in who)):
+        elif t and t in who:
             entry["drop"] = "演唱者本人 / 这首歌本身"
         log.append(entry)
         if "drop" not in entry:
@@ -100,14 +103,14 @@ def select_notes(cache, units, brief, title):
             kept.append(entry)
     # 第 2 步 筛选：观众看中文能不能懂（独立判断）
     if kept:
-        items = [{"id": i, "中文译文": by_line[e["line"]].get("v2", ""), "候选词": e["term"], "类别": e["category"]}
+        items = [{"id": i, "中文译文": by_line[e["line"]].get("v2_final", by_line[e["line"]].get("v2", "")), "候选词": e["term"], "类别": e["category"], "原句": by_line[e["line"]]["orig"]}
                  for i, e in enumerate(kept)]
         res = _ask(cache, "note_judge", P_JUDGE, {"items": items}, "注释·判断需不需要", "items")["items"]
         verdict = {x.get("id"): x for x in res}
         nxt = []
         for i, e in enumerate(kept):
             v = verdict.get(i, {})
-            if not v.get("need"):
+            if v.get("need") is not True:
                 e["drop"] = "观众看中文就懂：" + str(v.get("reason", ""))
             else:
                 e["importance"] = int(v.get("importance") or 1)
@@ -115,7 +118,7 @@ def select_notes(cache, units, brief, title):
         kept = nxt
     # 第 3 步 写注释
     if kept:
-        items = [{"id": i, "原词": e["term"], "所在歌词": by_line[e["line"]]["orig"], "中文译文": by_line[e["line"]].get("v2", ""),
+        items = [{"id": i, "原词": e["term"], "所在歌词": by_line[e["line"]]["orig"], "中文译文": by_line[e["line"]].get("v2_final", by_line[e["line"]].get("v2", "")),
                   "类别": e["category"], "观众不懂的": e["unknown"]} for i, e in enumerate(kept)]
         res = _ask(cache, "note_write", P_WRITE, {"歌曲": title, "歌曲理解": ctx, "items": items}, "注释·写", "notes")["notes"]
         text = {x.get("id"): str(x.get("note", "")).strip() for x in res}
@@ -130,12 +133,13 @@ def select_notes(cache, units, brief, title):
         res = _ask(cache, "note_check", P_CHECK, {"歌曲": title, "items": items}, "注释·核查", "items")["items"]
         ok = {x.get("id"): x for x in res}
         for i, e in enumerate(kept):
-            if not ok.get(i, {}).get("ok"):
+            if ok.get(i, {}).get("ok") is not True:
                 e["drop"] = "事实核查没通过：" + str(ok.get(i, {}).get("problem", "没有核查结果"))
         kept = [e for e in kept if "drop" not in e]
     # 第 5 步 定数量
     kept.sort(key=lambda e: -e.get("importance", 1))
     for e in kept[MAX_NOTES:]:
         e["drop"] = f"超过 {MAX_NOTES} 条，重要程度靠后"
-    final = {e["line"]: e["note"] for e in kept[:MAX_NOTES]}
+    final = {e["line"]: e["note"] for e in kept[:MAX_NOTES]
+             if not by_line[e["line"]].get("dropped")}
     return final, log

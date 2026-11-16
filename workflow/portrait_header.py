@@ -18,11 +18,13 @@ LINES = {key: (y, size, color) for key, y, size, color in STYLE["header"]}
 def draw_artist_name(draw, name, y, font, color, stroke):
     # STHeiti allocates a full character to the middle dot, with the ink at its left.
     # Use a proportional dot but keep the original font for the name itself.
-    parts = re.split(r"(·)", re.sub(r"\s*·\s*", "·", name))
+    parts = re.split(r"(·|[\u3400-\u9fff]+)", re.sub(r"\s*·\s*", "·", name))
     def layout(size):
         name_font = font.font_variant(size=size)
         dot_font = ImageFont.truetype("/System/Library/Fonts/Avenir Next.ttc", size, index=2)
-        runs = [(part, dot_font if part == "·" else name_font) for part in parts]
+        chinese_font = ImageFont.truetype(CHINESE[0], size, index=CHINESE[1])
+        runs = [(part, dot_font if part == "·" else chinese_font if re.search(r"[\u3400-\u9fff]", part) else name_font)
+                for part in parts if part]
         return runs, sum(face.getlength(part) for part, face in runs)
 
     runs, width = layout(font.size)
@@ -55,7 +57,7 @@ def draw_portrait_header(canvas, song, en, zh, event, stroke=True, *, song_zh=No
         if field == "song" and draw_heart_title(canvas, text, font, (540, y), color, width,
                                                 stroke=outline, outline=STYLE["header_outline_color"]):
             continue
-        if field == "zh" and "·" in text:
+        if field in ("en", "zh") and ("·" in text or (field == "en" and re.search(r"[\u3400-\u9fff]", text))):
             draw_artist_name(draw, text, y, font, color, int(stroke))
             continue
         if font.getlength(text) > width:

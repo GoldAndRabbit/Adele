@@ -31,7 +31,7 @@ def candidates(title):
 def search(session, title, artist):
     """Genius 搜索，返回歌曲条目（含 url、发行日期、艺人）。"""
     import os
-    import get_ytb_lyrics_from_link as g
+    from workflow import get_ytb_lyrics_from_link as g
     err = None
     for t in candidates(title):
         try:
@@ -46,7 +46,7 @@ def song_facts(song):
     if not song:
         return None
     return {
-        "full_title": song.get("full_title"), "artists": song.get("artist_names"),
+        "title": song.get("title"), "full_title": song.get("full_title"), "artists": song.get("artist_names"),
         "primary_artist": (song.get("primary_artist") or {}).get("name"),
         "featured": [a.get("name") for a in song.get("featured_artists") or []],
         "release_date": song.get("release_date_for_display"), "url": song.get("url"),
@@ -63,16 +63,22 @@ def clean_text(s):
     return SPACES.sub(" ", s).translate(HOMOGLYPHS)
 
 
-def fetch_part(session, title, artist, genius_url=None):
-    import get_ytb_lyrics_from_link as g
+def fetch_part(session, title, artist, genius_url=None, *, refresh=False):
+    from workflow.lyrics_library import genius_lookup, store
+    cached = None if refresh else genius_lookup(artist, title, genius_url)
+    if cached:
+        return cached["url"], cached["plain"], cached["sections"], cached["facts"]
+    from workflow import get_ytb_lyrics_from_link as g
     song = None
     if not genius_url:
         song = search(session, title, artist)
-        genius_url = song["url"]
-    html = session.get(genius_url, timeout=30)
+        genius_url = g.validate_url(song["url"], genius=True)
+    html = session.get(genius_url, timeout=g.TIMEOUT)
     html.raise_for_status()
     plain, secs = (clean_text(g.extract_lyrics(html.text, k)) for k in (False, True))
-    return genius_url, plain, secs, song_facts(song)
+    facts = song_facts(song)
+    store(artist, title, "genius", genius_url, dict(url=genius_url, plain=plain, sections=secs, facts=facts))
+    return genius_url, plain, secs, facts
 
 
 def stage_lyrics(c, a):
@@ -94,7 +100,7 @@ def stage_lyrics(c, a):
                 plain, secs, urls, facts = [], [], [], []
                 try:
                     for k, part in enumerate(it["parts"], 1):
-                        url, txt, sec, fact = fetch_part(session, part, it["artist"], it.get("genius_url") if len(it["parts"]) == 1 else None)
+                        url, txt, sec, fact = fetch_part(session, part, it["artist"], it.get("genius_url") if len(it["parts"]) == 1 else None, refresh=a.force)
                         urls.append(url)
                         facts.append(fact)
                         plain.append(txt.strip())

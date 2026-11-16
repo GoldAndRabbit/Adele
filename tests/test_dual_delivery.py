@@ -32,7 +32,7 @@ class ParallelDeliveryTest(unittest.TestCase):
    barrier.wait(timeout=3)
    return Path(kind+'.pending.mp4')
   with patch('workflow.dual_platform.render.render',side_effect=fake):
-   result=render_pair()
+   result=render_pair(platforms=['douyin','bilibili'])
   self.assertEqual([x[0] for x in result],['douyin','bilibili'])
   self.assertEqual(seen[0]['parallel_group'],seen[1]['parallel_group'])
  def test_parallel_timing_writes_preserve_both_results(self):
@@ -48,6 +48,12 @@ class ParallelDeliveryTest(unittest.TestCase):
    if kind=='landscape':raise RuntimeError('encode failed')
    return Path('portrait.pending.mp4')
   with patch('workflow.dual_platform.render.render',side_effect=fake):
-   with self.assertRaises(RuntimeError):render_pair()
+   with self.assertRaises(RuntimeError):render_pair(platforms=['douyin','bilibili'])
+
+ def test_default_only_encodes_bilibili(self):
+  from workflow.dual_platform import render_pair
+  with patch('workflow.dual_platform.render.render',return_value=Path('landscape.pending.mp4')) as encode:
+   self.assertEqual(render_pair(),[('bilibili',Path('landscape.pending.mp4'))])
+  encode.assert_called_once_with('landscape',commit=False)
 
 if __name__=='__main__':unittest.main()

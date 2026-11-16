@@ -35,7 +35,7 @@ def _duration(video):
     return float(out or 0)
 
 
-def detect(video, t0=None, t1=None):
+def detect(video, t0=None, t1=None, *, independent_edges=False):
     """ffmpeg cropdetect：每段取最后稳定的结果，几段取并集（某段画面暗，cropdetect 会多裁，取最大的内容区域）。
     t0 / t1：只看这一段（整场演唱会里的一首）。"""
     t0 = t0 or 0.0
@@ -48,15 +48,22 @@ def detect(video, t0=None, t1=None):
         t = t0 + dur * (k + 0.5) / SAMPLES
         err = subprocess.run([_media_tool("ffmpeg"), "-hide_banner", "-ss", f"{max(0, t - 5):.2f}", "-i", str(video), "-t", "10",
                               "-vf", "fps=2,cropdetect=limit=24:round=2:reset=0", "-f", "null", "-"],
-                             capture_output=True, text=True).stderr
+                             capture_output=True, text=True, check=True).stderr
         m = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", err)
         if m:
             w, h, x, y = map(int, m[-1])
-            boxes.append((x, y, x + w, y + h))
+            if w > 0 and h > 0 and x + w <= W and y + h <= H:
+                boxes.append((x, y, x + w, y + h))
     if not boxes:
         return dict(FULL)
     x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
     x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+    if independent_edges:
+        left, right, top, bottom = [
+            pixels / size if pixels >= 2 and len(boxes) >= 2 else 0.0
+            for pixels, size in ((x0, W), (W - x1, W), (y0, H), (H - y1, H))
+        ]
+        return {"x": left, "y": top, "w": 1 - left - right, "h": 1 - top - bottom}
     # 很窄的边当作没有；上下 / 左右按对称处理（片源黑边都是居中的）
     top = min(y0, H - y1) / H
     side = min(x0, W - x1) / W

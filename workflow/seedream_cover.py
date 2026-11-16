@@ -14,6 +14,7 @@ from pathlib import Path
 import requests
 from PIL import Image
 
+from workflow.delivery_bundle import sync_cover_release
 from workflow.ai_cover import render_variants
 from workflow.live.paths import Concert, read_json, write_json
 
@@ -88,7 +89,7 @@ def generate_trial(concert, item, plan_path, skip_failed=False):
                 record.update(status='failed', error_type=type(error).__name__)
                 write_json(record_path, record)
                 raise RuntimeError(f'Candidate {index} failed; inspect {record_path}') from None
-        rows = render_variants(concert, item, output, candidate['label'])
+        rows = render_variants(concert, item, output, candidate['label'], compact=False)
         masters.append(dict(file=rows[0]['master'], label=candidate['label'],
                             provider='ark', model=MODEL, source_time=source_time,
                             reference='references/' + reference.name, run=run_id))
@@ -98,6 +99,7 @@ def generate_trial(concert, item, plan_path, skip_failed=False):
         previous = read_json(directory / 'masters.json', [])
         current_files = {row['file'] for row in masters}
         write_json(directory / 'masters.json', [row for row in previous if row.get('file') not in current_files] + masters)
+        sync_cover_release(concert, item)
     return masters
 
 

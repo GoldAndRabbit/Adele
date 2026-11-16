@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """歌曲中间随机出现的半透明 logo 水印：先只出「计划」（什么时候、在哪），审核页预览；人工确认后成品渲染时才加进视频。
 
-每首 2 次（歌曲 40%~60%、75%~90% 处各随机一次），每次 3 s（淡入淡出各 0.5 s），透明度 60%、带一圈淡的深色阴影，宽度约画面 8%；
-时间避开结尾 10 s 和讲话段；位置在几个候选区域里随机，避开底部字幕区、固定 logo（左上角，或 logo_corner = right 时的右上角）和人脸；
+每首 3 次（歌曲 10%~15%、30%~40%、70%~85% 各随机一次），每次 3 s（淡入淡出各 0.5 s），透明度 60%、带一圈淡的深色阴影，宽度约画面 12%；
+时间尽量避开讲话段；位置在几个候选区域里随机，避开底部字幕区、固定 logo（左上角，或 logo_corner = right 时的右上角）和人脸；
 宽银幕片源（上下有黑边）候选区域按画面内容区域换算（workflow/letterbox.py），不放在黑边上。
 随机种子按歌名固定，同一首每次结果一样。结果写到歌曲目录的 watermark.json（时间是歌曲内时间）。
 
@@ -20,18 +20,18 @@ LOGO_AR = 3936 / 1256        # assets/adele-logo.png 的宽高比
 WIDTH = 0.12                 # 水印宽度 / 画面宽度（2026-10-21 从 8% 调大；左上角 logo 约 10%）
 OPACITY = 0.6                # 白色 logo 在亮的舞台上 30% 几乎看不见（实测），加深色阴影 + 60%
 DUR, FADE = 3.0, 0.5
-EDGE = 10.0                  # 结尾这么多秒内不出现
-WINDOWS = [(0.40, 0.60), (0.75, 0.90)]   # 每首两次：歌曲 40%~60%、75%~90% 处各随机一次（开头字幕还没出来，不放）
+WINDOWS = [(0.10, 0.15), (0.30, 0.40), (0.70, 0.85)]
 # 候选区域（左上角 x、y 的范围，占画面内容区域的比例）：右上、右中、左中、上中；底部字幕区（y > 0.68）和左上角固定 logo 不用
 ZONES = [((0.80, 0.86), (0.05, 0.14)), ((0.80, 0.86), (0.36, 0.50)), ((0.02, 0.06), (0.36, 0.50)), ((0.38, 0.50), (0.04, 0.10))]   # 右边留出 12% 宽度不出界
 
 
-def faces_at(video, t, offset, yunet):
+def faces_at(video, t, offset, yunet, duration=DUR):
     """视频里 [t, t+DUR] 采三帧，返回人脸框（占画面比例的 x0, y0, x1, y1）。"""
     import cv2
     cap = cv2.VideoCapture(str(video))
     out = []
-    for dt in (0.2, DUR / 2, DUR - 0.2):
+    edge = min(0.2, duration / 4)
+    for dt in (edge, duration / 2, duration - edge):
         cap.set(cv2.CAP_PROP_POS_MSEC, (offset + t + dt) * 1000)
         ok, frame = cap.read()
         if not ok:
@@ -55,28 +55,34 @@ def plan(name, dur, video, offset, avoid, area=None, corner="left"):
     from workflow.live.paths import ROOT
     rnd = random.Random(int(hashlib.sha1(name.encode()).hexdigest()[:8], 16))
     yunet = cv2.FaceDetectorYN.create(str(ROOT / "models" / "yunet" / "face_detection_yunet_2023mar.onnx"), "", (640, 360))
+    if dur <= 0:
+        raise ValueError(f"{name}: 曲长必须大于零")
     items = []
     for fa, fb in WINDOWS:
-        a, b = dur * fa, min(dur * fb, dur - EDGE) - DUR
+        a, end = dur * fa, dur * fb
+        duration = min(DUR, end - a)
+        b = end - duration
         for _ in range(20):   # 时间：这个区间里随机，避开讲话
-            t = round(rnd.uniform(a, max(a, b)), 2)
-            if not any(s - 1 < t + DUR and t < e + 1 for s, e in avoid):
+            t = min(max(round(rnd.uniform(a, b), 2), a), b)
+            if not any(s - 1 < t + duration and t < e + 1 for s, e in avoid):
                 break
-        faces = faces_at(video, t, offset, yunet) if video and video.exists() else []
+        faces = faces_at(video, t, offset, yunet, duration) if video and video.exists() else []
         h = WIDTH * 16 / 9 / LOGO_AR   # 水印高度 / 画面高度（按 16:9）
-        pick = None
+        best_overlap = float("inf")
         for _ in range(40):           # 位置：候选区域里随机，不压人脸
             (x0, x1), (y0, y1) = rnd.choice(ZONES[1:] if corner == "right" else ZONES)   # logo 在右上角：右上那块不用
             x, y = rnd.uniform(x0, x1), rnd.uniform(y0, y1)
             if area:
                 x, y = area["x"] + x * area["w"], area["y"] + y * area["h"]
             box = (x, y, x + WIDTH, y + h)
-            if not any(box[0] < f[2] and f[0] < box[2] and box[1] < f[3] and f[1] < box[3] for f in faces):
+            overlap = sum(max(0, min(box[2], f[2]) - max(x, f[0])) *
+                          max(0, min(box[3], f[3]) - max(y, f[1])) for f in faces)
+            if overlap < best_overlap:
+                best_overlap = overlap
                 pick = (x, y)
+            if overlap == 0:
                 break
-        if pick is None:
-            continue   # 每个候选位置都会压到人脸：这一次不出
-        items.append({"t": t, "dur": DUR, "fade": FADE, "x": round(pick[0], 4), "y": round(pick[1], 4), "faces": len(faces)})
+        items.append({"t": t, "dur": duration, "fade": min(FADE, duration / 2), "x": round(pick[0], 4), "y": round(pick[1], 4), "faces": len(faces)})
     return {"logo": "assets/adele-logo.png", "opacity": OPACITY, "width": WIDTH, "items": items}
 
 
@@ -96,18 +102,26 @@ def run_song(slug, name):
     start, end = info.get("slice") or [0, 0]
     video, offset = subtitle_video(c, item, info)
     out = plan(name, end - start, video, offset, speech_spans(d), content_box(d), logo_corner(d))
-    (d / "watermark.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
+    from workflow.live.paths import write_json
+    write_json((d / "watermark.json").resolve(), out)
     print(name, [(x["t"], x["x"], x["y"]) for x in out["items"]])
 
 
 def ensure_song(slug, name):
-    """保留已有水印定稿；缺失或损坏时不能静默跳过。"""
-    from workflow.live.paths import Concert
+    """复用符合当前曲长及三个进度区间的水印计划。"""
+    from workflow.live.paths import Concert, read_json
     c = Concert(slug)
     path = c.song_dir(c.item(name)) / "watermark.json"
-    if not path.exists():
+    start, end = read_json(path.parent / "song.json", {}).get("slice") or (0, 0)
+    dur = end - start
+    data = read_json(path, {}) or {}
+    items = data.get("items") or []
+    if len(items) != len(WINDOWS) or not all(
+        lo * dur - 1e-6 <= mark["t"] and mark["t"] + mark["dur"] <= hi * dur + 1e-6
+        for mark, (lo, hi) in zip(items, WINDOWS)
+    ):
         run_song(slug, name)
-    data = json.loads(path.read_text())
+        data = json.loads(path.read_text())
     if not isinstance(data.get("items"), list) or not data.get("logo"):
         raise ValueError(f"{name}: 水印计划无效")
     return data
@@ -121,7 +135,8 @@ def run_post(name):
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
                                capture_output=True, text=True).stdout.strip())
     out = plan(name, dur, video, 0.0, speech_spans(d), content_box(d), logo_corner(d))
-    (d / "watermark.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
+    from workflow.live.paths import write_json
+    write_json((d / "watermark.json").resolve(), out)
     print(name, [(x["t"], x["x"], x["y"]) for x in out["items"]])
 
 

@@ -307,19 +307,29 @@ def load_memory(d):
     {原文: {"v1", "v2", "v3"}}，按 _norm(原文) 查。"""
     f = d / "zh_memory.json"
     lines = json.loads(f.read_text()).get("lines", {}) if f.exists() else {}
-    return {_norm(k): v for k, v in lines.items()}
+    from workflow.lyrics_library import translation_memory
+    memory = translation_memory(d)
+    memory.update(lines)
+    return {_norm(k): v for k, v in memory.items()}
 
 
 def groups_with_memory(cache, step, prompt, uniq, ctx, label, mem, key, extra=None):
     """by_groups，但整组每一句都在译文记忆里的歌词组直接用记忆（key = v1 / v2 / v3），不问模型。"""
-    hit = lambda g: g[0]["type"] == "歌词" and all(_norm(u["orig"]) in mem for u in g)
-    todo = [i for i, g in enumerate(uniq) if not hit(g)]
-    sub = by_groups(cache, step, prompt, [uniq[i] for i in todo], ctx, label,
-                    extra={j: extra[i] for j, i in enumerate(todo)} if extra else None) if todo else {}
-    out = {i: sub[j] for j, i in enumerate(todo)}
-    for i, g in enumerate(uniq):
-        if i not in out:
-            out[i] = [mem[_norm(u["orig"])].get(key, "") for u in g]
+    out, missing, indices, partial_extra = {}, [], [], {}
+    for i, group in enumerate(uniq):
+        values = [mem.get(_norm(u["orig"]), {}).get(key) if u["type"] == "歌词" else None for u in group]
+        out[i] = values
+        gaps = [j for j, value in enumerate(values) if not value]
+        if gaps:
+            if extra is not None:
+                partial_extra[len(missing)] = [extra[i][j] for j in gaps]
+            missing.append([group[j] for j in gaps])
+            indices.append((i, gaps))
+    if missing:
+        translated = by_groups(cache, step, prompt, missing, ctx, label, extra=partial_extra or None)
+        for n, (i, gaps) in enumerate(indices):
+            for j, zh in zip(gaps, translated[n]):
+                out[i][j] = zh
     return out
 
 
@@ -442,7 +452,8 @@ def translate(d, out_dir, lyrics, title):
     # 顶部注释：单独的选注释词流程（song_note_workflow），在审校之后、用定稿的中文判断「观众看中文能不能懂」
     from .song_note_workflow import select_notes
     notes, note_log = select_notes(cache, units, brief, title)
-    (tdir / "notes.json").write_text(json.dumps({"final": {str(k): v for k, v in notes.items()}, "candidates": note_log},
+    (tdir / "notes.json").write_text(json.dumps({"final": {str(k): v for k, v in notes.items()}, "candidates": note_log,
+                                                "review_status": "reviewed_with_notes" if notes else "reviewed_without_note"},
                                                 ensure_ascii=False, indent=1))
 
     # 标题由独立步骤统一生成，不再先调一次通用标题翻译。
@@ -555,6 +566,8 @@ def build_outputs(d, out_dir):
             ass.events.append(pysubs2.SSAEvent(start=u["start"], end=max(u["end"], u["start"] + 4000), text=text, style="Note"))
         ass.events.sort(key=lambda e: e.start)
         ass.save(str(out_dir / fname))
+    from workflow.lyrics_library import archive_translation
+    archive_translation(d, res)
 
 
 def poetic(d, out_dir, model=None, temperature=0.7):

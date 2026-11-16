@@ -4,16 +4,16 @@ import json,subprocess as sp,time,math,hashlib,fcntl
 import pysubs2
 from PIL import Image,ImageDraw,ImageFont
 from workflow.live.paths import Concert
-from workflow.vertical_workflow import first_lyric,subtitle
+from workflow.vertical_workflow import subtitle
 from workflow.portrait_header import draw_portrait_header,STYLE,PINGFANG
 from workflow.portrait_browser import preview_data
 from workflow.song.render import DEFAULT_ENCODER, ENCODERS
 R=Path(__file__).resolve().parents[1]
 def configure(concert, item, output):
- global W,C,D,START,DURATION,ITEM
- C=concert;ITEM=item;D=C.song_dir(item);W=Path(output)
+ global W,C,D,START,DURATION,ITEM,MASTER_DIR
+ C=concert;ITEM=item;D=C.song_dir(item);W=Path(output);MASTER_DIR=W
  policy=json.loads((C.dir/'vertical_source.json').read_text())['songs'][item['name']]
- START=max(0,first_lyric(D)-.5);DURATION=policy['slice'][1]-policy['slice'][0]-START
+ START=0;DURATION=policy['slice'][1]-policy['slice'][0]
 FF=['/opt/homebrew/bin/ffmpeg','-nostdin','-hide_banner','-loglevel','warning','-y'];FONT='/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf'
 def save(p,v):
  tmp=p.with_suffix('.tmp');tmp.write_text(json.dumps(v,ensure_ascii=False,indent=2));tmp.replace(p)
@@ -32,9 +32,13 @@ def assets():
   mask.save(W/f'{kind}-mask.png')
  for kind in ['portrait','landscape']:
   out=pysubs2.SSAFile();out.info.update(PlayResX=str(1080 if kind=='portrait' else 3840),PlayResY=str(1920 if kind=='portrait' else 2160),WrapStyle='2',ScaledBorderAndShadow='yes')
-  specs={'EN':(36,8,1344),'ZH':(72,8,1272),'Note':(38,8,670)} if kind=='portrait' else {'EN':(120,2,154),'ZH':(120,8,2010),'Note':(96,8,24)}
+  note=data['style']['annotation']
+  scale=1 if kind=='portrait' else 2
+  specs={'EN':(36,8,1344),'ZH':(72,8,1272)} if kind=='portrait' else {'EN':(120,2,154),'ZH':(120,8,2010)}
+  specs['Note']=(note[kind+'_size']*scale,8,(656 if kind=='portrait' else 0)+note['top_inset']*scale)
+  note_color=pysubs2.Color(*bytes.fromhex(note['color'][1:]))
   for key,(size,align,y) in specs.items():
-   out.styles[key]=pysubs2.SSAStyle(fontname=STYLE['english_font'] if key=='EN' else STYLE['chinese_font'],fontsize=size,alignment=align,marginl=72,marginr=72,marginv=y,primarycolor=pysubs2.Color(204,255,0) if key=='Note' else pysubs2.Color(255,255,255),outline=0 if key=='Note' else (4 if kind=='portrait' else 6),shadow=0)
+   out.styles[key]=pysubs2.SSAStyle(fontname=STYLE['english_font'] if key=='EN' else STYLE['chinese_font'],fontsize=size,alignment=align,marginl=72,marginr=72,marginv=y,primarycolor=note_color if key=='Note' else pysubs2.Color(255,255,255),outlinecolor=pysubs2.Color(0,0,0),outline=size*note['outline_ratio'] if key=='Note' else (4 if kind=='portrait' else 6),shadow=0)
   for e in src:
    if e.is_comment or e.end<=START*1000:continue
    rows=e.plaintext.splitlines()
@@ -86,11 +90,25 @@ def graph(kind):
  return g
 
 def render(kind,sample=False,commit=True,timing_metadata=None):
+ if not sample:
+  from workflow.content_check import require_job
+  require_job(json.loads((W/'policy.json').read_text()),W)
  t=time.monotonic();name='bilibili-4k60' if kind=='landscape' else 'douyin-1080p60';dest=W/(name+('-sample' if sample else '')+'.mp4');pending=dest.with_suffix('.pending.mp4')
- inputs=['-ss',str(START),'-i',str(W/('native50.mkv' if sample else 'master60.mkv')),'-loop','1','-framerate','60','-i',str(W/'header.png'),'-loop','1','-framerate','60','-i',str(W/f'{kind}-mask.png'),'-loop','1','-framerate','60','-i',str(R/'assets/adele-logo.png')]
- cmd=FF+inputs+['-filter_complex_threads','4','-filter_complex',graph(kind),'-map','[out]','-map','0:a:0','-t',str(3 if sample else DURATION),'-r','60','-fps_mode','cfr',*ENCODERS[DEFAULT_ENCODER],'-pix_fmt','yuv420p','-colorspace','bt709','-color_primaries','bt709','-color_trc','bt709','-color_range','tv','-c:a','aac','-ac','2','-ar','48000','-b:a','320k','-movflags','+faststart','-progress',str(W/f'{name}.progress'),str(pending)]
+ inputs=['-ss',str(START),'-i',str(MASTER_DIR/('native50.mkv' if sample else 'master60.mkv')),'-loop','1','-framerate','60','-i',str(W/'header.png'),'-loop','1','-framerate','60','-i',str(W/f'{kind}-mask.png'),'-loop','1','-framerate','60','-i',str(R/'assets/adele-logo.png')]
+ cmd=encode_command(kind,inputs,'0:a:0',pending,3 if sample else DURATION)
  with (W/f'{name}.log').open('w') as log:sp.run(cmd,stdout=log,stderr=log,check=True)
  if commit:pending.replace(dest)
  seconds=time.monotonic()-t;timing(name+('_sample' if sample else '_render_encode'),seconds,output=str(dest),duration=3 if sample else DURATION,**(timing_metadata or {}))
  print('READY',kind,seconds,flush=True)
  return dest if commit else pending
+
+def encode_command(kind,inputs,audio_map,pending,duration):
+ """One compositor/encoder preset for file-backed and streaming video inputs.
+
+ inputs 0–3 are video, title image, mask and watermark in both paths. Streaming
+ delivery attaches its separately decoded audio as input 4.
+ """
+ name='bilibili-4k60' if kind=='landscape' else 'douyin-1080p60'
+ audio_args = (['-c:a', 'flac', '-ar', '48000', '-sample_fmt', 's32', '-bits_per_raw_sample', '24']
+               if kind == 'landscape' else ['-c:a', 'aac', '-ac', '2', '-ar', '48000', '-b:a', '320k'])
+ return FF+inputs+['-filter_complex_threads','4','-filter_complex',graph(kind),'-map','[out]','-map',audio_map,'-t',str(duration),'-r','60','-fps_mode','cfr',*ENCODERS[DEFAULT_ENCODER],'-pix_fmt','yuv420p','-colorspace','bt709','-color_primaries','bt709','-color_trc','bt709','-color_range','tv',*audio_args,'-movflags','+faststart','-progress',str(W/f'{name}.progress'),str(pending)]

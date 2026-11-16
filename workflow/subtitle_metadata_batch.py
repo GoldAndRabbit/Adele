@@ -1,6 +1,7 @@
 """Prioritize all visible subtitles and posting copy; no AI images or final exports."""
 import argparse
 import fcntl
+import hashlib
 import re
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ from pathlib import Path
 import pysubs2
 from workflow.live.paths import ROOT,VENV_PY,SEP_PY,read_json,write_json
 from workflow.preview_batch import visible,metadata,enable_browser
+from workflow.vertical_post import posting_inputs
 
 BASE=ROOT/'work/subtitle-metadata-library'
 
@@ -44,12 +46,13 @@ def prepare_metadata(c,it):
                'metadata_origin':'existing concert and setlist facts','intro':{},'tags':[]}
         write_json(d/'post_draft.json',draft)
     from workflow.song.title_translation import resolved,save
-    title=resolved(d) or (draft.get('song') or {}).get('title_zh')
+    title=resolved(d)
     if not title:
         existing=read_json(d/'subs/translation/result.json',{})
         match=re.search(r'《([^》]+)》',existing.get('title_zh',''))
         if match and re.search('[\u3400-\u9fff]',match[1]):
             title=match[1];save(d,{'title':it['title'],'title_zh':title,'artist_zh':draft['song'].get('artist_zh'),'reason':'复用已有字幕译名，不重新翻译'})
+    title = title or (draft.get('song') or {}).get('title_zh')
     if title:
         draft['song']['title_zh']=title
         write_json(d/'post_draft.json',draft)
@@ -58,11 +61,24 @@ def prepare_metadata(c,it):
     if not post or not post.get('title'):issues.append('抖音标题为空')
     if post.get('title_chars',0)>30:issues.append('抖音标题超长')
     if post.get('description_chars',0)>1000:issues.append('抖音描述超长')
-    if not post.get('description','').startswith('#'):issues.append('抖音描述不是话题格式')
+    if not post.get('description_body'):issues.append('缺少B站简介首段')
+    research = read_json(d / 'description_research.json', {}) or {}
+    posting_draft, _, _ = posting_inputs(c, it, draft)
+    description = posting_draft['bili_intro']
+    if not 1800 <= len(description.strip()) <= 2000:
+        issues.append('B站简介须为1800–2000字符的三部分正文')
+    if not all((draft.get('intro') or {}).get(key) for key in ('song', 'performance', 'lyrics')):
+        issues.append('B站简介缺少创作、演唱会或歌词意象部分')
+    if (not research.get('sources') or not research.get('facts') or
+            research.get('description_sha256') != hashlib.sha256(description.strip().encode()).hexdigest()):
+        issues.append('当前投稿简介待搜索核对')
+    elif research.get('issues'):
+        issues.append('投稿简介与搜索来源存在待复核差异')
+    if not post.get('hashtags'):issues.append('缺少抖音话题')
     if '不允许保存' not in post.get('publish_settings',''):issues.append('保存权限不符')
-    if bundle['bilibili']['needs_title_shortening']:issues.append('B站标题超过80字符，保留全文待缩句')
+    if len(bundle['bilibili'].get('标题', '')) > 80:issues.append('B站标题超过80字符，保留全文待缩句')
     if not title:issues.append('中文歌名待确认')
-    return {'status':'needs_review' if issues else 'ready','issues':issues,'douyin_title':post.get('title'),'bilibili_title_chars':bundle['bilibili']['title_characters']}
+    return {'status':'needs_review' if issues else 'ready','issues':issues,'douyin_title':post.get('title'),'bilibili_title_chars':len(bundle['bilibili'].get('标题', ''))}
 
 
 def save_status(c,it,**changes):

@@ -7,6 +7,9 @@ static BOOL transfer(CVPixelBufferRef p,BOOL write){CVPixelBufferLockFlags flags
 int main(int argc,char**argv){@autoreleasepool{
  if(argc<3)fail(@"usage: interpolate sourceFrames outputFrames [cuts.json]");
  long n=atol(argv[1]),out=atol(argv[2]);
+ long rateNum=argc>4?atol(argv[4]):50,rateDen=argc>5?atol(argv[5]):1;
+ if(argc>7){width=atoi(argv[6]);height=atoi(argv[7]);}
+ if(rateNum<=0||rateDen<=0||width<=0||height<=0||width%2||height%2)fail(@"invalid format");
  NSArray *cuts=argc>3?[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:@(argv[3])] options:0 error:nil]:@[];
  NSSet *cutset=[NSSet setWithArray:cuts?:@[]];
  VTFrameRateConversionConfiguration *config=[[VTFrameRateConversionConfiguration alloc]initWithFrameWidth:width frameHeight:height usePrecomputedFlow:NO qualityPrioritization:VTFrameRateConversionConfigurationQualityPrioritizationQuality revision:VTFrameRateConversionConfiguration.defaultRevision];
@@ -16,13 +19,13 @@ int main(int argc,char**argv){@autoreleasepool{
  if(!transfer(a,NO))fail(@"empty input");BOOL has=transfer(b,NO);long i=0;
  for(long k=0;k<out;k++){@autoreleasepool{
   // 50 -> 60 on the original clock. Never rescale the performance duration.
-  long target=(k*5)/6;int remainder=(k*5)%6;
+  long divisor=60*rateDen;long target=(k*rateNum)/divisor;long remainder=(k*rateNum)%divisor;
   while(i<target&&has){CVPixelBufferRef t=a;a=b;b=t;i++;has=transfer(b,NO);}
   if(!has||remainder==0||[cutset containsObject:@(i+1)]){transfer(a,YES);continue;}
-  VTFrameProcessorFrame *left=[[VTFrameProcessorFrame alloc]initWithBuffer:a presentationTimeStamp:CMTimeMake(i,50)];
-  VTFrameProcessorFrame *right=[[VTFrameProcessorFrame alloc]initWithBuffer:b presentationTimeStamp:CMTimeMake(i+1,50)];
+  VTFrameProcessorFrame *left=[[VTFrameProcessorFrame alloc]initWithBuffer:a presentationTimeStamp:CMTimeMake(i*rateDen,(int32_t)rateNum)];
+  VTFrameProcessorFrame *right=[[VTFrameProcessorFrame alloc]initWithBuffer:b presentationTimeStamp:CMTimeMake((i+1)*rateDen,(int32_t)rateNum)];
   VTFrameProcessorFrame *mid=[[VTFrameProcessorFrame alloc]initWithBuffer:m presentationTimeStamp:CMTimeMake(k,60)];
-  VTFrameRateConversionParameters *params=[[VTFrameRateConversionParameters alloc]initWithSourceFrame:left nextFrame:right opticalFlow:nil interpolationPhase:@[@(remainder/6.0)] submissionMode:VTFrameRateConversionParametersSubmissionModeRandom destinationFrames:@[mid]];
+  VTFrameRateConversionParameters *params=[[VTFrameRateConversionParameters alloc]initWithSourceFrame:left nextFrame:right opticalFlow:nil interpolationPhase:@[@(remainder/(double)divisor)] submissionMode:VTFrameRateConversionParametersSubmissionModeRandom destinationFrames:@[mid]];
   error=nil;if(!params||![proc processWithParameters:params error:&error])fail(error.description?:@"interpolation failed");transfer(m,YES);
  }}
  fprintf(stderr,"Processed %ld source frames -> %ld output frames\n",n,out);

@@ -81,6 +81,7 @@ def build(names):
                        "title": display_title(song.get("title") or name), "kind": "song",
                        "artist": song.get("artist"), "notes": (post.get("performance") or {}).get("event"),
                        "production_day": production_day(items.get(name) or {"name": name}),
+                       "added_at": (items.get(name) or {}).get("added_at") or datetime.fromtimestamp(getattr(d.stat(), "st_birthtime", d.stat().st_mtime), ZoneInfo("Asia/Shanghai")).isoformat(),
                        "display_title": items.get(name, {}).get("display_title"),
                        **{k: v for k, v in items.get(name, {}).items() if k.startswith("review_hidden")}}
         segs[name] = {"name": name, "start": 0.0, "end": round(dur, 2), "confidence": 1.0}

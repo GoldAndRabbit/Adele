@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地视频预览</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=1">
+  <link rel="stylesheet" href="/style.css?v=local-preview-v1">
+</head>
+<body>
+  <main class="selection-preview-page">
+    <a href="/">← 返回选品列表</a>
+    <h1 id="preview-title">本地视频预览</h1>
+    <p id="preview-status" class="hint" role="status">正在读取视频信息…</p>
+    <button type="button" id="preview-retry" class="btn" hidden>重新准备预览</button>
+    <video id="preview-video" class="selection-preview-player" controls playsinline preload="none" hidden></video>
+  </main>
+  <script src="/selection-preview.js?v=1"></script>
+</body>
+</html>

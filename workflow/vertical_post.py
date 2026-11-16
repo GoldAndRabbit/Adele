@@ -12,33 +12,55 @@ from workflow.live.paths import read_json, write_json
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
-# Verified Chinese fan names; individual song drafts can supply additional curated names.
-NICKNAMES = {"Taylor Swift": ("霉霉",), "Katy Perry": ("水果姐",)}
+from workflow.artist_nicknames import artist_nicknames
 
+# Credits used in Chinese publishing copy when an older draft repeats the English name.
+ZH_CREDITS = {
+    "Beyoncé": "碧昂丝", "Destiny's Child": "真命天女", "Miranda Lambert": "米兰达·兰伯特",
+    "Justin Timberlake": "贾斯汀·汀布莱克", "Kelly Clarkson": "凯莉·克莱森",
+    "Carrie Underwood": "凯莉·安德伍德", "Frank Ocean": "弗兰克·奥申",
+    "Brandi Carlile": "布兰迪·卡莱尔", "Luke Combs": "卢克·库姆斯",
+    "Stevie Wonder": "史蒂维·旺德", "Kacey Musgraves": "凯茜·马斯格雷夫斯",
+    "Billie Eilish": "比莉·艾利什", "Travis Barker": "特拉维斯·巴克",
+    "Olivia Rodrigo": "奥利维亚·罗德里戈", "Taylor Swift": "泰勒·斯威夫特",
+    "Alicia Keys": "艾丽西亚·凯斯", "Dua Lipa": "杜阿·利帕", "Ed Sheeran": "艾德·希兰",
+    "Bruno Mars": "布鲁诺·马尔斯", "Rihanna": "蕾哈娜", "Elton John": "埃尔顿·约翰",
+    "Sam Smith": "萨姆·史密斯", "Harry Styles": "哈里·斯泰尔斯", "Maroon 5": "魔力红",
+    "Miley Cyrus": "麦莉·赛勒斯", "Joni Mitchell": "乔尼·米切尔", "Billy Joel": "比利·乔尔",
+}
 
 def posting_inputs(c, it, draft):
-    aliases = read_json(c.dir / "vertical_preview.json", {}).get("cover_artist_zh", {})
-    info = c.load("info") or {}
-    concert_name = it.get("notes") if c.slug == "singles" else info.get("title_zh") or info.get("title")
-    song_data = draft.get("song") or {}
-    posting_song = {**song_data, "title": song_data.get("title") or it.get("title"),
-                    "artist": song_data.get("artist") or it.get("artist")}
-    artist_zh = aliases.get(it["name"]) or song_data.get("artist_zh")
-    if not artist_zh and posting_song["artist"] == info.get("artist"):
-        artist_zh = info.get("artist_zh")
-    if not concert_name and c.slug == "singles":
-        intro = draft.get("intro") or {}
-        match = re.search(r"专辑[《「]([^》」]+)[》」]", intro.get("song", "")) if isinstance(intro, dict) else None
-        if match:
-            concert_name = f"《{match[1]}》"
-    # Reuse the same corrected Chinese credits and year-prefixed event as covers.
     from workflow.vertical_cover import header_labels
+    info = c.load("info") or {}
+    directory = c.song_dir(it)
+    source = read_json(directory / "post" / (it["name"] + ".json"), {})
+    performance = {**(source.get("performance") or {}), **(draft.get("performance") or {})}
     labels = header_labels(c, it)
-    artist_zh = labels["zh"]
-    concert_name = labels["event"]
-    english_event = info.get("title_en") or ((info.get("title") or "") if not re.search(r"[\u3400-\u9fff]", info.get("title") or "") else "")
-    posting_draft = {**draft, "song": posting_song, "event_en": english_event,
-                     "event_short": info.get("douyin_event_short") or draft.get("event_short", "")}
+    artist_zh, concert_name = labels["zh"], labels["event"]
+    song = {**(source.get("song") or {}), **(draft.get("song") or {})}
+    song.update(title=song.get("title") or it["title"], artist=labels["en"])
+    if it.get("artist") == "Beyoncé" and "真命天女" in labels["en"]:
+        song["artist"] = "Beyoncé & Destiny's Child"
+    artist_zh = " & ".join(ZH_CREDITS.get(n, n) for n in artist_zh.split(" & "))
+    translation = read_json(directory / "title_translation.json", {}).get("title_zh")
+    if translation:
+        song["title_zh"] = translation
+    if c.slug == "singles":
+        english_event = performance.get("event_en") or ""
+        if not english_event and not re.search(r"[一-鿿]", it.get("notes") or ""):
+            english_event = it.get("notes") or ""
+    else:
+        english_event = info.get("title_en") or performance.get("event_en") or info.get("title") or ""
+    if "2013" in concert_name and "超级碗" in concert_name:
+        english_event = "Super Bowl XLVII Halftime Show"
+    from post_bili.upload import description as bili_description
+    # Exported JSON is derived output, never an input to its own rebuild.
+    bili_intro = bili_description(draft) if draft else bili_description(source)
+    if not bili_intro:
+        bili_intro = read_json(directory / "post/bili_upload.json", {}).get("简介") or ""
+    posting_draft = {**draft, "bili_intro": bili_intro, "song": song, "performance": performance, "event_en": english_event,
+                     "event_short": info.get("douyin_event_short") or draft.get("event_short", ""),
+                     "venue_short": info.get("title_short", "")}
     return posting_draft, concert_name, artist_zh
 
 
@@ -50,11 +72,29 @@ def caption(draft, event="", artist_zh=""):
     concert = ((draft.get("performance") or {}).get("event") or event or "").strip()
     if not all((title, zh, en, concert)):
         return ""
-    aliases = list(song.get("nicknames_zh") or [])
-    for name in en.split(" & "):
-        aliases.extend(NICKNAMES.get(name, ()))
-    aliases = list(dict.fromkeys(alias.strip() for alias in aliases if alias.strip() and alias.strip() not in (zh, en)))
+    aliases = [n for n in artist_nicknames(en, song.get("nicknames_zh")) if n not in (zh, en)]
     return " ".join([title, zh, en, concert, *aliases[:2]])
+
+def douyin_description(intro, tags):
+    paragraph = re.split(r"\n[ \t]*\n", (intro or "").replace("\r\n", "\n").replace("\r", "\n").strip(), maxsplit=1)[0]
+    # Keep complete topics and reserve room for text, its line break and a full stop.
+    chosen = []
+    budget = 1000
+    for tag in tags:
+        if len(chosen) == 5:
+            break
+        cost = len(tag.encode("utf-16-le")) // 2 + bool(chosen)
+        if cost <= budget - (3 if paragraph else 0):
+            chosen.append(tag)
+            budget -= cost
+    available = budget - bool(chosen)
+    encoded = paragraph.encode("utf-16-le")
+    if len(encoded) > 2 * available:
+        prefix = encoded[:2 * (available - 1)].decode("utf-16-le", errors="ignore").rstrip()
+        endings = list(re.finditer(r"[。！？!?]", prefix))
+        paragraph = prefix[:endings[-1].end()] if endings else prefix + "…"
+    return paragraph, chosen, "\n".join(filter(None, (paragraph, " ".join(chosen))))
+
 
 def submission(draft, event="", artist_zh=""):
     """Fixed Douyin template; hashtags are unique and titles fit 30 UTF-16 units."""
@@ -66,11 +106,7 @@ def submission(draft, event="", artist_zh=""):
     zh = re.sub(r"\bJAY-Z\b", "Jay-Z", zh)
     english = artist_credit(song["artist"])
     performers = re.split(r"\s+&\s+|\s+(?:feat\.?|ft\.?|featuring)\s+", english, flags=re.I)
-    raw_aliases = song.get("nicknames_zh") or []
-    aliases = [raw_aliases] if isinstance(raw_aliases, str) else list(raw_aliases)
-    for performer in performers:
-        aliases.extend(NICKNAMES.get(performer, ()))
-    aliases = list(dict.fromkeys(x.strip() for x in aliases if x.strip()))
+    aliases = artist_nicknames(english, song.get("nicknames_zh"))
     event = (event or (draft.get("performance") or {}).get("event") or "").strip()
     names = zh.replace(" & ", "&")
     nickname = "&".join(aliases)
@@ -79,34 +115,109 @@ def submission(draft, event="", artist_zh=""):
         return " ".join(x for x in values if x)
     def fits(value):
         return bool(value) and len(value.encode("utf-16-le")) <= 60
-    # Shorten the sentence by removing complete fields, never slicing names or words.
-    compact_event = (draft.get("event_short") or event).strip()
-    event_without_year = re.sub(r"^(?:19|20)\d{2}年?", "", compact_event).strip()
-    first_name = names.split("&")[0]
-    if len(parts) > 2:
-        full_title = f"{names} {event} 歌曲串烧"
-        choices = [full_title, join(names, compact_event, "歌曲串烧"),
-                   join(names, event_without_year, "歌曲串烧"), join(names, "歌曲串烧"),
-                   join(first_name + ("等" if "&" in names else ""), compact_event, "歌曲串烧"),
-                   join(first_name, "歌曲串烧"), "演唱会歌曲串烧"]
-    else:
-        full_title = join(nickname, title, names, event)
-        choices = [full_title, join(title, names, compact_event),
-                   join(title, names, event_without_year), join(title, names),
-                   join(title, nickname), title]
-        label = "双曲连唱" if len(parts) == 2 else "现场演唱"
-        choices += [join(names, compact_event, label), join(names, label),
-                    join(first_name, label), label]
-    short = next(value for value in choices if fits(value))
-    topics = [event, *performers, draft.get("event_en") or (draft.get("performance") or {}).get("event_en", ""), *aliases, "欧美现场"]
+    year = re.match(r"(?:19|20)\d{2}", event)
+    year = year[0] if year else str((draft.get("performance") or {}).get("date") or song.get("release_year") or "")[:4]
+    year = year if re.fullmatch(r"(?:19|20)\d{2}", year) else ""
+    bare = event.removeprefix(year).removeprefix("年")
+    events = [event, year + bare]
+    for alternative in (draft.get("event_short"), draft.get("venue_short")):
+        if alternative:
+            events.append(year + alternative.replace(year, "").strip(" 年"))
+    compact = bare
+    for artist in names.split("&"):
+        compact = compact.replace(artist, "") if artist != bare else compact
+    for long, brief in (("格莱美颁奖典礼", "格莱美"), ("奥斯汀城市极限", "ACL"),
+                        ("Lollapalooza", "Lolla"), ("伦敦帕拉迪姆剧院", "伦敦帕拉迪姆"),
+                        ("皇家阿尔伯特音乐厅", "阿尔伯特厅")):
+        compact = compact.replace(long, brief)
+    compact = re.sub(r"(?:演唱会|音乐节|现场)$", "", compact) or bare
+    events.append(year + compact)
+    grammy = re.search(r"第?(\d+)届格莱美", compact)
+    if grammy:
+        events.extend([year + "年" + grammy[1] + "届格莱美", year + "格莱美"])
+    for landmark, short in (("底特律", "底特律"), ("巴塞罗那", "巴塞罗那"), ("Spotify", "Spotify"),
+                            ("Tiny Desk", "Tiny Desk"), ("BBC Radio", "BBC"), ("THE FIRST TAKE", "一镜到底"),
+                            ("阿森纳英超夺冠", "阿森纳夺冠"), ("慕尼黑", "慕尼黑"),
+                            ("吉米·坎摩尔", "坎摩尔秀"), ("Songline", "Songline"), ("温布利", "温布利")):
+        if landmark in bare:
+            events.append(year + short)
+    if compact.startswith("伦敦"):
+        events.append(year + "伦敦")
+    events = list(dict.fromkeys(x for x in events if x))
+    # A song name and an artist credit are mandatory in every candidate.
+    full_title = join(title, names, event)
+    tracks = [title, song.get("title_short"), song.get("title_zh")]
+    if len(parts) > 1:
+        tracks.append(parts[0] + f"等{len(parts)}首")
+        translated_parts = re.split(r"\s*/\s*", song.get("title_zh") or "")
+        if translated_parts[0]:
+            tracks.append(translated_parts[0] + f"等{len(parts)}首")
+    tracks = list(dict.fromkeys(x for x in tracks if x))
+    both = join(names, english) if names.casefold() != english.casefold() else names
+    credits = list(dict.fromkeys(x for x in (names, english, both) if x))
+    shortened = []
+    for credit in credits:
+        first = credit.split("&")[0].strip()
+        if first != credit:
+            shortened.append(first + "等")
+    first_zh = names.split("&")[0].strip()
+    first_en = english.split("&")[0].strip()
+    if shortened and first_zh.casefold() != first_en.casefold():
+        shortened.append(join(first_zh, first_en) + "等")
+    short = None
+    # Prefer complete song names and complete cast credits. Only shorten the cast
+    # when none of those combinations fits the platform's hard limit.
+    for cast in (credits, shortened):
+        for track in tracks:
+            candidates = []
+            for credit in cast:
+                base = join(track, credit)
+                if not fits(base):
+                    continue
+                translated = song.get("title_zh")
+                extras = ["", *events, year]
+                if translated and translated != track:
+                    extras.extend(join(translated, venue) for venue in ("", year, *events))
+                for venue in dict.fromkeys(extras):
+                    normalized_venue = re.sub(r"[\W_年]", "", venue.casefold())
+                    normalized_base = re.sub(r"[\W_年]", "", base.casefold())
+                    if normalized_venue and normalized_venue in normalized_base:
+                        continue
+                    credit_aliases = aliases if cast is credits else artist_nicknames(english.split("&")[0].strip())
+                    for alias in ("", *credit_aliases):
+                        if alias and alias in credit:
+                            continue
+                        candidate = join(track, alias, credit, venue)
+                        if fits(candidate):
+                            candidates.append(candidate)
+                # A translated song title adds information when both names fit.
+                translated = song.get("title_zh")
+                if translated and translated != track:
+                    candidate = join(track, credit, translated)
+                    if fits(candidate):
+                        candidates.append(candidate)
+            if candidates:
+                short = max(candidates, key=lambda value: len(value.encode("utf-16-le")))
+                break
+        if short:
+            break
+    if short is None:
+        raise ValueError(f"30字符内无法同时保留歌名与歌手名：{title} / {english}")
+    override = (draft.get("posting_titles") or {}).get("douyin")
+    if override:
+        if not fits(override):
+            raise ValueError("抖音临时标题超过30字符")
+        short = full_title = override
+    topics = [event, *performers, draft.get("event_en") or (draft.get("performance") or {}).get("event_en", ""), *aliases,
+              "欧美现场", song.get("title_zh") or title]
     tags = {}
     for topic in topics:
         tag = re.sub(r"[^\w]", "", topic)
         if tag:
             tags.setdefault(tag.casefold(), "#" + tag)
-    description = " ".join(tags.values())
-    return {"title": short, "title_full": full_title, "title_chars": len(short.encode("utf-16-le")) // 2,
-            "description": description, "description_chars": len(description.encode("utf-16-le")) // 2,
+    body, hashtags, description = douyin_description(draft.get("bili_intro"), tags.values())
+    return {"nicknames_zh": aliases, "title": short, "title_full": full_title, "title_chars": len(short.encode("utf-16-le")) // 2,
+            "description_body": body, "hashtags": hashtags, "description": description, "description_chars": len(description.encode("utf-16-le")) // 2,
             "declaration": "无需添加自主声明",
             "publish_settings": "仅抖音 · 公开 · 不允许保存 · 立即发布"}
 

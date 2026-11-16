@@ -7,7 +7,7 @@
       以及 4:3 的裁切窗口有没有把脸裁掉。
   - 观感分（Qwen 看成品 16:9 封面，一首歌一次调用）：按 YouTube / B 站缩略图的标准，
       看眼睛、表情、清晰、字有没有挡脸、构图、整体吸引力，每张给分和一句理由。
-  最终分 = 0.55 × 观感 + 0.45 × 技术，闭眼 / 字盖住眼睛（程序测，不让模型判断）再打折；Top3 互相隔开 4 秒以上（不要三张同一个镜头）。
+  最终分 = 0.55 × 观感 + 0.45 × 技术，剔除闭眼、半闭眼，标题遮眼按实际重叠面积扣分；Top3 互相隔开 4 秒以上（不要三张同一个镜头）。
 
 用法：python -m workflow.live.cover_rank <concert_slug> [歌名 ...] [--force] [--no-vlm]
 """
@@ -21,7 +21,7 @@ from PIL import Image
 from .package import COVER_RE, FRAME_RE
 from .paths import Concert, read_json, write_json
 
-VERSION = 2   # 2：字挡脸只用程序测量，不让模型判断
+VERSION = 3   # 闭眼及半闭眼候选退出排名
 W_VLM, W_TECH = 0.55, 0.45
 TOP_GAP = 4.0   # Top3 之间至少隔几秒（同一个镜头的几张只进一张）
 VLM_SIZE = (768, 432)
@@ -211,7 +211,7 @@ def rank(d, force=False, use_vlm=True):
         if v:
             score = W_VLM * float(v.get("overall") or 0) / 10 + W_TECH * t
             if v.get("eyes") in ("closed", "half"):
-                score *= 0.7 if v["eyes"] == "half" else 0.55
+                continue
             if cid in vlm_top:
                 score += 0.03 * (3 - vlm_top.index(cid))   # 模型自己的 Top3 小幅加分（打平时用）
         elif vlm:   # 别的图都有观感分、只有这张没有（被内容审核拦下）：观感按中间值 5 分算，免得只凭技术分排到前面

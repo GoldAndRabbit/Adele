@@ -146,7 +146,8 @@ def main():
     translation = args.song_zh
     if not translation:
         from workflow.live.paths import read_json
-        translation = read_json(directory / "title_translation.json", {}).get("title_zh") or read_json(directory / "post_draft.json", {}).get("song", {}).get("title_zh")
+        from workflow.song.title_translation import header_translation
+        translation = header_translation(directory, args.song or "", read_json(directory / "post_draft.json", {}).get("song", {}))
     if args.song and not translation:
         raise ValueError("缺少已确认的中文歌名，请先运行标题翻译步骤")
     draw_portrait_header(canvas, args.song, args.en, args.zh, args.intro, blurred, song_zh=translation)

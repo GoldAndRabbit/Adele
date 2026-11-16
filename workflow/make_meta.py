@@ -13,6 +13,7 @@ python workflow/make_meta.py --name sobaniirune --cover posts/sobaniirune/post/c
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -42,14 +43,14 @@ SYSTEM_PROMPT = """你是 B 站音乐 UP 主「朝阳Adele」的投稿编辑。�
 }
 
 介绍要求：
-- 简体中文，口吻自然，像 UP 主写给观众的简介；intro_song、intro_performance 各 150~300 字，intro_lyrics 300~500 字
+- 简体中文，口吻自然，像 UP 主写给观众的简介；三部分合并后含空行总长 1800~2000 字符，目标 1900~1980；intro_song 约 500~600 字，intro_performance 约 500~600 字，intro_lyrics 约 750~850 字。三部分均须完整，按实际材料分配篇幅
 - intro_song：歌曲背景、发行年份、成绩/影响、风格与主题
 - intro_performance：这次演出/节目是什么、在哪里/什么形式；演出风格和氛围；舞台上特别的地方（布景、大屏、灯光特效、
   伴舞编排、走下舞台和观众互动等）；主唱的造型（服装、配饰、发型）。造型和舞台以「现场画面观察」为准，
   观察里没有的不写；观察里认不准的东西（比如大屏上是什么动物）就笼统说，不要坐实
 - intro_lyrics：详细讲歌词——讲了一个什么故事 / 什么情绪，按段落怎么推进（主歌、副歌、桥段各写了什么），
   关键的意象、比喻、双关、俚语和文化背景，帮看不懂原文的观众读懂这首歌。以给出的「歌词」材料为准，
-  可以引用其中的句子（原文 + 中文意思），引用必须逐字出自材料，不要编造材料里没有的歌词
+  用自己的话解释意象和叙事推进，避免逐句引用或大段翻译原词
 - 只使用提供材料里的事实和广为人知的常识；材料里没有、你也不确定的，宁可不写，不要编数字和日期
 - 频道/节目的通用口号、规则（如 THE FIRST TAKE 的“一支麦克风”）不是这次演出的事实，不要当作演出细节写
 - 材料里只给了罗马字/英文的人名，保持原样，不要自己配汉字
@@ -140,26 +141,87 @@ def intro_text(gen):
     return "\n\n".join(x.strip() for x in (gen.get("intro_song"), gen.get("intro_performance"), gen.get("intro_lyrics")) if x)
 
 
-def fit_intro(gen, label=""):
-    """简介超过 2000 字：在「歌词介绍」那段里以句号为单位，从中间往两边一句句删（第一句和最后一句留着），删到不超过为止。
-    gen 用 intro_song / intro_performance / intro_lyrics 三个键，原地改并返回。"""
-    import re
-    if len(intro_text(gen)) <= INTRO_MAX or not gen.get("intro_lyrics"):
+INTRO_FLOORS = {"intro_song": 350, "intro_performance": 350, "intro_lyrics": 500}
+
+
+def unique_intro(gen):
+    """A repeated model supplement must not count as new description content."""
+    seen = set()
+    for key in INTRO_FLOORS:
+        kept = []
+        for sentence in re.split(r'(?<=[。！？])', gen.get(key, '')):
+            normalized = re.sub(r'\s+', '', sentence).casefold()
+            if len(normalized) >= 12 and normalized in seen:
+                continue
+            if normalized:
+                kept.append(sentence)
+                seen.add(normalized)
+        gen[key] = ''.join(kept).strip()
+    return gen
+
+
+def complete_intro(gen):
+    return (1800 <= len(intro_text(gen)) <= INTRO_MAX
+            and all(len(gen.get(k, '').strip()) >= floor for k, floor in INTRO_FLOORS.items()))
+
+
+def generate_intro(user, label="介绍"):
+    gen = chat_json(SYSTEM_PROMPT, user + "\n先写完整初稿，三部分合计2300–2700个中文字符。可以超2000，程序随后删完整句子。", temperature=0.5, label=label)
+    keys = ("intro_song", "intro_performance", "intro_lyrics")
+    # Keep useful prose: short model replies are expanded, never discarded.
+    for attempt in range(5):
+        unique_intro(gen)
+        if len(intro_text(gen)) > INTRO_MAX:
+            fit_intro(gen, label)
+        length = len(intro_text(gen))
+        if complete_intro(gen):
+            return gen
+        print(f"{label} 已保留初稿 {length} 字符，补写后再删减", flush=True)
+        extra = chat_json(SYSTEM_PROMPT,
+            user + "\n以下是保留的初稿：\n" + json.dumps(gen, ensure_ascii=False)
+            + "\n不要重写或重复已有句子。只返回三个intro字段的新增段落，每部分补充约500个中文字符。"
+              "只解释材料支持的音乐、现场和歌词意象，不添加未知事实，不引用歌词。程序将拼接，再删完整句子。",
+            temperature=0.5, label=label + " 补写")
+        for key in keys:
+            text = extra.get(key, "").strip()
+            if text:
+                gen[key] = (gen.get(key, "").strip() + "\n\n" + text).strip()
+    fit_intro(gen, label)
+    unique_intro(gen)
+    if complete_intro(gen):
         return gen
-    paras = [[x for x in re.split(r"(?<=[。！？])(?![”’」』）])", p) if x.strip()]
-             for p in gen["intro_lyrics"].split("\n\n")]
-    sents = [(a, b) for a, p in enumerate(paras) for b in range(len(p))]
-    mid = (len(sents) - 1) / 2
-    order = sorted(sents[1:-1], key=lambda k: abs(sents.index(k) - mid))   # 离中间最近的先删
-    drop = set()
-    text = lambda: "\n\n".join(x for x in ("".join(s for b, s in enumerate(p) if (a, b) not in drop).strip()
-                                             for a, p in enumerate(paras)) if x)
-    for k in order:
-        if len(intro_text({**gen, "intro_lyrics": text()})) <= INTRO_MAX:
+    raise ValueError(f"{label} 简介补写删减仍未达到三部分1800–2000字符要求")
+
+
+def fit_intro(gen, label=""):
+    """Trim whole middle or final sentences, keeping three parts and 1800+ chars."""
+    import re
+    keys = ("intro_song", "intro_performance", "intro_lyrics")
+    if len(intro_text(gen)) <= INTRO_MAX:
+        return gen
+    original = len(intro_text(gen))
+    parts = {key: re.findall(r'[^。！？]+[。！？][”’」』）]*|[^。！？]+$', gen.get(key, "")) for key in keys}
+    removed = 0
+    while len(intro_text(gen)) > INTRO_MAX:
+        candidates = []
+        # Trim the longest section first instead of exhausting the song's
+        # introduction before touching the other two sections.
+        for key in sorted(keys, key=lambda k: len(gen.get(k, '')), reverse=True):
+            rows = parts[key]
+            # Keep the opening sentence of each section; middle sentences first.
+            candidates.extend((key, i) for i in sorted(range(1, len(rows)),
+                              key=lambda i: abs(i - (len(rows)-1)/2)))
+        for key, index in candidates:
+            proposed = "".join(parts[key][:index] + parts[key][index+1:]).strip()
+            if len(proposed) < INTRO_FLOORS[key] or len(intro_text({**gen, key: proposed})) < 1800:
+                continue
+            parts[key].pop(index)
+            gen[key] = proposed
+            removed += 1
             break
-        drop.add(k)
-    gen["intro_lyrics"] = text()
-    print(f"{label} 简介超 {INTRO_MAX} 字：歌词介绍中间删了 {len(drop)} 句")
+        else:
+            break  # Ask for a new draft rather than cutting a sentence in half.
+    print(f"{label} 简介 {original} → {len(intro_text(gen))} 字符，删除 {removed} 个完整句子")
     return gen
 
 
@@ -181,7 +243,7 @@ def reintro(name, note=None):
     dur = float(meta.get("duration") or 0) or None
     notes = stage_notes(d / "source.mp4", 0.0, dur, d / "stage_notes.json") if dur and (d / "source.mp4").exists() else None
     user += media_material(notes, lyrics_material(d / "lyrics.txt", d / "zh_cache.json"))
-    gen = fit_intro(chat_json(SYSTEM_PROMPT, user, temperature=0.5, label=f"介绍 {name}"), name)
+    gen = generate_intro(user, label=f"介绍 {name}")
     post["intro"] = {"song": gen.get("intro_song"), "performance": gen.get("intro_performance"), "lyrics": gen.get("intro_lyrics")}
     dst.write_text(json.dumps(post, ensure_ascii=False, indent=2) + "\n")
     return post["intro"]
@@ -241,7 +303,7 @@ def main():
     notes = stage_notes(d / "source.mp4", 0.0, dur, d / "stage_notes.json") if dur and (d / "source.mp4").exists() else None
     user += media_material(notes, lyrics_material(d / "lyrics.txt", d / "zh_cache.json"))
 
-    gen = fit_intro(chat_json(SYSTEM_PROMPT, user, temperature=0.5, label="元数据"), a.name)
+    gen = generate_intro(user, label="元数据")
     title = build_title(gen.get("artist_zh"), gen.get("artist_en"), gen.get("song_title") or "",
                         subs_title_zh(ROOT / "posts" / a.name) or gen.get("song_title_zh"), gen.get("event_zh"), gen.get("event_en"), subs_tag(langs))
 

@@ -33,12 +33,16 @@ def prepare(concert, item):
     directory = Path(selection["directory"])
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / "source.mp4"
-    expected = {"source": str(source), "mtime": source.stat().st_mtime_ns, "slice": selection["slice"]}
+    from workflow.browser_library import source_identity, prepare_browser
+    decoder = selection.get("audio_decoder") or read_json(concert.dir / "concert.json", {}).get("audio_decoder")
+    expected = source_identity(source, selection["slice"], decoder)
     marker = directory / "source.json"
     with (directory / ".source.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if output.is_file() and read_json(marker) == expected:
             return _publish(concert, item, output)
+        if decoder:
+            return prepare_browser(concert, item)
         start, end = selection["slice"]
         with tempfile.TemporaryDirectory(dir=directory) as temporary:
             pending = Path(temporary) / "source.mp4"

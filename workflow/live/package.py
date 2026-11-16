@@ -10,6 +10,7 @@ package：每首歌的候选封面 + 投稿标题 / 介绍草稿，给审核页�
 
 import json
 import re
+from pathlib import Path
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
@@ -78,10 +79,15 @@ def cover_candidates(d):
 def subtitle_line(c, it):
     info = read_json(c.info)
     song = read_json(c.song_dir(it) / "song.json", {})
+    if song.get("cover_subtitle"):
+        return song["cover_subtitle"]
     langs = song.get("langs") or [song.get("lang", "en")]
     cast = read_json(c.song_dir(it) / "post_draft.json", {}).get("song") or {}
     zh = info.get("title_artist_zh") or cast.get("artist_zh") or info.get("artist_zh")
     en = info.get("title_artist_en") or cast.get("artist") or info.get("artist", "")
+    if (en.casefold() == info.get("artist", "").casefold() and info.get("artist_zh")
+            and not re.search(r"[\u3400-\u9fff]", zh or "")):
+        zh = info["artist_zh"]
     # 明确的封面定稿优先；默认同时保留中英文艺名。
     who = song.get("cover_artist") or info.get("cover_artist") or " ".join(dict.fromkeys(x for x in (zh, en) if x))
     # 同台合唱的嘉宾（song.json guests）写在歌手后面：夏奇拉 × 杜阿·利帕（用户 2026-10-26：不能只写夏奇拉）
@@ -103,6 +109,14 @@ def concert_names(info):
 
 def cover_title(c, it):
     return read_json(c.song_dir(it) / "song.json", {}).get("cover_title") or it["title"]
+
+
+def compact_cover_title(c, item):
+    title = cover_title(c, item)
+    parts = [part.strip() for part in title.split(" / ")]
+    if len(parts) >= 3 or (len(parts) > 1 and len(item["title"].split(" / ")) >= 3):
+        return parts[0] + "等串烧"
+    return title
 
 
 def make_covers(c, it, seg, a):
@@ -154,23 +168,35 @@ def song_title_zh(c, it):
 
 
 def post_title(c, it, cast=None):
-    from workflow.bili_title import build_title
+    from workflow.bili_title import for_post
     info = read_json(c.info)
-    cast = cast if cast is not None else read_json(c.song_dir(it) / "post_draft.json", {}).get("song", {})
-    return build_title(cast.get("artist_zh") or info.get("artist_zh"),
-                       cast.get("artist") or it.get("artist") or info.get("artist"),
-                       cast.get("title_song") or it["title"], song_title_zh(c, it),
-                       info.get("title_zh") or info.get("title"), info.get("title_en"),
-                       year=info.get("date"), nicknames=cast.get("nicknames_zh"))
+    directory = c.song_dir(it)
+    if cast is None:
+        post = (read_json(directory / 'post' / (it['name'] + '.json'), {})
+                or read_json(directory / 'post_draft.json', {}))
+    else:
+        post = {'song': cast}
+    song = post.get('song') or {}
+    post = {**post, 'song': {**song, 'title': song.get('title') or song.get('title_song') or it['title'],
+                            'artist': song.get('artist') or it.get('artist') or info.get('artist')},
+            'performance': post.get('performance') or {'event_zh': info.get('title_zh') or info.get('title'),
+                                                       'event_en': info.get('title_en'), 'date': info.get('date')}}
+    return for_post(directory, post)
 
 
 def draft_meta(c, it, seg, a):
     d = c.song_dir(it)
     dst = d / "post_draft.json"
-    if dst.exists() and not a.force:
-        draft = read_json(dst)
-        if draft.get("title") != post_title(c, it):   # 标题格式改过：只换标题，不重写介绍
+    from post_bili.upload import description
+    existing = read_json(dst, {})
+    complete = (all((existing.get("intro") or {}).get(k) for k in ("song", "performance", "lyrics"))
+                and 1800 <= len(description(existing)) <= 2000
+                and bool(existing.get("tags")))
+    if dst.exists() and not a.force and complete:
+        draft = existing
+        if draft.get("title") != post_title(c, it) or draft.get("intro_text") != description(draft):
             draft["title"] = post_title(c, it)
+            draft["intro_text"] = description(draft)
             write_json(dst, draft)
         return
     import make_meta
@@ -192,25 +218,30 @@ def draft_meta(c, it, seg, a):
     user = ("原视频信息（整场演唱会中的一首，以下是全部可用事实）：\n" + json.dumps(facts, ensure_ascii=False, indent=2)
             + f"\n\n字幕：{lang} + 中文（标签写作“中{''.join(x[0] for x in lang.split('、'))}字幕”）"
             + "\n\n补充说明：歌单备注里的英文请转述成中文，不要照抄。"
-            + "\n\n介绍篇幅（覆盖上面的字数要求）：intro_song 和 intro_performance 各写 300~400 字，intro_lyrics 写 400~600 字，内容要充实："
+            + "\n\n介绍篇幅（覆盖上面的字数要求）：intro_song 和 intro_performance 各写约 550 字，intro_lyrics 写约 800 字，三部分合并含空行1800–2000字符，内容要充实："
             + "intro_song 写这首歌的创作 / 发行背景、原唱与合作、风格和主题、成绩与影响；"
             + "intro_performance 写这场演唱会（巡演、场馆、城市、转播）、这首歌在本场的位置和前后衔接、"
             + "歌单备注里的现场改编或嘉宾，以及这首歌的演出风格、舞台上特别的地方和主唱造型（按「现场画面观察」写）；"
             + "intro_lyrics 按要求详细讲歌词。只写材料里有的事实和广为人知的常识，不编数字和日期；"
             + "这站是巡演的第几站、是不是最后一站，这首是不是安可，材料里没有就不要写（「本场第几首」只说第几首）。")
-    notes = make_meta.stage_notes(c.source, seg["start"], seg["end"], d / "stage_notes.json")
+    if existing and not (d / "post_draft.before_standard_meta.json").exists():
+        write_json(d / "post_draft.before_standard_meta.json", existing)
+    video, begin, finish = c.source, seg["start"], seg["end"]
+    clip = d / "vertical/original-selected.mp4"
+    if clip.is_file():
+        video, begin, finish = clip, 0, seg["end"] - seg["start"]
+    elif not video.is_file() and song.get("source_file"):
+        video = Path(song["source_file"])
+    notes = make_meta.stage_notes(video, begin, finish, d / "stage_notes.json")
     user += make_meta.media_material(notes, make_meta.lyrics_material(d / "lyrics.txt", d / "zh_cache.json"))
-    gen = {}
-    for _ in range(2):   # 太短就再写一次
-        gen = chat_json(make_meta.SYSTEM_PROMPT, user, temperature=0.5, label=f"元数据 {it['title']}")
-        if (min(len(gen.get("intro_song") or ""), len(gen.get("intro_performance") or "")) >= 220
-                and len(gen.get("intro_lyrics") or "") >= 300):
-            break
-    make_meta.fit_intro(gen, it["title"])   # B 站简介上限 2000 字
+    gen = make_meta.generate_intro(user, label=f"元数据 {it['title']}")
+    from workflow.bili_title import posting_artist
+    artist_zh, artist_en = posting_artist(
+        {"artist": gen.get("artist_en"), "artist_zh": gen.get("artist_zh")}, info)
     write_json(dst, {
-        "title": post_title(c, it, {"artist": gen.get("artist_en"), "artist_zh": gen.get("artist_zh")}),
-        "song": {"title": gen.get("song_title") or it["title"], "artist": gen.get("artist_en"),
-                 "artist_zh": gen.get("artist_zh"), "release_year": gen.get("release_year")},
+        "title": post_title(c, it, {"artist": artist_en, "artist_zh": artist_zh}),
+        "song": {"title": gen.get("song_title") or it["title"], "artist": artist_en,
+                 "artist_zh": artist_zh, "release_year": gen.get("release_year")},
         "performance": {"event": gen.get("event") or info.get("title"), "date": gen.get("event_date") or info.get("date")},
         "intro": {"song": gen.get("intro_song"), "performance": gen.get("intro_performance"), "lyrics": gen.get("intro_lyrics")},
         "intro_text": make_meta.intro_text(gen),
@@ -226,18 +257,22 @@ def validate_presentation(c, it):
     title = draft.get("title") or ""
     target = info.get("title_target_length", 80)
     errors = []
-    if not title.startswith("[4K60帧/Hi-Res]"):
-        errors.append("缺少规格前缀")
-    if len(title) != target:
-        errors.append(f"标题字符数 {len(title)}，要求 {target}")
+    expected = post_title(c, it)
+    if title != expected:
+        errors.append("标题与当前统一标题规则不一致")
+    if not 1 <= len(title) <= target:
+        errors.append(f"标题字符数 {len(title)}，要求 1–{target}")
     cast = draft.get("song") or {}
-    for name in (info.get("title_artist_zh") or cast.get("artist_zh"),
-                 info.get("title_artist_en") or cast.get("artist")):
-        if not name or name not in title:
-            errors.append("标题缺少中英文歌手名")
-    events = [x for x in (*concert_names(info), info.get("title_short")) if x]
-    if not events or not any(x in title for x in events):
-        errors.append("标题缺少演出名")
+    if not (cast.get("artist") or info.get("artist")):
+        errors.append("缺少歌手资料")
+    if not (cast.get("title") or it.get("title")):
+        errors.append("缺少歌名资料")
+    from post_bili.upload import description
+    body = description(draft)
+    if not 1800 <= len(body) <= 2000:
+        errors.append(f"简介字符数 {len(body)}，要求 1800–2000")
+    if not all((draft.get("intro") or {}).get(k) for k in ("song", "performance", "lyrics")):
+        errors.append("简介缺少歌曲、演出或歌词部分")
     subtitle = subtitle_line(c, it)
     if errors:
         raise ValueError("投稿格式检查失败：" + "；".join(errors))

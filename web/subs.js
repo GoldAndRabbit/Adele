@@ -241,7 +241,7 @@ class SubOverlay extends SubRenderer {
     super(box, ass);
     Object.assign(this, { video, offset });
     const fit = () => this.layout(video.clientWidth, video.clientHeight,
-      video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9);
+      Number(video.style.aspectRatio) || (video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9));
     new ResizeObserver(fit).observe(video);
     video.addEventListener("loadedmetadata", fit);
     const tick = () => {

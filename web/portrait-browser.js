@@ -1,3 +1,18 @@
+function applyPreviewCrop(video, box) {
+  if (!box || (box.w === 1 && box.h === 1)) {
+    video.style.aspectRatio = 'auto 16 / 9';
+    return;
+  }
+  const insets = [box.y, 1-box.x-box.w, 1-box.y-box.h, box.x];
+  video.style.objectViewBox = `inset(${insets.map(v => Math.max(0,v)*100+'%').join(' ')})`;
+  const fit = () => {
+    if (video.videoWidth && video.videoHeight)
+      video.style.aspectRatio = String(video.videoWidth * box.w / (video.videoHeight * box.h));
+  };
+  fit();
+  video.addEventListener('loadedmetadata', fit, {once:true});
+}
+
 /* One decoder drives the clear picture and both blurred regions. */
 function browserPortrait(data) {
   const video = h('video', {src:data.url, playsinline:true, preload:'metadata', class:'browser-portrait-source', 'aria-hidden':'true'});
@@ -19,11 +34,13 @@ function browserPortrait(data) {
   const el = h('div', {class:'pane portrait-player browser-portrait'},display,
     h('small', {}, '实时预览 · 原片播放 / 标题和字幕动态叠加'),formatLabel(data.format));
   let frame=0, decodedFrame=0, disposed=false;
+  const hasVideoFrames = typeof video.requestVideoFrameCallback === "function";
+  let lastClock = "";
   const captions=(data.captions||[]).filter(e=>e.style!=='Note' && !e.orig.startsWith('《'));
   // Use the exact same DOM renderer, font metrics and black stroke as horizontal subtitles.
   const settings=data.style;
   const style={size:settings.english_size,color:settings.subtitle_color,outline:settings.subtitle_outline,marginL:72,marginR:72,marginV:settings.subtitle_y,align:8,box:null};
-  const captionAss={playResX:1080,playResY:1920,styles:{Default:style,Note:{size:38,color:'#CCFF00',outline:0,marginL:36,marginR:36,marginV:670,align:8,box:null}},events:[]};
+  const captionAss={playResX:1080,playResY:1920,styles:{Default:style,Note:previewNoteStyle(settings.annotation,'portrait',656)},events:[]};
   const subtitleRenderer=new SubRenderer(stage,captionAss);
   const events=captions.map(cue=>({start:cue.start,end:cue.end,style:'Default',lines:[
     {text:(cue.zh||'').replace(/[♪♫♬🎵🎶]/gu,'').trim(),size:settings.chinese_size},
@@ -47,6 +64,11 @@ function browserPortrait(data) {
       item.line.style.fontSize=`${fitted*scale}px`;
       item.line.style.webkitTextStroke=`${2*(item.key === "song" ? settings.title_outline : settings.header_outline)*scale}px #000`;
     }
+    if (video.videoWidth && video.videoHeight) {
+      const crop=data.preview_crop;
+      const ratio=video.videoHeight / video.videoWidth * (crop ? crop.h / crop.w : 1);
+      captionAss.styles.Note.marginV=Math.max(0,(1920 - 1080 * ratio)/2) + settings.annotation.top_inset;
+    }
     subtitleRenderer.layout(stage.clientWidth,stage.clientHeight,9/16);
   }
   const resize=new ResizeObserver(layoutText);resize.observe(stage);
@@ -65,7 +87,7 @@ function browserPortrait(data) {
         ctx.drawImage(scratch,-35,dest-35,610,550);ctx.restore();
       }
       blur(sy,sh/2,0,24);blur(sy+sh*.7,sh*.3,480,56);
-      const height=540*video.videoHeight/video.videoWidth;
+      const height=data.preview_crop ? 540*sh/sw : 540*video.videoHeight/video.videoWidth;
       if(data.portrait_soft_lower_edge) {
         const ph=Math.round(height);
         if(picture.width!==540||picture.height!==ph){picture.width=540;picture.height=ph;}
@@ -90,27 +112,35 @@ function browserPortrait(data) {
     }
     const time=video.currentTime+(data.start||0);
     subtitleRenderer.render(events.filter(cue=>cue.start<=time && time<cue.end));
-    seek.value=video.currentTime;clock.textContent=fmt(time);
+    seek.value=video.currentTime;
+    const label = fmt(time);
+    if (label !== lastClock) { clock.textContent=label; lastClock=label; }
   }
   function tick(){draw();if(!video.paused&&!video.ended&&!disposed)frame=requestAnimationFrame(tick);}
   function toggle(){if(video.paused)video.play().catch(e=>{if(e.name!=="AbortError")toast(e.message,false);});else video.pause();}
   play.addEventListener('click',toggle);canvas.addEventListener('click',toggle);
-  video.addEventListener('play',()=>{play.textContent='同步暂停';cancelAnimationFrame(frame);tick();});
+  video.addEventListener('play',()=>{play.textContent='同步暂停';cancelAnimationFrame(frame);if(!hasVideoFrames)tick();});
   video.addEventListener('pause',()=>{play.textContent='同步播放';cancelAnimationFrame(frame);draw();});
   video.addEventListener('ended',()=>{play.textContent='同步播放';draw();});
-  video.addEventListener('loadedmetadata',()=>{seek.max=video.duration;draw();});
-  for(const event of ['loadeddata','seeked','timeupdate'])video.addEventListener(event,draw);
+  video.addEventListener('loadedmetadata',()=>{seek.max=video.duration;layoutText();draw();});
+  for(const event of ['loadeddata','seeked'])video.addEventListener(event,draw);
+  video.addEventListener('timeupdate',()=>{if(video.paused)draw();});
   video.addEventListener('error',()=>toast('原片暂时无法播放，请检查硬盘连接',false));
   seek.addEventListener('input',()=>{video.currentTime=Number(seek.value);draw();});
   mute.addEventListener('click',()=>{video.muted=!video.muted;mute.textContent=video.muted?'取消静音':'静音';});
   fullscreen.addEventListener('click',()=>{if(document.fullscreenElement)document.exitFullscreen();else display.requestFullscreen?.();});
-  if (video.requestVideoFrameCallback) {
+  if (hasVideoFrames) {
     const decoded = () => { if(disposed)return; draw(); decodedFrame=video.requestVideoFrameCallback(decoded); };
     decodedFrame=video.requestVideoFrameCallback(decoded);
   }
   mark.addEventListener("load",draw);
   draw();
   return {el,video,destroy(){disposed=true;resize.disconnect();cancelAnimationFrame(frame);if(decodedFrame)video.cancelVideoFrameCallback(decodedFrame);video.pause();video.removeAttribute('src');video.load();}};
+}
+
+function previewNoteStyle(config, orientation, pictureTop) {
+  const size = config[orientation + '_size'];
+  return {size, color:config.color, outline:size * config.outline_ratio, marginL:36, marginR:36, marginV:pictureTop + config.top_inset, align:8, box:null};
 }
 
 function previewNotes(data) {
@@ -132,10 +162,11 @@ function horizontalCaptionBand(video, data) {
     styles:{Default:{...style, align:8, marginV:-22}}, events:[]});
   const notes = previewNotes(data);
   const noteRenderer = new SubRenderer(el, {playResX:1920, playResY:1136, styles:{
-    Note:{size:48, color:'#CCFF00', outline:0, marginL:36, marginR:36, marginV:12, align:8, box:null}
+    Note:previewNoteStyle(data.style.annotation,'landscape',0)
   }, events:notes});
   const cues = (data.captions || []).filter(c => c.style !== 'Note' && !c.orig.startsWith('《'));
   let frame = 0, disposed = false;
+  let englishCues = [], chineseCues = [];
   function caption(cue, text, renderer, width) {
     text = text.replace(/\s*\n\s*/g, ' ').trim();
     const size = 60 * Math.min(1, (width * 1848 / 1920) / Math.max(1, renderer.width(text, 60)));
@@ -144,27 +175,34 @@ function horizontalCaptionBand(video, data) {
   function draw() {
     if (disposed) return;
     if (video.readyState >= 2 && video.videoWidth) {
-      const strip = Math.max(2, Math.round(video.videoHeight * .035));
-      ctx.drawImage(video, 0, video.videoHeight-strip, video.videoWidth, strip, 0, 0, 480, 20);
+      const box = data.preview_crop || {x:0, y:0, w:1, h:1};
+      const w = video.videoWidth, h = video.videoHeight;
+      const strip = Math.max(2, Math.round(h * box.h * .035));
+      ctx.drawImage(video, w*box.x, h*(box.y+box.h)-strip, w*box.w, strip, 0, 0, 480, 20);
     }
     if (!chinese.ky || !english.ky) return;
     const time = video.currentTime + (data.start || 0);
-    const active = cues.filter(c => c.start <= time && time < c.end);
-    english.render(active.map(c => caption(c, c.orig, english, picture.clientWidth)), true);
-    chinese.render(active.map(c => caption(c, (c.zh || '').replace(/[♪♫♬🎵🎶]/gu, ''), chinese, band.clientWidth)), true);
+    english.render(englishCues.filter(c => c.start <= time && time < c.end));
+    chinese.render(chineseCues.filter(c => c.start <= time && time < c.end));
     noteRenderer.render(notes.filter(c => c.start <= time && time < c.end));
   }
   function layout() {
-    english.layout(picture.clientWidth, picture.clientHeight, video.videoWidth / video.videoHeight || 16/9);
+    english.layout(picture.clientWidth, picture.clientHeight, Number(video.style.aspectRatio) || video.videoWidth / video.videoHeight || 16/9);
     chinese.layout(band.clientWidth, band.clientHeight, 1920/56);
     noteRenderer.layout(el.clientWidth, el.clientHeight, el.clientWidth/el.clientHeight);
+    englishCues = cues.map(c => caption(c, c.orig, english, picture.clientWidth));
+    chineseCues = cues.map(c => caption(c, (c.zh || '').replace(/[♪♫♬🎵🎶]/gu, ''), chinese, band.clientWidth));
+    // A resize can change fitted font sizes even when the active cue is unchanged.
+    english.key = chinese.key = null;
     draw();
   }
   const resize = new ResizeObserver(layout);
   resize.observe(band);
   resize.observe(picture);
-  const events = ['loadedmetadata', 'loadeddata', 'seeked', 'timeupdate'];
+  const events = ['loadedmetadata'];
+  const drawEvents = ['loadeddata', 'seeked', 'timeupdate'];
   events.forEach(event => video.addEventListener(event, layout));
+  drawEvents.forEach(event => video.addEventListener(event, draw));
   if (video.requestVideoFrameCallback) {
     const tick = () => { draw(); if (!disposed) frame = video.requestVideoFrameCallback(tick); };
     frame = video.requestVideoFrameCallback(tick);
@@ -173,6 +211,7 @@ function horizontalCaptionBand(video, data) {
     disposed = true;
     resize.disconnect();
     events.forEach(event => video.removeEventListener(event, layout));
+    drawEvents.forEach(event => video.removeEventListener(event, draw));
     if (frame) video.cancelVideoFrameCallback(frame);
   }};
 }

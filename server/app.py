@@ -9,7 +9,9 @@
   POST .../reveal_final    在 Finder 里定位这首的成品
 """
 
+import hashlib
 import json
+import tempfile
 import re
 import shutil
 from fractions import Fraction
@@ -19,7 +21,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from threading import Semaphore
+from threading import Lock, Semaphore, Thread
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -30,23 +32,35 @@ sys.path.insert(0, str(ROOT))
 from workflow.vertical_post import posting_inputs, caption as vertical_post_caption, cover_attachment, replace_cover_selection, submission, SHANGHAI
 from workflow.subtitle_spelling import display_english
 from workflow.live import review  # noqa: E402
-from workflow.live.package import cover_candidates  # noqa: E402
+from workflow.live.package import compact_cover_title, cover_candidates  # noqa: E402
 from workflow.letterbox import content_box, logo_corner  # noqa: E402
-from workflow.live.paths import CONCERTS, Concert, read_json, write_json  # noqa: E402
+from workflow.live.paths import CONCERTS, Concert, write_json  # noqa: E402
+from server.metadata import read_json  # noqa: E402
+from server.library_order import track_dates  # noqa: E402
+from workflow.delivery_config import products_ready, render_platforms  # noqa: E402
 from workflow.live.singles import production_day  # noqa: E402
 
+from server.selection_preview import router as selection_preview_router
+
 app = FastAPI(title="adele review")
+app.include_router(selection_preview_router)
 
 
-def concert_display_title(info, slug):
+def concert_display_title(info, slug, *, year_first=False):
     title = info.get("title") or slug
     date = str(info.get("date") or "")
     if not re.match(r"^\d{4}(?:-|$)", date):
         return title
     year = date[:4]
-    if title.endswith(year):
-        return title
-    return f"{title.removeprefix(year).strip()} {year}"
+    edition = re.search(r"第\s*(\d+)\s*届", title)
+    if slug.startswith("grammys_") and edition:
+        return f"{year}-格莱美-第{edition[1]}届"
+    artist = (info.get("artist") or "").strip()
+    event = re.sub(rf"^{year}年?\s*|\s*{year}年?$", "", title).strip()
+    if artist:
+        event = re.sub(rf"^{re.escape(artist)}\s*[-–—]\s*", "", event, flags=re.I)
+    parts = (year, artist, event) if year_first else (artist, year, event)
+    return "-".join(filter(None, parts))
 
 
 def single_artist(it):
@@ -165,6 +179,7 @@ def song_summary(c, it, segs, rv):
     attachment = cover_attachment(d, selected)
     return {
         "idx": it["idx"], "name": it["name"], "title": display_title(it), "notes": it.get("notes"), "artist": it.get("artist"),
+        "fps": source_info.get("fps") or read_json(c.info, {}).get("fps"),
         "start": seg.get("start"), "end": seg.get("end"), "confidence": seg.get("confidence"),
         "flags": seg.get("flags", []), "manual": bool(seg.get("manual")),
         "stage": st["stage"], "review": st["review"], "needs_refine": st["needs_refine"],
@@ -172,6 +187,8 @@ def song_summary(c, it, segs, rv):
         "douyin_submission": submission(posting_draft, concert_name, artist_zh),
         "subtitles_ready": (d / "subs/lyrics.ass").is_file() and (d / "subs/lyrics.ass").stat().st_size > 0,
         "portrait_release_ready": bool(portrait_release(d)),
+        "dual_products_ready": dual_products_ready(d),
+        "platform_covers_ready": platform_covers_ready(d),
         "portrait_cover_selected": bool(selected),
         "cover_selected": bool(entry.get("cover")) or has_picked_cover(d),
         "thumb": media_url(c, it["name"], (chosen or covers[0])["file"]) if covers else None,
@@ -181,13 +198,13 @@ def song_summary(c, it, segs, rv):
 def exp_data(d, ass_url):
     """字幕结果（subs/）给审核页：逐句表格 + 字幕文件 + 用的模型。"""
     x = d / "subs"
-    if not (x / "lines.json").exists():
-        return None
     from workflow.live import asr_match
     from workflow.live.line_match import line_lang
     prof = read_json(x / "profile.json", {}) or {}
     main = prof.get("main") or "en"
     xl = ass_lines(x / "lyrics.ass") if (x / "lyrics.ass").exists() else []
+    if not (x / "lines.json").exists() and not any(row["style"] == "Note" for row in xl):
+        return None
     xrows = []
     for r in read_json(x / "lines.json", []) or []:
         t = (r["start_ms"] or 0) / 1000
@@ -195,6 +212,7 @@ def exp_data(d, ass_url):
         lang = r.get("lang") or line_lang(r.get("text") or r.get("genius") or r.get("qwen") or "", main)
         xrows.append({**r, "lang": lang, "zh": m["zh"] if m else "", "start": t, "end": (r["end_ms"] or 0) / 1000})
     have = lambda y: any(abs(r["start"] - y["start"]) < 0.15 and display_english(r["text"] or "") == display_english(y["orig"]) for r in xrows)   # 2.946 / 2.950 是同一句
+    note_events = [y for y in xl if y["style"] == "Note"]
     xl = [y for y in xl if y["style"] != "Note"]   # 顶部注释不是字幕行（逐句表格里挂在对应那句下面）
     for y in xl:   # 片头歌名（翻译时加的）和讲话：字幕文件里有、逐句数据里没有的
         if y["orig"].startswith("《") or (y["style"] != "Default" and not have(y)):
@@ -235,7 +253,7 @@ def exp_data(d, ass_url):
     # 翻译（song_translation_workflow：translation/result.json）：按时间 + 原文对回每一行
     tr = read_json(x / "translation" / "result.json", {}) or {}
     if tr.get("units"):
-        notes = {int(k): v for k, v in (tr.get("final_notes") or tr.get("notes") or {}).items()}
+        notes = {int(k): v for k, v in tr.get("final_notes", tr.get("notes") or {}).items()}
         for r in xrows:
             # 原文比较前统一空白（日文歌词里有全角空格，字幕文件里是半角）
             rt = display_english(re.sub(r"\s+", " ", r["text"] or "").strip())
@@ -246,6 +264,14 @@ def exp_data(d, ass_url):
                           "zh3": m.get("v3_final", "")})
                 if m.get("dropped"):   # 幻听：不出字幕，表格里也不显示翻译
                     r.update({"removed": True, "verdict": "unconfirmed", "strategy": m["dropped"], "zh": "", "zh2": "", "note": ""})
+    # Instrumental notes and legacy cues may have no matching ASR row.
+    for cue in note_events:
+        text = cue["orig"]
+        if not any(r.get("note") == text and abs(r["start"] - cue["start"]) < .06 for r in xrows):
+            xrows.append({"start": cue["start"], "end": cue["end"], "start_ms": round(cue["start"] * 1000),
+                          "end_ms": round(cue["end"] * 1000), "text": "音乐注释", "note": text,
+                          "verdict": "note", "style": "Note", "removed": False})
+    xrows.sort(key=lambda row: (row["start_ms"] is None, row["start_ms"] or 0))
     zh2_ass = ass_url.replace("lyrics.ass", "lyrics_literal.ass") if (x / "lyrics_literal.ass").exists() else None
     zh3_ass = ass_url.replace("lyrics.ass", "lyrics_poetic.ass") if (x / "lyrics_poetic.ass").exists() else None   # 诗意版
     for row in xrows:
@@ -255,17 +281,120 @@ def exp_data(d, ass_url):
             "models": {"asr": asr_match.MODEL}}
 
 
+def platform_covers_ready(directory):
+    ai = directory / "covers" / "ai"
+    local = {m["file"] for m in read_json(ai / "masters.json", [])
+             if m.get("file")}
+    if not local:
+        return False
+    required = {("bili-ai", "16x9"), ("bili-ai", "4x3"), ("douyin-ai", "3x4"), ("douyin-ai", "4x3")}
+    by_master = {}
+    for row in read_json(ai / "variants.json", []):
+        master = row.get("master")
+        version = (row.get("platform"), row.get("ratio"))
+        if master in local and version in required and row.get("file") and (ai / row["file"]).is_file():
+            by_master.setdefault(master, set()).add(version)
+    return any(versions == required for versions in by_master.values())
+
+
+def dual_products_ready(directory):
+    # Keep the API field name for existing clients; its required outputs follow
+    # the production default, including Bilibili-only deliveries.
+    return products_ready(directory)
+
+
+@app.get("/api/product-progress")
+def product_progress():
+    """Read delivered song products independently of the cached review-material index."""
+    ready = {}
+    for concert in CONCERTS.iterdir():
+        songs = concert / "songs"
+        if songs.is_dir():
+            ready[concert.name] = [song.name for song in songs.iterdir() if dual_products_ready(song)]
+    return ready
+
+
+class ReviewSnapshot:
+    """Serve the last successful disk scan while one worker refreshes it."""
+    def __init__(self, key):
+        self.path = Path.home() / "Library/Caches/adele-review/index-v1" / (key + ".json")
+        self.lock = Lock()
+        self.refresh_lock = Lock()
+        try:
+            self.value = read_json(self.path)
+        except (OSError, ValueError):
+            self.value = None
+        self.expires = 0
+        self.refreshing = False
+
+    def refresh(self, build, ttl):
+        # A reload and a background refresh can arrive together. Serialize the
+        # scan and atomic-file replacement so they cannot share the same .tmp.
+        with self.refresh_lock:
+            value = build()
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            write_json(self.path, value)
+            self.value = value
+            self.expires = time.monotonic() + ttl
+            return value
+
+    def background_refresh(self, build, ttl):
+        try:
+            self.refresh(build, ttl)
+        finally:
+            with self.lock:
+                self.refreshing = False
+
+    def get(self, build, ttl):
+        with self.lock:
+            if self.value is None:
+                return self.refresh(build, ttl)
+            if time.monotonic() >= self.expires and not self.refreshing:
+                self.refreshing = True
+                Thread(target=self.background_refresh, args=(build, ttl), daemon=True).start()
+            return self.value
+
+
+@lru_cache(maxsize=256)
+def review_snapshot(key):
+    return ReviewSnapshot(key)
+
+
 @app.get("/api/concerts")
-def list_concerts():
+def list_concerts(progress: bool = False):
+    snapshot = review_snapshot("concerts-order-v2")
+    if progress:
+        # Once per page reload, read all three progress columns AND the visible
+        # setlist together. Updating products alone left new covers and newly
+        # unhidden songs stuck in the persisted index (and browser localStorage).
+        # Metadata contents are version-cached; this does not load image bytes.
+        return snapshot.refresh(build_concert_index, 60)
+    return snapshot.get(build_concert_index, 60)
+
+
+def build_concert_index():
+    selected = list(render_platforms())
     def track(c, it):
-        return {"name": it["name"], "title": display_title(it), "notes": it.get("notes"),
-                "portrait_release_ready": bool(portrait_release(c.song_dir(it)))}
+        directory = c.song_dir(it)
+        folder = directory / "vertical"
+        name = it["name"]
+        live = name in browser_songs and name in selected_sources and (folder / "original-selected.mp4").is_file()
+        baked = (folder / "full.mp4").is_file() and read_json(directory / "song.json", {}).get("preview_mode") != "browser"
+        return {"name": name, "title": display_title(it), "notes": it.get("notes"),
+                **track_dates(c, it),
+                "fps": read_json(directory / "song.json", {}).get("fps") or info.get("fps"),
+                "portrait_preview_ready": live or baked,
+                "platform_covers_ready": platform_covers_ready(directory),
+                "dual_products_ready": dual_products_ready(directory),
+                "portrait_release_ready": bool(portrait_release(directory))}
 
     out = []
     for p in sorted(CONCERTS.iterdir()) if CONCERTS.exists() else []:
         if (p / "concert.json").exists():
             c = Concert(p.name)
             info = read_json(c.info)
+            browser_songs = set(read_json(c.dir / "browser_previews.json", {}).get("songs", []))
+            selected_sources = read_json(c.dir / "vertical_source.json", {}).get("songs", {})
             if p.name == "singles":
                 groups = {}
                 for it in visible_items(c):
@@ -284,23 +413,18 @@ def list_concerts():
                         groups[artist_slug(artist)].setdefault("aliases", []).append(artist_slug(alias))
                 out.extend(sorted(groups.values(), key=lambda group: (group["kind"] != "event", group["title"].casefold())))
                 continue
-            out.append({"slug": p.name, "title": concert_display_title(info, p.name), "artist": info.get("artist"),
+            out.append({"slug": p.name, "title": concert_display_title(info, p.name, year_first=True), "artist": info.get("artist"),
                         "date": info.get("date"), "fps": info.get("fps"), "songs": len(c.song_items()),
                         "tracks": [track(c, it) for it in visible_items(c) if it["kind"] == "song"]})
     concerts = sorted((row for row in out if not row.get("kind")),
                       key=lambda row: row.get("date") or "", reverse=True)
-    return concerts + [row for row in out if row.get("kind")]
+    rows = concerts + [row for row in out if row.get("kind")]
+    for row in rows:
+        row['delivery_platforms'] = selected
+    return rows
 
 
-@app.get("/api/concerts/{slug}")
-def get_concert(slug: str):
-    c = concert(slug)
-    seg = c.load("segments") or {}
-    segs = {s["name"]: s for s in seg.get("items", [])}
-    rv = review.load(c)
-    info = read_json(c.info)
-    items = visible_items(c)
-    songs = [it for it in items if it["kind"] == "song"]
+def concert_page_info(c, slug, info, songs):
     if c.slug != "singles":
         info = {**info, "title": concert_display_title(info, slug)}
     if slug == HALFTIME_SLUG:
@@ -310,6 +434,31 @@ def get_concert(slug: str):
         info = {**info, "title": artist, "artist": artist}
     if getattr(c, "review_day", None):
         info = {**info, "title": f"单曲 {c.review_day}", "date": c.review_day}
+    return info
+
+
+@app.get("/api/concerts/{slug}")
+def get_concert(slug: str, navigation: bool = False):
+    """Keep navigation free of per-song asset scans; see the confirmed loading standard."""
+    c = concert(slug)
+    seg = c.load("segments") or {}
+    segs = {s["name"]: s for s in seg.get("items", [])}
+    info = read_json(c.info)
+    items = visible_items(c)
+    songs = [it for it in items if it["kind"] == "song"]
+    info = concert_page_info(c, slug, info, songs)
+    if navigation:
+        return {
+            "slug": slug, "has_cover_pool": c.has_cover_pool, "info": info,
+            "items": [{"idx": it["idx"], "name": it["name"], "title": display_title(it),
+                       "kind": it["kind"]} for it in items],
+            "songs": [{"idx": it["idx"], "name": it["name"], "title": display_title(it),
+                       "artist": it.get("artist"), "notes": it.get("notes"),
+                       "start": segs.get(it["name"], {}).get("start"),
+                       "end": segs.get(it["name"], {}).get("end")} for it in songs],
+            "gaps": seg.get("gaps", []),
+        }
+    rv = review.load(c)
     return {
         "slug": slug, "has_cover_pool": c.has_cover_pool, "info": {k: info.get(k) for k in ("title", "artist", "date", "venue", "city", "tour", "duration",
                                                          "fps", "width", "height", "audio_rate", "setlist_url")},
@@ -358,7 +507,7 @@ def get_song(slug: str, name: str):
         portrait = {"url": media_url(c, name, f"vertical/{path.name}"), "format": video_format(path), "full": complete,
                     "start": 0 if complete else int(path.stem.split("-")[1]) / 1000,
                     "duration": length if complete else min(60, length)}
-    from workflow.vertical_workflow import revision, first_lyric
+    from workflow.vertical_workflow import revision
     folder = d / "vertical"
     picks = read_json(folder / "candidates.json", [])
     if c.has_cover_pool:
@@ -388,10 +537,27 @@ def get_song(slug: str, name: str):
                              if (d / "subs" / f).is_file()), None)
             browser_portrait = {**preview_data(c, it, d), **source,
                                 "captions": ass_lines(captions) if captions else []}
+    from workflow.delivery_bundle import posting_paths, submission_records
+    paths = posting_paths(d)
+    records = submission_records(c, it, paths=paths, entry=rv["songs"].get(name, {}))
+    bili, douyin = records["bilibili"], records["douyin"]
+    cover = douyin["selected_cover"]
+    concert_info = concert_page_info(c, slug, read_json(c.info, {}), [it])
+    content_report = read_json(d / "reports/content_check.json", {})
+    boundary_review = read_json(d / "reports/boundary_review.json", {})
+    production_hold = read_json(c.dir / "production_hold.json", {})
+    held = production_hold.get("active") and (not production_hold.get("songs") or name in production_hold["songs"])
     return {
         **base,
-        "douyin_cover": cover_attachment(d, selected_portrait_cover(d)),
+        "concert": {"slug": slug, "has_cover_pool": c.has_cover_pool,
+                    "info": {key: concert_info.get(key) for key in ("title", "artist")}},
+        "posting_paths": paths,
+        "douyin_submission": douyin,
+        "douyin_cover": cover,
         "source_review": info.get("source_review"),
+        "content_review": {"status": content_report.get("status"),
+                           "findings": [f for f in boundary_review.get("findings", []) if f.get("status") != "resolved"],
+                           "hold_reason": production_hold.get("reason") if held else None},
         "review_mode": info.get("preview_mode"),
         "browser_portrait": browser_portrait,
         "products": product_data(c, name, d),
@@ -399,7 +565,7 @@ def get_song(slug: str, name: str):
         "source_note": info.get("source_note"),
         "source_format": original_format(c, d, info),
         "vertical_preview": None if info.get("preview_mode") == "browser" else portrait,
-        "portrait_review": {"selected": selected_portrait_cover(d), "revision": current, "first": first_lyric(d) if current else None,
+        "portrait_review": {"selected": selected_portrait_cover(d), "revision": current,
                             "covers": [{**r, "url": media_url(c, name, "vertical/" + r["file"])} for r in picks],
                             "released": {**released, "previous": not base["portrait_release_ready"], "url": release_url, "format": video_format(folder / released["file"])} if release_url else None},
         "exp": exp_data(d, f"/media/{slug}/songs/{name}/subs/lyrics.ass"),
@@ -426,8 +592,8 @@ def get_song(slug: str, name: str):
                     "file_4x3": media_url(c, name, x["file_4x3"]) if x["file_4x3"] else None}
                    for x in candidates],
         "draft": read_json(d / "post_draft.json", {}),
-        # B 站投稿 JSON（post_bili/upload.py 生成，上传时原样提交），审核页只展示
-        "bili_upload": bili_upload(d),
+        # 两种展示共用同一份当前投稿资料。
+        "bili_upload": json.dumps(bili, ensure_ascii=False, indent=2),
         "bili_upload_path": str((d / "post" / "bili_upload.json").resolve()),
         # 歌曲中间的半透明 logo 水印计划（workflow/song/watermark.py），审核页只做预览，不改视频
         "watermark": read_json(d / "watermark.json", None),
@@ -439,6 +605,13 @@ def get_song(slug: str, name: str):
     }
 
 
+@app.get("/api/concerts/{slug}/songs/{name}/posting")
+def get_posting(slug: str, name: str):
+    from workflow.delivery_bundle import submission_records
+    c = concert(slug)
+    return submission_records(c, song(c, name))
+
+
 @app.post("/api/concerts/{slug}/songs/{name}/review")
 def post_review(slug: str, name: str, body: dict = Body(...)):
     c = concert(slug)
@@ -447,6 +620,9 @@ def post_review(slug: str, name: str, body: dict = Body(...)):
         entry = review.save_entry(c, it, body)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    if body.keys() & {"title", "intro", "tags", "cover"}:
+        from workflow.delivery_bundle import write_bundle
+        write_bundle(c, it)
     return {"entry": entry, "review": review.effective(c, it, entry)}
 
 
@@ -505,6 +681,93 @@ def post_cover_pool_assign(slug: str):
     return {"songs": selected_covers(c)}
 
 
+@app.get("/api/concerts/{slug}/album_covers")
+def get_album_covers(slug: str, fresh: bool = False):
+    c = concert(slug)
+    key = "album-" + hashlib.sha256(slug.encode()).hexdigest()
+    snapshot = review_snapshot(key)
+    build = lambda: build_album_covers(c, slug)
+    data = dict(snapshot.refresh(build, 10) if fresh else snapshot.get(build, 10))
+    data["collection"] = collection_info(c, slug, data["title"])
+    return data
+
+
+def collection_info(c, slug, title):
+    from workflow.bili_collection import COVER_LAYOUT_VERSION, candidates, cover_output_path, defaults, performance_description, storage_path
+    songs = [it for it in visible_items(c) if it["kind"] == "song"]
+    options = candidates(c, songs)
+    saved = read_json(storage_path(c, slug), {})
+    if c.slug != "singles":
+        original = read_json(c.info, {})
+        title = concert_display_title(original | {"title": original.get("title_zh") or original.get("title") or title}, slug)
+    generated = defaults(title, songs)
+    description = performance_description(c, songs, title)
+    info = generated | saved
+    previous_descriptions = {generated["description"], defaults(info["title"], songs)["description"]}
+    if description and (not saved.get("description") or saved["description"] in previous_descriptions):
+        info["description"] = description
+    selected = next((row for row in options if row["id"] == saved.get("source_id")), options[0] if options else None)
+    info["source_id"] = selected["id"] if selected else None
+    info["cover_path"] = str(cover_output_path(c, slug, selected, info["title"]).resolve()) if selected else None
+    info["sources"] = [{k: v for k, v in row.items() if k != "path"} |
+                       {"url": media_url(c, row["name"], "covers/ai/" + row["file"])} for row in options]
+    version = hashlib.sha256((COVER_LAYOUT_VERSION + json.dumps(info, ensure_ascii=False, sort_keys=True)).encode()).hexdigest()[:16]
+    info["cover_url"] = f"/api/concerts/{slug}/collection/cover?v={version}" if options else None
+    return info
+
+
+@app.post("/api/concerts/{slug}/collection")
+def save_collection(slug: str, body: dict = Body(...)):
+    from workflow.bili_collection import candidates, storage_path, validate
+    c = concert(slug)
+    songs = [it for it in visible_items(c) if it["kind"] == "song"]
+    try:
+        saved = read_json(storage_path(c, slug), {})
+        info = validate({**saved, **body}, candidates(c, songs))
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    path = storage_path(c, slug)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(path, info)
+    title = concert_page_info(c, slug, read_json(c.info), songs).get("title") or slug
+    return collection_info(c, slug, title)
+
+
+@app.get("/api/concerts/{slug}/collection/cover")
+def collection_cover(slug: str, v: str = "", thumb: bool = False):
+    from workflow.bili_collection import candidates, cover_output_path, render_cover
+    c = concert(slug)
+    songs = [it for it in visible_items(c) if it["kind"] == "song"]
+    title = concert_page_info(c, slug, read_json(c.info), songs).get("title") or slug
+    info = collection_info(c, slug, title)
+    source = next((row for row in candidates(c, songs) if row["id"] == info["source_id"]), None)
+    if not source:
+        raise HTTPException(404, "暂无可用的 B站 AI 横屏底图")
+    output = cover_output_path(c, slug, source, info["title"])
+    if not output.exists():
+        render_cover(source["path"], info["title"], output)
+    return cover_image_response(output, thumb)
+
+
+def build_album_covers(c, slug):
+    rows = []
+    songs = [it for it in visible_items(c) if it["kind"] == "song"]
+    for number, it in enumerate(songs):
+        directory = c.song_dir(it) / "covers/ai"
+        masters = [row for row in read_json(directory / "masters.json", [])
+                   if row.get("model") and not re.search("seedream", " ".join(str(row.get(key, "")) for key in ("model", "label", "provider")), re.I)]
+        variants = read_json(directory / "variants.json", [])
+        urls = {}
+        for platform, ratio in (("bili-ai", "16x9"), ("douyin-ai", "3x4")):
+            filename = next((v["file"] for m in masters for v in reversed(variants)
+                             if v.get("master") == m.get("file") and v.get("platform") == platform
+                             and v.get("ratio") == ratio and v.get("file") and (directory / v["file"]).is_file()), None)
+            urls[ratio] = media_url(c, it["name"], "covers/ai/" + filename) if filename else None
+        rows.append({"number": number, "name": it["name"], "title": compact_cover_title(c, it) if len(it["title"].split(" / ")) >= 3 else display_title(it),
+                     "url": urls["16x9"], "portrait_url": urls["3x4"]})
+    return {"covers": rows, "title": concert_page_info(c, slug, read_json(c.info), songs).get("title") or slug}
+
+
 @app.get("/api/concerts/{slug}/songs/{name}/cover_design")
 def get_cover_design(slug: str, name: str):
     c = concert(slug)
@@ -523,7 +786,9 @@ def get_cover_design(slug: str, name: str):
     masters = read_json(directory / "ai/masters.json", [])
     if masters:
         generated = [row | {"url": media_url(c, name, "covers/ai/" + row["file"]),
-                           "reference_url": media_url(c, name, "covers/ai/" + row["reference"])}
+                           "reference_url": media_url(c, name, "covers/ai/" + row["reference"]),
+                           "original_reference_url": media_url(c, name, "covers/ai/" + row["original_reference"])
+                           if row.get("original_reference") else None}
                      for row in masters]
         active = {row["file"] for row in masters}
         variants = [row for row in variants if row["master"] in active]
@@ -540,11 +805,41 @@ def get_cover_design(slug: str, name: str):
     return {"frames": raw, "generated": generated, "variants": variants, "failed_candidates": failures}
 
 
+_thumbnail_slots = Semaphore(3)
+
+
+def cover_image_response(source, thumb, cache="no-cache"):
+    if not thumb:
+        return FileResponse(source, headers={"Cache-Control": cache})
+    from PIL import Image, ImageOps
+    source = Path(source)
+    stat = source.stat()
+    key = hashlib.sha256(f"{source}:{stat.st_mtime_ns}:{stat.st_size}".encode()).hexdigest()
+    folder = Path.home() / "Library/Caches/adele-review/cover-thumbnails-v1"
+    target = folder / (key + ".jpg")
+    if not target.is_file():
+        with _thumbnail_slots:
+            if not target.is_file():
+                folder.mkdir(parents=True, exist_ok=True)
+                with Image.open(source) as image:
+                    image.draft("RGB", (384, 512))
+                    image.thumbnail((384, 512), Image.Resampling.LANCZOS)
+                    with tempfile.NamedTemporaryFile(dir=folder) as temp:
+                        ImageOps.exif_transpose(image).convert("RGB").save(temp, "JPEG", quality=80)
+                        temp.flush()
+                        # Publish a complete file atomically; the temp context removes its own link.
+                        try:
+                            target.hardlink_to(temp.name)
+                        except FileExistsError:
+                            pass
+    return FileResponse(target, media_type="image/jpeg", headers={"Cache-Control": cache})
+
+
 _frame_extraction = Semaphore(2)
 
 
 @app.get("/api/concerts/{slug}/songs/{name}/cover_frame/{frame_id}")
-def get_cover_frame(slug: str, name: str, frame_id: str):
+def get_cover_frame(slug: str, name: str, frame_id: str, thumb: bool = False):
     from workflow.cover_frames import candidate_frames
     from workflow.vertical_cover import original_frame
     import tempfile
@@ -554,11 +849,11 @@ def get_cover_frame(slug: str, name: str, frame_id: str):
     if row is None:
         raise HTTPException(404, "候选帧不存在")
     if row["path"]:
-        return FileResponse(row["path"], headers={"Cache-Control": "no-cache"})
+        return cover_image_response(row["path"], thumb)
     if not row["source"]:
         cached = sorted((c.song_dir(item) / "covers/raw").glob(frame_id + "-*.jpg"))
         if cached:
-            return FileResponse(cached[-1], headers={"Cache-Control": "no-cache"})
+            return cover_image_response(cached[-1], thumb)
         raise HTTPException(409, "原片离线，接入硬盘后可恢复此帧")
     source = Path(row["source"])
     version = source.stat().st_mtime_ns
@@ -574,7 +869,7 @@ def get_cover_frame(slug: str, name: str, frame_id: str):
                     pending.replace(target)
             except (OSError, subprocess.SubprocessError) as error:
                 raise HTTPException(503, "原帧提取失败，请重试") from error
-    return FileResponse(target, headers={"Cache-Control": "no-cache"})
+    return cover_image_response(target, thumb)
 
 
 @app.post("/api/concerts/{slug}/songs/{name}/cover_download")
@@ -592,36 +887,12 @@ def post_cover_download(slug: str, name: str, body: dict = Body(...)):
     if not saved:
         raise HTTPException(404, "没有这张封面")
     review.save_entry(c, it, {"cover": cid})
+    from workflow.delivery_bundle import write_bundle
+    write_bundle(c, it)
     return {"saved": saved}
 
 
 MEDIA_OK = {".mp4", ".ass", ".jpg", ".jpeg", ".png", ".webp"}
-
-
-def bili_upload(d):
-    """B 站投稿 JSON：生成过（post/bili_upload.json）就读文件；没生成的按投稿信息和最新选的封面现场拼一份（不写文件），
-    做好投稿信息就能在审核页看到，换了封面也跟着变。上传前 post_bili/upload.py 会再正式生成一次。"""
-    f = d / "post" / "bili_upload.json"
-    if f.exists():
-        from post_bili.upload import dump
-        from workflow.bili_title import for_post
-        saved = read_json(f)
-        draft = read_json(d / "post_draft.json", {})
-        if draft.get("song"):
-            saved["标题"] = for_post(d, draft)
-            saved["标题字符数"] = len(saved["标题"])
-        return dump(saved)
-    try:
-        import contextlib
-        import io
-        from argparse import Namespace
-        sys.path.insert(0, str(ROOT / "post_bili"))
-        import upload
-        a = Namespace(cover=None, source=None, at=None, tid=None, tid_v2=None, only_self=False)
-        with contextlib.redirect_stdout(io.StringIO()):   # 拼的时候打印的「标签超长去掉」之类不要
-            return upload.dump(upload.generate((d / "post").resolve().parent, a))   # 单曲的 post 是软链接：按真正的歌曲目录算
-    except (SystemExit, Exception):   # 还没有投稿信息（load_post 会 sys.exit）
-        return None
 
 
 FINAL_LABELS = {"hw_videotoolbox": "硬件编码 H.264 VideoToolbox（对比版）", "hevc_videotoolbox": "硬件编码 HEVC VideoToolbox（对比版）"}
@@ -734,7 +1005,7 @@ def product_data(c, name, directory):
 def media_url(c, name, rel):
     """封面会原地重新生成（文件名不变）：地址带上修改时间，换了图浏览器一定重新拉，不会用缓存里的旧图。"""
     f = c.song_dir({"name": name}) / rel
-    v = int(f.stat().st_mtime) if f.exists() else 0
+    v = f.stat().st_mtime_ns if f.exists() else 0
     return f"/media/{c.slug}/songs/{name}/{rel}?v={v}"
 
 
@@ -770,6 +1041,8 @@ def select_vertical_cover(slug: str, name: str, body: dict = Body(...)):
         attachment = replace_cover_selection(c, item, cover, datetime.now(SHANGHAI))
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         raise HTTPException(422, f"配套封面生成失败：{error}") from error
+    from workflow.delivery_bundle import write_bundle
+    write_bundle(c, item)
     return {"cover": cover, "douyin_cover": attachment}
 
 
@@ -796,7 +1069,7 @@ def reveal_final(slug: str, name: str, file: str = ""):
 
 
 @app.get("/media/{slug}/{path:path}")
-def media(slug: str, path: str):
+def media(slug: str, path: str, v: str = "", thumb: bool = False):
     c = concert(slug)
     f = (c.dir / path)
     parts = Path(path).parts
@@ -812,8 +1085,12 @@ def media(slug: str, path: str):
         or (len(parts) == 2 and parts[0] == "cover_pool"))   # 整场封面池的原始帧
     if not allowed or ".." in parts or not f.resolve().is_file():
         raise HTTPException(404)
-    # 封面 / 字幕会原地重新生成（文件名不变）：每次回源校验（ETag 没变就 304），不然浏览器按启发式缓存一直显示旧图
-    return FileResponse(f, headers={"Cache-Control": "no-cache"})  # source.mp4 是软链接时也照样给；Range 请求由 FileResponse 处理
+    cache = "no-cache"
+    if len(parts) >= 4 and parts[2] == "covers" and v == str(f.stat().st_mtime_ns):
+        cache = "private, max-age=31536000, immutable"
+    if thumb and f.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+        return cover_image_response(f, True, cache)
+    return FileResponse(f, headers={"Cache-Control": cache})
 
 
 class NoCacheStatic(StaticFiles):

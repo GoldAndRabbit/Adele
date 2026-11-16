@@ -35,25 +35,33 @@ WIN = 2.5
 
 # ---------------------------------------------------------------- 1. 整段识别（字级时间戳）
 
-def asr_words(y, sr, key, cache_path, t0=0.0):
+def asr_words(y, sr, key, cache_path, t0=0.0, *, request_timeout=600, attempts=6,
+              clamp_long_words=True):
     """一段人声送 qwen-audio-3.1-asr-flash，返回 [{w, s, e, punct}]（秒，已加上 t0）。按音频内容缓存。"""
     import requests
     from qwen_asr import wav_bytes
     data = wav_bytes(y)
     h = hashlib.sha1(data + MODEL.encode()).hexdigest()
-    cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
+    try:
+        cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
+    except json.JSONDecodeError:
+        # A reboot during an older non-atomic cache write must not poison every
+        # later retry. Preserve that diagnostic file and recognize the audio anew.
+        import time
+        cache_path.replace(cache_path.with_name(cache_path.name+f'.corrupt-{time.time_ns()}'))
+        cache={}
     if h not in cache:
         body = {"model": MODEL,
                 "input": {"messages": [{"role": "user", "content": [
                     {"type": "input_audio", "input_audio": {"data": "data:audio/wav;base64," + base64.b64encode(data).decode()}}]}]},
                 "parameters": {"format": "wav", "sample_rate": str(sr)}}
         import time
-        for attempt in range(6):
+        for attempt in range(attempts):
             try:
-                r = requests.post(URL, json=body, timeout=600, headers={
+                r = requests.post(URL, json=body, timeout=request_timeout, headers={
                     "Authorization": f"Bearer {key}", "Content-Type": "application/json", "X-DashScope-SSE": "disable"})
             except requests.exceptions.RequestException as e:   # 网络断了（Broken pipe 等）：等一下重试
-                if attempt == 5:
+                if attempt == attempts-1:
                     raise RuntimeError(f"{MODEL} 网络失败：{e}")
                 time.sleep(3 * (attempt + 1))
                 continue
@@ -62,12 +70,18 @@ def asr_words(y, sr, key, cache_path, t0=0.0):
             if "HAVE_NO_WORDS" in r.text or "NO_VALID_AUDIO" in r.text:   # 这段什么都没听出来 / 接口认为没有有效声音
                 r = None
                 break
-            if attempt == 5:
+            if attempt == attempts-1:
                 raise RuntimeError(f"{MODEL} 识别失败 {r.status_code}: {r.text[:200]}")
             time.sleep(3 * (attempt + 1))
         cache[h] = r.json() if r is not None else {"output": {"output": {"sentence": {"words": []}}}}
-        cache_path.write_text(json.dumps(cache, ensure_ascii=False))
+        from .paths import write_json
+        write_json(cache_path,cache)
     sent = cache[h]["output"]["output"]["sentence"]
+    return decode_sentence(sent,t0,clamp_long_words=clamp_long_words)
+
+
+def decode_sentence(sent,t0=0.0,*,clamp_long_words=True):
+    """Decode cached SDK word timestamps; source checks retain real held-note onsets."""
     # 接口按子词给时间（Venez / ol / ana、I / ' / m）：前面带空格的是新词，不带的接在上一个词后面
     out, gap = [], False
     for w in sent.get("words", []):
@@ -89,9 +103,10 @@ def asr_words(y, sr, key, cache_path, t0=0.0):
             out[-1].update({"w": out[-1]["w"] + raw.strip(), "e": t0 + w["end_time"] / 1000,
                             "punct": w.get("punctuation") or ""})
     # 起点粘在上一个词结束处的异常长词（Perdón 29.9~42.2、¡Otra 0~29）：结束时间一般是对的，起点取「结束前 1 s」
-    for w in out:
-        if w["e"] - w["s"] > 3.0:
-            w["s"] = w["e"] - 1.0
+    if clamp_long_words:
+        for w in out:
+            if w["e"] - w["s"] > 3.0:
+                w["s"] = w["e"] - 1.0
     return out
 
 

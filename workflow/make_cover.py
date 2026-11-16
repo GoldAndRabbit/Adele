@@ -18,10 +18,17 @@ import math
 import re
 import subprocess
 import threading
+from functools import lru_cache
+import regex
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+if __package__:
+    from .cover_brand import BRAND_X, BRAND_Y, BRAND_GAP, BADGE_WIDTH_FRACTION, landscape_logo_width, portrait_logo_width
+else:
+    from cover_brand import BRAND_X, BRAND_Y, BRAND_GAP, BADGE_WIDTH_FRACTION, landscape_logo_width, portrait_logo_width
 
 ROOT = Path(__file__).resolve().parent.parent
 W, H = 1920, 1080
@@ -475,7 +482,6 @@ REFINE_SPAN = 0.4   # 补挑睁眼帧：前后各看几秒
 SUB_MIN = 0.09      # 副标题字号保底：画布高的 9%（1080 高约 97px），再小手机上看不清
 REFRAME_MAX = 1.5   # 重新取景最多放大几倍（4K 片源也不放太大，留一点现场感）
 SCREEN_BATCH = 18   # Qwen 初筛一次发几张
-MIN_KEEP = 6        # 一个景别至少留几张：闭眼 / 挡脸的帧只在剩下的够这么多时才丢
 
 
 def video_size_raw(video):
@@ -596,7 +602,7 @@ EYES_PROMPT = """上面 {n} 张图，每张是同一个人在不到 1 秒内连�
 
 def pick_open_eyes(options):
     """options = [[备选, ...], ...]（每个候选时间点一组 refine_moment 的结果）→ 每组选中的下标。
-    每组的脸部小图拼成一条，一次请求问 Qwen 哪一格眼睛睁得最开；接口失败、或模型说都闭眼，就用最清楚的那帧。"""
+    每组的脸部小图拼成一条，一次请求问 Qwen 哪一格眼睛睁得最开；整组都闭眼时返回 None，由调用方跳过这组。"""
     import io
     from llm import vision_json
     best = [max(range(len(o)), key=lambda i: o[i]["sharp"]) for o in options]
@@ -618,8 +624,8 @@ def pick_open_eyes(options):
             continue
         for x in res.get("items") or []:
             k, g = str(x.get("id", "")).replace("图", "").strip(), x.get("best")
-            if k.isdigit() and 1 <= int(k) <= len(batch) and isinstance(g, int) and 1 <= g <= len(options[batch[int(k) - 1]]):
-                best[batch[int(k) - 1]] = g - 1
+            if k.isdigit() and 1 <= int(k) <= len(batch) and isinstance(g, int) and 0 <= g <= len(options[batch[int(k) - 1]]):
+                best[batch[int(k) - 1]] = g - 1 if g else None
     return best
 
 
@@ -766,10 +772,8 @@ def select_final(pool, want, gap=2.5):
             else:
                 s = 0.4 + 0.6 * pct
             x["final"] = s * x["place"]
-        # 宁缺毋滥：闭眼、脸被挡的不凑数（剩下的够 MIN_KEEP 张才丢）
-        bad = [x for x in xs if (x.get("vlm") or {}).get("eyes") == "closed" or (x.get("vlm") or {}).get("blocked") in (True, "true")]
-        if len(xs) - len(bad) >= min(MIN_KEEP, want.get(k, 0)):
-            xs = [x for x in xs if x not in bad]
+        xs = [x for x in xs if (x.get("vlm") or {}).get("eyes") not in ("closed", "half")
+              and (x.get("vlm") or {}).get("blocked") not in (True, "true")]
         chosen = []
         for g in (gap, 0.0):
             for x in sorted(xs, key=lambda x: -x["final"]):
@@ -909,8 +913,47 @@ def load_image(path, mode, work):
 
 # ---------------------------------------------------------------- 绘制
 
+_EMOJI = regex.compile(r"\p{Emoji_Presentation}|\ufe0f|\u20e3")
+
+
+@lru_cache(maxsize=128)
+def color_symbol(cluster):
+    face = ImageFont.truetype("/System/Library/Fonts/Apple Color Emoji.ttc", 160)
+    tile = Image.new("RGBA", (256, 192))
+    ImageDraw.Draw(tile).text((0, 0), cluster, font=face, anchor="lt", embedded_color=True)
+    return tile.crop(tile.getbbox())
+
+
+def symbol_runs(text, fnt):
+    runs = []
+    for cluster in regex.findall(r"\X", text):
+        if _EMOJI.search(cluster):
+            tile = color_symbol(cluster)
+            height = max(1, round(fnt.size * .81))
+            width = max(1, round(tile.width * height / tile.height))
+            runs.append((tile, width))
+        elif runs and isinstance(runs[-1][0], str):
+            merged = runs[-1][0] + cluster
+            runs[-1] = (merged, fnt.getlength(merged))
+        else:
+            runs.append((cluster, fnt.getlength(cluster)))
+    return runs
+
+
 def draw_text(canvas, xy, text, fnt, fill=(255, 255, 255), stroke=0.06, anchor="ms"):
     """白字 + 深色描边 + 柔和投影。"""
+    if _EMOJI.search(text) and anchor == "ms":
+        runs = symbol_runs(text, fnt)
+        left = xy[0] - sum(width for _, width in runs) / 2
+        for value, width in runs:
+            if isinstance(value, str):
+                draw_text(canvas, (left, xy[1]), value, fnt, fill, stroke, "ls")
+            else:
+                height = max(1, round(fnt.size * .81))
+                canvas.alpha_composite(value.resize((int(width), height), Image.Resampling.LANCZOS),
+                                       (round(left), round(xy[1] - height)))
+            left += width
+        return
     sw = max(2, int(fnt.size * stroke))
     shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     ImageDraw.Draw(shadow).text((xy[0] + sw, xy[1] + sw * 1.5), text, font=fnt, fill=(0, 0, 0, 200),
@@ -921,6 +964,8 @@ def draw_text(canvas, xy, text, fnt, fill=(255, 255, 255), stroke=0.06, anchor="
 
 
 def ink_width(text, fnt, tracking=0):
+    if _EMOJI.search(text):
+        return sum(w for _, w in symbol_runs(text, fnt)) + tracking * max(0, len(text)-1)
     w = fnt.getbbox(text, anchor="ls")
     return (w[2] - w[0]) + tracking * max(0, len(text) - 1)
 
@@ -937,16 +982,84 @@ def fit_width(text, key, target_w, max_size):
     return font(key, lo)
 
 
+def compact_credit_layout(title, subtitle, title_key, width, height, bottom_fraction=None):
+    """Fit by visible ink and anchor the credit block above the bottom safe margin."""
+    edge = min(width, height)
+    target = int(width * .89)
+    limit = round(edge * .22)
+    lines = [title]
+    tf = fit_width(title, title_key, target, limit)
+    words = re.findall(r"[\w]+(?:[.’'\-][\w]+)*", title)
+    short_phrase = len(words) <= 3 and not re.search(r"[\u3400-\u9fff]", title)
+    if not short_phrase and tf.size < edge * .07:
+        # Prefer a break between medley titles when it gives a balanced result.
+        splits = list(re.finditer(r"\s+/\s+|\s+|(?<=[\u3400-\u9fff])(?=[\u3400-\u9fff])", title))
+        probe = font(title_key, 64)
+        best = None
+        for split in splits:
+            left, right = title[:split.start()].strip(), title[split.end():].strip()
+            if not left or not right or left.endswith("/") or right.startswith("/"):
+                continue
+            widths = [ink_width(line, probe) for line in (left, right)]
+            score = max(widths) * (.90 if "/" in split.group() else 1)
+            if best is None or score < best[0]:
+                best = score, [left, right]
+        song_parts = title.split(" / ")
+        if len(song_parts) == 2 and all(song_parts):
+            widest = max(ink_width(line, probe) for line in song_parts)
+            if widest <= target * 64 / max(tf.size * 1.15, edge * .065):
+                best = widest, song_parts
+        if best:
+            candidates = best[1]
+            cap = min(limit, int(height * .125))
+            pair_font = min((fit_width(line, title_key, target, cap) for line in candidates),
+                            key=lambda f: f.size)
+            if pair_font.size > tf.size * 1.15:
+                lines, tf = candidates, pair_font
+
+    # Reserve the platform overlay area beneath the final line of visible ink.
+    bottom = round(height * (bottom_fraction if bottom_fraction is not None else (.83 if width < height else .80)))
+    placements = []
+    ink = [tf.getbbox(line, anchor="ms") for line in lines]
+    if subtitle:
+        title_height = max(box[3] - box[1] for box in ink)
+        sf = fit_width(subtitle, "sub", target, round(edge * .062))
+        box = sf.getbbox(subtitle, anchor="ms")
+        if box[3] - box[1] > title_height * .64:
+            sf = sf.font_variant(size=max(1, int(sf.size * title_height * .64 / (box[3] - box[1]))))
+            box = sf.getbbox(subtitle, anchor="ms")
+        placements.append((subtitle, sf, bottom - box[3], .045, 0))
+        bottom -= box[3] - box[1] + round(edge * .020)
+    for line, box in reversed(list(zip(lines, ink))):
+        placements.append((line, tf, bottom - box[3], .035, 0))
+        bottom -= box[3] - box[1] + round(tf.size * .16)
+    return list(reversed(placements))
+
+
 def draw_text_tracked(canvas, cx, y, text, fnt, tracking, stroke):
     """按字距逐字绘制（白字 + 深色描边 + 投影），整体以 cx 水平居中、y 为基线。"""
     if tracking <= 0:
         draw_text(canvas, (cx, y), text, fnt, stroke=stroke)
         return
-    total = ink_width(text, fnt, tracking)
-    x = cx - total / 2 - fnt.getbbox(text, anchor="ls")[0]
-    for ch in text:
-        draw_text(canvas, (x, y), ch, fnt, stroke=stroke, anchor="ls")
-        x += fnt.getlength(ch) + tracking
+    # Draw the complete line on a small layer so letter spacing costs a single shadow blur.
+    advances = [fnt.getlength(ch) + tracking for ch in text]
+    left = fnt.getbbox(text[0], anchor="ls")[0]
+    right = sum(advances[:-1]) + fnt.getbbox(text[-1], anchor="ls")[2]
+    _, top, _, bottom = fnt.getbbox(text, anchor="ls")
+    sw = max(2, int(fnt.size * stroke))
+    pad = sw * 7
+    layer = Image.new("RGBA", (math.ceil(right - left) + 2*pad, bottom - top + 2*pad))
+    draw = ImageDraw.Draw(layer)
+    x = pad - left
+    for ch, advance in zip(text, advances):
+        draw.text((x, pad - top), ch, font=fnt, anchor="ls", fill="white",
+                  stroke_width=sw, stroke_fill=(20, 20, 24))
+        x += advance
+    shadow = Image.new("RGBA", layer.size)
+    shadow.putalpha(layer.getchannel("A").point(lambda a: a * 200 // 255).filter(ImageFilter.GaussianBlur(sw * 1.2)))
+    origin = (round(cx - layer.width / 2), round(y + top - pad))
+    canvas.alpha_composite(shadow, (origin[0] + sw, origin[1] + round(sw * 1.5)))
+    canvas.alpha_composite(layer, origin)
 
 
 def fit(text, key, start, max_w):
@@ -980,7 +1093,7 @@ def badge(width):
 
 
 def badge_from_file(path, width):
-    """用现成的 4K60 徽章图：缩放、圆角、细深色描边（原图是直角、无透明通道的 jpg）。"""
+    """用现成的 4K60 徽章图：缩放、圆角（原图是直角、无透明通道的 jpg）。"""
     src = Image.open(path).convert("RGBA")
     h = int(src.height * width / src.width)
     img = src.resize((width, h), Image.LANCZOS)
@@ -988,8 +1101,6 @@ def badge_from_file(path, width):
     mask = Image.new("L", (width, h), 0)
     ImageDraw.Draw(mask).rounded_rectangle([0, 0, width - 1, h - 1], r, fill=255)
     img.putalpha(mask)
-    ImageDraw.Draw(img).rounded_rectangle([0, 0, width - 1, h - 1], r, outline=(30, 22, 8, 255),
-                                          width=max(2, width // 90))
     return img
 
 
@@ -1086,7 +1197,7 @@ def layout_faces(image):
 def compose(frame, a):
     """按画布实际尺寸排版：logo/徽章按高度定大小，标题按当前宽度自适应，16:9 和 4:3 共用。"""
     # 全小写来源标题统一单词首字母大写，保留已有缩写和人工大小写。
-    if a.title.islower():
+    if a.title.islower() and not _EMOJI.search(a.title):
         a.title = re.sub(r"(^|[\s/\-])([a-z])", lambda m: m[1] + m[2].upper(), a.title)
     cw, ch = frame.size
     # Some sources have a clipped broadcaster mark along the very top.
@@ -1101,7 +1212,8 @@ def compose(frame, a):
     if title_key == "cjk":
         probe = font("cjk", 64)
         missing = bytes(probe.getmask(chr(0x10FFFF)))
-        if any(not ch.isspace() and bytes(probe.getmask(ch)) == missing for ch in a.title):
+        text_runs = (cluster for cluster in regex.findall(r"\X", a.title) if not _EMOJI.search(cluster))
+        if any(not ch.isspace() and bytes(probe.getmask(ch)) == missing for run in text_runs for ch in run):
             title_key = "cjk_sc"  # 日文字体缺简体字时使用完整中文字体，避免方框。
 
     faces = layout_faces(frame)
@@ -1132,27 +1244,28 @@ def compose(frame, a):
 
     # 左上: 朝阳Adele logo + 4K 徽章
     logo = Image.open(ROOT / a.logo).convert("RGBA")
-    lw = int(ch * 0.284)
+    lw = portrait_logo_width(cw) if cw < ch else landscape_logo_width(cw)
+    brand_x = BRAND_X
     logo = logo.resize((lw, int(logo.height * lw / logo.width)), Image.LANCZOS)
     # 白色 logo 在浅色画面上会消失，垫一层模糊的深色投影
     glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     shade = Image.new("RGBA", logo.size, (0, 0, 0, 255))
     shade.putalpha(logo.getchannel("A").point(lambda v: min(255, v * 2)))
-    glow.alpha_composite(shade, (62, 38))
+    glow.alpha_composite(shade, (brand_x + 2, BRAND_Y + 4))
     canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(10)))
     canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(3)))
-    canvas.alpha_composite(logo, (60, 34))
-    bw = int(ch * 0.231)
+    canvas.alpha_composite(logo, (brand_x, BRAND_Y))
+    bw = round(lw * BADGE_WIDTH_FRACTION)
     badge_path = ROOT / a.badge
     b = badge_from_file(badge_path, bw) if badge_path.exists() else badge(bw)
-    badge_bottom = 34 + logo.height + 10 + b.height
-    paste_with_shadow(canvas, b, (60 + (lw - b.width) // 2, 34 + logo.height + 10))
+    badge_bottom = BRAND_Y + logo.height + BRAND_GAP + b.height
+    paste_with_shadow(canvas, b, (brand_x + (lw - b.width) // 2, BRAND_Y + logo.height + BRAND_GAP))
 
     # 右上: 额外 logo（队徽等）：和左边「logo + 4K 徽章」这一整块严格等高——上沿对齐 logo 看得见的上沿、
     # 下沿对齐徽章看得见的下沿（透明留边不算）；右边距和左边 logo 看得见的左边距一样
     lb = logo.getchannel("A").getbbox() or (0, 0, logo.width, logo.height)
     bb = b.getchannel("A").getbbox() or (0, 0, b.width, b.height)
-    top, bottom = 34 + lb[1], 34 + logo.height + 10 + bb[3]
+    top, bottom = BRAND_Y + lb[1], BRAND_Y + logo.height + BRAND_GAP + bb[3]
     x = cw - (60 + lb[0])
     for p in a.extra_logo or []:
         ex = Image.open(p).convert("RGBA")
@@ -1166,28 +1279,35 @@ def compose(frame, a):
     # 标题 + 副标题，整体底边在安全线以上
     # 标题撑满到接近左右边缘（默认 94% 画布宽），字号再受高度上限约束
     sub_y = int(ch * (a.text_y - a.text_lift))
-    subtitle = cover_subtitle(a.subtitle, getattr(a, "artist_zh", None), getattr(a, "event", None) or default_cover_event(a))
+    subtitle = (a.subtitle if getattr(a, "exact_subtitle", False) else
+                cover_subtitle(a.subtitle, getattr(a, "artist_zh", None), getattr(a, "event", None) or default_cover_event(a)))
 
+    compact = getattr(a, "compact_credits", False)
+    if compact:
+        for line, face, baseline, stroke, tracking in compact_credit_layout(a.title, subtitle, title_key, cw, ch, getattr(a, "credit_bottom_fraction", None)):
+            draw_text_tracked(canvas, cw / 2, baseline, line, face, tracking, stroke)
+        return canvas.convert("RGB")
+    title_stroke = .06
     if getattr(a, 'preserve_artwork', False) and len(a.title) > 35:
         import textwrap
         lines = textwrap.wrap(a.title, width=30, break_long_words=False)
         tf = min((fit_width(line, title_key, int(cw * .89), int(ch * .11)) for line in lines), key=lambda f: f.size)
         for index, line in enumerate(lines):
             baseline = ch * .81 - (len(lines) - 1 - index) * tf.size * 1.25
-            draw_text(canvas, (cw / 2, baseline), line, tf)
+            draw_text(canvas, (cw / 2, baseline), line, tf, stroke=title_stroke)
         if subtitle:
             sf = fit_width(subtitle, 'sub', int(cw * .90), int(ch * .06))
-            draw_text(canvas, (cw / 2, ch * .91), subtitle, sf)
+            draw_text(canvas, (cw / 2, ch * .91), subtitle, sf, stroke=.06)
         return canvas.convert('RGB')
 
     if shoulder:
         tf = title_font
         title_y = int(ch * .79)
-        draw_text(canvas, (cw / 2, title_y), a.title, tf)
+        draw_text(canvas, (cw / 2, title_y), a.title, tf, stroke=title_stroke)
         if subtitle:
             sf = fit_width(subtitle, "sub", int(cw * .90), int(ch * .065))
-            subtitle_y = max(int(ch * .865), title_y + tf.getbbox(a.title, anchor="ms")[3]
-                             - sf.getbbox(subtitle, anchor="ms")[1] + int(ch * .014))
+            subtitle_y = title_y + tf.getbbox(a.title, anchor="ms")[3] - sf.getbbox(subtitle, anchor="ms")[1] + int(ch * .014)
+            subtitle_y = max(int(ch * .865), subtitle_y)
             draw_text_tracked(canvas, cw / 2, subtitle_y, subtitle, sf, 0, .08)
         return canvas.convert("RGB")
 
@@ -1431,6 +1551,8 @@ def main():
             sel = pick_open_eyes([opts[k][i] for k, i in flat]) if a.screen else \
                 [max(range(len(opts[k][i])), key=lambda j: opts[k][i][j]["sharp"]) for k, i in flat]
             for (k, i), j in zip(flat, sel):
+                if j is None:
+                    continue
                 x = opts[k][i][j]
                 ex, ey, fh, n = x["m"]
                 box = reframe_box(src, ex, ey, fh, n, band)

@@ -1,16 +1,31 @@
 """Publish one reviewed portrait release using the local PostFlow installation."""
 import asyncio
+import base64
 import fcntl
 import json
+import io
 import os
 import re
 import sys
 import subprocess
 from pathlib import Path
+from PIL import Image, ImageChops, ImageStat
 
 from workflow.live.paths import read_json
 from workflow.vertical_post import cover_attachment, posting_inputs, submission
 from workflow.vertical_workflow import revision
+
+
+class DailyPostingLimit(RuntimeError):
+    """The platform explicitly rejected this submission due to its daily limit."""
+
+
+class PublicationPending(RuntimeError):
+    """A submission may have happened; only check its receipt until resolved."""
+
+
+class TransientPublishError(RuntimeError):
+    """A temporary platform or media-server failure can be retried safely."""
 
 
 def posting_plan(concert, item):
@@ -40,10 +55,42 @@ async def set_cover(page, label, path):
     await page.evaluate("document.activeElement?.blur()")
     box = area.locator('div[class^="cover-"]').first
     await box.wait_for()
+    previous = await box.locator("img").first.get_attribute("src") if await box.locator("img").count() else None
     await box.evaluate("el => el.click()")
     dialog = page.locator(".dy-creator-content-modal-body").last
     upload = dialog.locator(".semi-upload:has(.semi-upload-drag-area-main-text) input[type=file]").first
+    await upload.wait_for(state="attached")
+    # Initial video-frame loading can reset the editor after a custom upload.
+    await page.wait_for_timeout(8000)
     await upload.set_input_files(path, timeout=30000)
+    # The file input returns before the cover editor has loaded its new image.
+    # Saving at that point can silently keep the original video frame.
+    encoded = base64.b64encode(Path(path).read_bytes()).decode()
+    await page.wait_for_function("""async encoded => {
+        const reference = new Image();
+        reference.src = 'data:image/jpeg;base64,' + encoded;
+        await reference.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 32;
+        const context = canvas.getContext('2d', {willReadFrequently: true});
+        const pixels = image => {
+            context.clearRect(0, 0, 32, 32);
+            context.drawImage(image, 0, 0, 32, 32);
+            return context.getImageData(0, 0, 32, 32).data;
+        };
+        const expected = pixels(reference);
+        return Array.from(document.images).some(image => {
+            if (!image.complete || image.naturalWidth < 300 ||
+                !/^(data:|blob:)/.test(image.src)) return false;
+            const actual = pixels(image);
+            let difference = 0;
+            for (let index = 0; index < actual.length; index++) {
+                difference += Math.abs(actual[index] - expected[index]);
+            }
+            return difference / actual.length < 12;
+        });
+    }""", arg=encoded, timeout=45000)
+    await page.wait_for_timeout(8000)
     await dialog.get_by_role("button", name="完成", exact=True).click(timeout=30000)
     if label == "竖封面3:4":
         from playwright.async_api import TimeoutError as PlaywrightTimeout
@@ -52,13 +99,30 @@ async def set_cover(page, label, path):
         except PlaywrightTimeout:
             pass
     await dialog.wait_for(state="hidden", timeout=45000)
+    await page.wait_for_function("""({label, previous}) => {
+        const area = Array.from(document.querySelectorAll('div[class*="coverControl-"]'))
+            .find(element => element.textContent.includes(label));
+        const image = area?.querySelector('img');
+        return image && image.complete && image.naturalWidth > 0 && image.src !== previous;
+    }""", arg={"label": label, "previous": previous}, timeout=45000)
+    saved_url = await box.locator("img").first.get_attribute("src")
+    response = await page.context.request.get(saved_url, max_retries=3, timeout=60000)
+    if not response.ok:
+        if response.status == 429 or response.status >= 500:
+            raise TransientPublishError(f"封面服务器暂时不可用（HTTP {response.status}）：{label}")
+        raise RuntimeError(f"无法读取保存后的封面：{label}")
+    with Image.open(io.BytesIO(await response.body())) as saved, Image.open(path) as expected:
+        difference = ImageChops.difference(saved.convert("RGB").resize((128, 128)),
+                                          expected.convert("RGB").resize((128, 128)))
+        if sum(ImageStat.Stat(difference).rms) / 3 > 6:
+            raise RuntimeError(f"保存后的封面与上传文件不同：{label}")
 
 
 async def account_works(ctx):
     """Read every work, including those under review. Never interpret a partial list as absence."""
     page = await ctx.new_page()
     try:
-        await page.goto("https://creator.douyin.com/creator-micro/content/manage", wait_until="domcontentloaded")
+        await page.goto("https://creator.douyin.com/creator-micro/content/manage", wait_until="domcontentloaded", timeout=60000)
         tab = page.get_by_role("button", name=re.compile(r"^作品\s*[（(]\d+[）)]$")).first
         await tab.wait_for(timeout=60000)
         total = int(re.search(r"\d+", await tab.inner_text())[0])
@@ -77,6 +141,7 @@ async def account_works(ctx):
 def match_work(cards, plan):
     def normalized(text):
         return re.sub(r"[^\w]", "", text.casefold())
+    candidates = []
     for card in cards:
         lines = card.split("编辑作品")[0].strip().splitlines()
         if not lines:
@@ -84,6 +149,10 @@ def match_work(cards, plan):
         caption = normalized(" ".join(lines[1:]).split("#")[0])
         if normalized(plan["title"]) in caption:
             return True
+        candidates.append(lines)
+    # A different performance of the same song may appear before the new work.
+    # Check all complete captions before falling back to track and duration.
+    for lines in candidates:
         track = plan.get("track", "").split(" / ")[0]
         if not track or not re.search(r"(?<![a-z0-9])" + re.escape(track) + r"(?![a-z0-9])",
                                       " ".join(lines[1:]).split("#")[0], re.I):
@@ -91,7 +160,6 @@ def match_work(cards, plan):
         timing = re.fullmatch(r"(\d+):(\d{2})", lines[0])
         if timing and abs(60 * int(timing[1]) + int(timing[2]) - plan["duration"]) < 2:
             return True
-        raise ValueError(f"作品管理存在同名曲目，请核对后再投稿：{lines[-1]}")
     return False
 
 
@@ -105,7 +173,7 @@ def save_receipt(path, state, plan):
     temp.replace(path)
 
 
-async def publish(plan, receipt):
+async def publish(plan, receipt, check_existing=True):
     home = Path(os.environ.get("POSTFLOW_HOME", "~/.local/share/postflow-grammy")).expanduser().resolve()
     if not (home / "uploader/douyin_uploader/main.py").is_file():
         raise ValueError("找不到 PostFlow，请设置 POSTFLOW_HOME")
@@ -120,12 +188,40 @@ async def publish(plan, receipt):
         raise ValueError("请先登录抖音或设置 DOUYIN_STORAGE_STATE")
 
     class PortraitUploader(DouYinVideo):
+        daily_limit_message = None
+
+        async def handle_auto_video_cover(self, page):
+            if self.daily_limit_message:
+                raise DailyPostingLimit(self.daily_limit_message)
+            return await super().handle_auto_video_cover(page)
+
         async def set_thumbnail(self, page, path):
             await set_cover(page, "竖封面3:4", path)
             await set_cover(page, "横封面4:3", plan["landscape"])
 
         async def set_aigc_declaration(self, page):
             # PostFlow calls this hook after its own cross-post defaults, before submission.
+            await page.expose_function("reportDouyinDailyLimit",
+                                       lambda message: setattr(self, "daily_limit_message", message))
+            # Toasts disappear quickly. Observe them before clicking Publish so the
+            # upload loop can stop even if the message has vanished by its next poll.
+            await page.evaluate("""() => {
+                const messages = ['今天投稿次数已达到上限', '今日投稿次数已达上限',
+                    '视频发布数量超过每日上限', '今日发布次数已达上限'];
+                let reported = false;
+                const check = () => {
+                    if (reported) return;
+                    const text = document.body.innerText;
+                    const message = messages.find(value => text.includes(value));
+                    if (message) {
+                        reported = true;
+                        window.reportDouyinDailyLimit(message);
+                    }
+                };
+                new MutationObserver(check).observe(document.body,
+                    {subtree: true, childList: true, characterData: true});
+                check();
+            }""")
             for label in ("不同时发布", "不允许", "公开", "立即发布"):
                 choice = page.get_by_role("checkbox", name=label, exact=True)
                 if not await choice.is_checked():
@@ -140,32 +236,42 @@ async def publish(plan, receipt):
         try:
             ctx = await browser.new_context(storage_state=str(cookie))
             page = await ctx.new_page()
-            await page.goto("https://creator.douyin.com/creator-micro/home", wait_until="domcontentloaded")
+            await page.goto("https://creator.douyin.com/creator-micro/home", wait_until="domcontentloaded", timeout=60000)
             account_label = re.compile(r"抖音号[：:]\s*" + re.escape(plan["account"]) + r"(?![\w.-])")
             await page.get_by_text(account_label).first.wait_for(timeout=60000)
             prior = read_json(receipt, {})
-            if prior.get("account") == plan["account"]:
+            if prior.get("account") == plan["account"] and prior.get("status") in ("confirmed", "pending"):
                 if prior["status"] == "confirmed" or await listed(ctx, {**plan, **prior}):
                     if prior["status"] != "confirmed":
                         save_receipt(receipt, "confirmed", {k: v for k, v in prior.items() if k != "status"})
                     print("已有发布回执，跳过", prior["title"])
                     return
-                raise RuntimeError("上次已进入发布阶段，作品列表尚未确认。请人工核对后再重试")
-            if await listed(ctx, plan):
+                raise PublicationPending("上次已进入发布阶段，继续检查作品列表，不重复提交")
+            if check_existing and await listed(ctx, plan):
                 save_receipt(receipt, "confirmed", plan)
                 print("作品管理里已有此标题，跳过")
                 return
-            tags = [tag.removeprefix("#") for tag in plan["description"].split()]
+            tags = [tag.removeprefix("#") for tag in plan["hashtags"]]
             tool = PortraitUploader(plan["title"], plan["video"], tags,
-                                    0, str(cookie), plan["portrait"])
+                                    0, str(cookie), plan["portrait"], description=plan["description_body"])
             tool.headless = headless
+            upload_error = None
             try:
-                await asyncio.wait_for(tool.upload(runtime), timeout=600)
-            finally:
+                await asyncio.wait_for(tool.upload(runtime), timeout=1800)
+            except Exception as error:
+                upload_error = error
+            if tool.daily_limit_message:
+                save_receipt(receipt, "daily_limit", dict(plan, error=tool.daily_limit_message))
+                raise DailyPostingLimit(tool.daily_limit_message)
+            if upload_error is None or read_json(receipt, {}).get("status") == "pending":
                 if await listed(ctx, plan):
                     save_receipt(receipt, "confirmed", plan)
+                    print("作品管理已确认", plan["title"])
+                    return
+            if upload_error is not None:
+                raise upload_error
             if read_json(receipt, {}).get("status") != "confirmed":
-                raise RuntimeError("作品管理尚无对应标题，请核对验证提示和投稿状态")
+                raise PublicationPending("作品管理尚未确认，继续检查，不重复提交")
             print("作品管理已确认", plan["title"])
         finally:
             await browser.close()

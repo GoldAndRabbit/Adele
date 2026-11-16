@@ -49,24 +49,29 @@ def inventory():
 
 def enable_browser(c, it):
     """Keep authoritative source choices and reuse their prepared clean clips."""
-    from workflow.browser_library import prepare_browser
+    from workflow.browser_library import prepare_browser, prepare_preview_crop, source_identity
     d = c.song_dir(it)
     policy = read_json(c.dir/'vertical_source.json', {})
     selected = policy.get('songs', {}).get(it['name'])
     if selected:
         source = original_source(c,it)
         output = Path(selected['directory'])/'source.mp4'
-        expected = dict(source=str(source), mtime=source.stat().st_mtime_ns, slice=selected['slice'])
+        decoder = selected.get('audio_decoder') or read_json(c.dir/'concert.json', {}).get('audio_decoder')
+        expected = source_identity(source, selected['slice'], decoder)
         if not output.is_file() or read_json(output.parent/'source.json') != expected:
             prepare_browser(c,it)
+        prepare_preview_crop(d,output)
         from workflow.vertical_source import _publish
         _publish(c,it,output)
         info = read_json(d/'song.json', {})
         info['preview_mode'] = 'browser'
         write_json(d/'song.json',info)
-        config = read_json(c.dir/'browser_previews.json', {'songs':[]})
-        config['songs'] = list(dict.fromkeys([*config['songs'],it['name']]))
-        write_json(c.dir/'browser_previews.json',config)
+        with (c.dir / '.browser-policy.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            config = read_json(c.dir / 'browser_previews.json', {'songs': []})
+            if it['name'] not in config['songs']:
+                config['songs'].append(it['name'])
+                write_json(c.dir / 'browser_previews.json', config)
     else:
         prepare_browser(c,it)
     from workflow.portrait_browser import preview_data
@@ -146,14 +151,8 @@ def run(concert_filter=None, wait=False):
 
 def metadata(c,it):
     from workflow.delivery_bundle import write_bundle
-    from workflow.vertical_post import posting_inputs, submission, cover_attachment
-    d=c.song_dir(it);draft=read_json(d/'post_draft.json',{})
-    if not draft:raise ValueError('缺少投稿基础资料，不编造标题信息')
-    post=submission(*posting_inputs(c,it,draft))
-    selection=read_json(d/'vertical/selected.json',{})
-    post['cover']=cover_attachment(d,selection.get('cover'))
-    (d/'vertical').mkdir(exist_ok=True)
-    write_json(d/'vertical/douyin_submission.json',post)
+    if not read_json(c.song_dir(it)/'post_draft.json', {}):
+        raise ValueError('缺少投稿基础资料，不编造标题信息')
     write_bundle(c,it)
 
 

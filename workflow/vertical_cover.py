@@ -9,6 +9,7 @@ import tempfile
 import numpy as np
 from pathlib import Path
 
+from workflow.song.title_translation import header_translation
 from workflow.portrait_title import HEART, draw_heart_title
 from workflow.portrait_header import ARTIST as COVER_ENGLISH, CHINESE as COVER_CHINESE, STYLE
 from workflow.artist_credit import artist_credit
@@ -79,7 +80,7 @@ def raw_event_label(concert, item):
 
 def event_label(concert, item):
     label = raw_event_label(concert, item)
-    if not label or label.startswith(("《", "单曲《")) or re.match(r"^(19|20)\d{2}", label):
+    if not label or label == "MV" or label.startswith(("《", "单曲《")) or re.match(r"^(19|20)\d{2}", label):
         return label
     if concert.slug == "singles":
         post = read_json(concert.song_dir(item) / "post" / (item["name"] + ".json"), {})
@@ -107,9 +108,13 @@ def header_labels(concert, item):
         zh = settings.get("artist_translations", {}).get(en, zh)
     event = event_label(concert, item)
     album = event.startswith("《") and event.endswith("》")
-    if not en or not re.search(r"[\u3400-\u9fff]", zh):
+    # Some artists officially retain their original stage name in Chinese copy.
+    # Only accept this when explicitly recorded, not as an automatic fallback.
+    original_credit = (en in settings.get("original_artist_names", [])
+                       and zh.casefold() == en.casefold())
+    if not en or (not re.search(r"[\u3400-\u9fff]", zh) and not original_credit):
         raise ValueError(f"{name} 缺少歌手中文名，请补充署名后制作")
-    if not album and not re.search(r"[\u3400-\u9fff]", event):
+    if not album and event != "MV" and not re.search(r"[\u3400-\u9fff]", event):
         raise ValueError(f"{name} 缺少中文场次或专辑名称")
     return {"en": artist_credit(en), "zh": artist_credit(zh), "event": event}
 
@@ -199,7 +204,7 @@ def cover_image(concert, item, at, pool_frame=None, palette=DEFAULT_COVER_PALETT
             f = f.font_variant(size=max(1, int(size * 950 / f.getlength(title))))
         draw.text((540, baseline), title, font=f, fill=color, anchor="mm",
                   stroke_width=stroke, stroke_fill="#000000")
-    translation = read_json(directory / "title_translation.json", {}).get("title_zh") or artist.get("title_zh", "")
+    translation = header_translation(directory, artist.get("title_song") or item["title"], artist)
     line(artist.get("title_song") or item["title"], serif, serif_face, 142, y - 238, stroke=STYLE["title_outline"])
     labels = header_labels(concert, item)
     if not translation:
@@ -260,7 +265,7 @@ def wide_cover(concert, item, moment, output, pool_frame=None, palette=DEFAULT_C
     labels = header_labels(concert, item)
     title = song.get("title_song") or item["title"]
     en = labels["en"].upper()
-    translation = read_json(directory / "title_translation.json", {}).get("title_zh") or song.get("title_zh", "")
+    translation = header_translation(directory, title, song)
     if not translation:
         raise ValueError("封面缺少已确认的中文歌名，请先运行标题翻译步骤")
     # Landscape header: song on the left, bilingual artist on the right.

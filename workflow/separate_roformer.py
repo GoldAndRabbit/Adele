@@ -54,4 +54,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # One separator per Mac, shared by all queues and Python environments.
+    # Acquire before loading torch or model weights so waiters use little RAM.
+    import fcntl
+    lock_path = Path.home() / "Library/Caches/adele/separator.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        main()

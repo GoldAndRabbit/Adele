@@ -1,0 +1,10 @@
+{
+  "render_platforms": [
+    "bilibili"
+  ],
+  "collection_platforms": [
+    "bilibili"
+  ],
+  "single_channel_pipeline": "stream",
+  "content_audit_before_render": false
+}

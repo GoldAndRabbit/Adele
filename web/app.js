@@ -42,36 +42,125 @@ const SHOT = { closeup: "特写", half: "半身", full: "全身", scene: "氛围
 
 const state = { concerts: [], concert: null, song: null, cleanup: [] };
 
+// 页面级 tab 保留工作流视图，切回时继续当前场次和歌曲。
+const flowTabs = [...document.querySelectorAll("[data-flow]")];
+function selectFlow(flow) {
+  const selecting = flow === "selection";
+  $("#app").hidden = selecting;
+  $("#selection-flow").hidden = !selecting;
+  for (const tab of flowTabs) {
+    const active = tab.dataset.flow === flow;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  }
+  if (selecting) document.querySelectorAll("#app video, #app audio").forEach(media => media.pause());
+}
+for (const tab of flowTabs) {
+  tab.addEventListener("click", () => selectFlow(tab.dataset.flow));
+  tab.addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const index = event.key === "Home" ? 0 : event.key === "End" ? flowTabs.length - 1
+      : (flowTabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : -1) + flowTabs.length) % flowTabs.length;
+    selectFlow(flowTabs[index].dataset.flow);
+    flowTabs[index].focus();
+  });
+}
+
 // ---------------------------------------------------------------- sidebar
 
 function searchText(text) {
   return text.normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 }
 
+const fpsLabel = values => {
+  const rates = [...new Set(values.map(Number).filter(value => value > 0).map(value => Number(value.toFixed(2))))];
+  return rates.length ? rates.sort((a, b) => a - b).join(" / ") + " fps" : "帧率未知";
+};
+
+const librarySort = $("#library-sort");
+try { librarySort.value = localStorage.getItem("library-sort") || "default"; } catch { /* 存储不可用 */ }
+if (!["default", "published_at", "added_at"].includes(librarySort.value)) librarySort.value = "default";
+function orderTime(row) {
+  const value = row[librarySort.value];
+  const time = value ? Date.parse(value) : NaN;
+  return Number.isFinite(time) ? time : -Infinity;
+}
+function newestFirst(a, b) {
+  const left = orderTime(a), right = orderTime(b);
+  return left === right ? 0 : left > right ? -1 : 1;
+}
+function groupOrderTime(group) {
+  return Math.max(-Infinity, ...(group.tracks || []).map(orderTime));
+}
+librarySort.addEventListener("change", () => {
+  try { localStorage.setItem("library-sort", librarySort.value); } catch { /* 存储不可用 */ }
+  renderSidebar(parseRoute());
+});
+
 function renderNavigation(route) {
   const input = $("#song-search");
   const query = searchText(input.value);
+  const active = state.concerts.find(group => group.slug === route.slug);
+  const singles = Boolean(active?.kind || /^singles(?:_|$)/.test(route.slug || ""));
+  const compareNames = new Intl.Collator("en", {numeric:true, sensitivity:"base"});
+  const groups = state.concerts.filter(group => Boolean(group.kind) === singles).sort((a, b) => {
+    if (librarySort.value !== "default") {
+      const left = groupOrderTime(a), right = groupOrderTime(b);
+      if (left !== right) return left > right ? -1 : 1;
+    }
+    if (singles) return compareNames.compare(a.title, b.title);
+    const year = group => Number((group.date || "").slice(0, 4)) || 0;
+    const artist = group => group.slug.startsWith("grammys_") ? "Grammy" : group.artist || "";
+    return year(b) - year(a)
+      || compareNames.compare(artist(a), artist(b))
+      || compareNames.compare(a.title, b.title);
+  });
+  for (const tab of document.querySelectorAll("[data-library]")) {
+    tab.setAttribute("aria-selected", String((tab.dataset.library === "single") === singles));
+  }
   if (!input.value.trim()) {
-    $("#concerts").replaceChildren(...state.concerts.map(x => {
+    const header = h("div", {class:"group-columns group-header"},
+      h("span", {}, singles ? "歌手 / 场次" : "场次"), ...["预览", "封面", "成片"].map(label => h("span", {}, label)));
+    $("#concerts").replaceChildren(header, ...groups.map(x => {
       const total = x.tracks.length;
-      const done = x.tracks.filter(track => track.portrait_release_ready).length;
-      const rate = total ? Math.round(done / total * 100) : 0;
-      return h("a", {href: `#/${x.slug}`, class: "group-link" + (x.slug === route.slug ? " active" : "")},
-        h("span", {class:"group-name"}, x.title),
-        h("span", {class:"group-metrics"},
-          Number(x.fps) > 0 ? h("span", {class:"group-fps", title:"原片帧率"}, `${Number(Number(x.fps).toFixed(2))} fps`) : null,
-          h("span", {class:"release-rate", title:`竖屏成片率：${done}/${total} 首`,
-            "aria-label":`竖屏成片率 ${rate}%`}, rate + "%")));
+      const done = x.tracks.filter(track => track.dual_products_ready).length;
+      const previews = x.tracks.filter(track => track.portrait_preview_ready).length;
+      const covers = x.tracks.filter(track => track.platform_covers_ready).length;
+      const progressClass = count => "group-value " + (count === 0 ? "progress-empty" : count === total ? "progress-complete" : "progress-partial");
+      return h("a", {href: `#/${x.slug}${x.kind ? "" : "/~album-covers"}`, class: "group-link group-columns" + (x.slug === route.slug ? " active" : "")},
+        h("span", {class:"group-name"}, x.title, h("small", {class:"name-fps"}, " " + fpsLabel(x.kind ? x.tracks.map(track => track.fps) : [x.fps]))),
+        h("span", {class:progressClass(previews), title:`可播放预览：${previews}/${total} 首`}, `${previews}/${total}`),
+        h("span", {class:progressClass(covers), title:`B站和抖音封面均已生成：${covers}/${total} 首`}, `${covers}/${total}`),
+        h("span", {class:progressClass(done), title:`${(x.delivery_platforms || ["bilibili", "douyin"]).map(p => p === "bilibili" ? "B站" : "抖音").join("和")}成片：${done}/${total} 首`}, `${done}/${total}`));
     }));
     return;
   }
-  const matches = state.concerts.flatMap(group => (group.tracks || [])
+  const found = groups.flatMap(group => (group.tracks || [])
     .filter(track => query && searchText(track.title).includes(query))
-    .map(track => h("a", {href: `#/${group.slug}/${track.name}`, onclick: () => {
+    .map(track => ({group, track})));
+  if (librarySort.value !== "default") found.sort((a, b) => newestFirst(a.track, b.track));
+  const matches = found.map(({group, track}) => h("a", {href: `#/${group.slug}/${track.name}`, onclick: () => {
       input.value = "";
       renderNavigation(parseRoute());
-    }}, track.title, h("small", {}, [group.title, track.notes].filter(Boolean).join(" · ")))));
+    }}, track.title + " " + fpsLabel([track.fps]), h("small", {}, [group.title, track.notes].filter(Boolean).join(" · "))));
   $("#concerts").replaceChildren(...(matches.length ? matches : ["未找到匹配的歌曲"]));
+}
+const lastLibraryGroup = {};
+for (const tab of document.querySelectorAll("[data-library]")) {
+  tab.addEventListener("click", () => {
+    const singles = tab.dataset.library === "single";
+    const current = parseRoute();
+    const group = state.concerts.find(row => row.slug === current.slug);
+    const wasSingles = Boolean(group?.kind || /^singles(?:_|$)/.test(current.slug || ""));
+    if (wasSingles === singles) return;
+    lastLibraryGroup[wasSingles] = location.hash;
+    const first = state.concerts.find(row => Boolean(row.kind) === singles);
+    if (first) {
+      $("#song-search").value = "";
+      location.hash = lastLibraryGroup[singles] || "#/" + first.slug;
+    }
+  });
 }
 $("#song-search").addEventListener("input", () => renderNavigation(parseRoute()));
 
@@ -85,8 +174,12 @@ function renderSidebar(route) {
   const pool = h("li", {}, h("a", { href: `#/${c.slug}/~covers`, class: route.name === "~covers" ? "active" : null,
     title: "整场演唱会的画面都能给任何一首当封面" }, h("span", { class: "pool-link-label" }, "封面池")));
   const kind = state.concerts.find(x => x.slug === route.slug)?.kind;
-  ul.replaceChildren(...(c.has_cover_pool ? [pool] : []), ...c.items.map((it) => {
-    if (it.kind !== "song") return h("li", { class: "tape", title: "过场（预录视频），不出成品" }, `~ ${it.title}`);
+  const album = h("li", {}, h("a", {href:`#/${c.slug}/~album-covers`,
+    class:"album-preview-link" + (route.name === "~album-covers" ? " active" : "")}, "合集信息和全部封面信息"));
+  // 曲目列表始终按显示编号排列，不跟随左侧场次的日期排序。
+  const orderedItems = c.items.filter(it => it.kind === "song")
+    .sort((a, b) => Number(songNumbers.get(a.name)) - Number(songNumbers.get(b.name)));
+  ul.replaceChildren(album, ...(c.has_cover_pool ? [pool] : []), ...orderedItems.map((it) => {
     const s = songs[it.name];
     const warn = s.start == null || (s.confidence != null && s.confidence < 0.5) || s.needs_refine;
     const source = kind === "artist" ? s.notes : c.info.title;
@@ -97,40 +190,106 @@ function renderSidebar(route) {
     const label = note ? `${it.title} · ${note}` : it.title;
     const badge = (text, ready, status, extraClass = "") => h("span", {
       class: `song-cover-status ${extraClass}${ready ? " selected" : ""}`, title: status, "aria-label": status
-    }, text);
+    }, ready == null ? "…" : text);
     return h("li", {class: "song-row"}, h("a", { href: `#/${c.slug}/${it.name}`, class: route.name === it.name ? "active" : null, title: label },
       h("span", {class:"song-number"}, songNumbers.get(it.name)),
       h("span", { class: "song-list-title" }, it.title),
       h("span", { class: "song-list-badges" },
-        badge("封", s.portrait_cover_selected, s.portrait_cover_selected ? "已选竖屏封面" : "待选竖屏封面", "portrait-badge"),
+        badge("封", s.platform_covers_ready, s.platform_covers_ready ? "双平台封面已生成" : "双平台封面待生成", "portrait-badge"),
         badge("字", s.subtitles_ready, s.subtitles_ready ? "已产出字幕" : "尚未产出字幕"),
         badge("详", s.post_ready, s.post_ready ? "抖音投稿文案已就绪" : "待补抖音投稿信息"),
-        badge("成", s.portrait_release_ready, s.portrait_release_ready ? "已有竖屏成片" : "暂无竖屏成片", "portrait-badge")),
+        badge("成", s.dual_products_ready, s.dual_products_ready ? "双平台成片已就绪" : "双平台成片待完成", "portrait-badge")),
       warn ? h("span", { class: "warn", title: s.needs_refine ? "边界改过，需要重跑精校" : "定位置信度低" }, "⚠") : null));
   }));
 }
 
+function renderInfo(post = {}) {
+  function duration(seconds) {
+    if (!Number.isFinite(seconds)) return "";
+    const total = Math.round(seconds);
+    return total < 60 ? total + "秒" : Math.floor(total / 60) + "分" + (total % 60) + "秒";
+  }
+  const stageNames = {
+    prepare_original_master: "母版制作（含插帧）",
+    interpolate50to60_and_lossless_master: "插帧与母版制作",
+    "bilibili-4k60_render_encode": "B站编码",
+    "douyin-1080p60_render_encode": "抖音编码",
+  };
+  const states = {queued: "待制作", running: "制作中", ready: "已完成", failed: "失败"};
+  return [
+    ["成品制作机器", post.render_host],
+    ["本次制作", post.current_executor && [post.current_executor, states[post.current_render_status]].filter(Boolean).join(" · ")],
+    [post.current_render_status === "running" ? "已用时间（截至刷新）" : post.current_render_status === "failed" ? "失败尝试耗时" : "单首制作总耗时", duration(post.elapsed_seconds)],
+    ...(post.timing_stages || []).filter(s => stageNames[s.stage]).map(s => [stageNames[s.stage], duration(s.seconds)]),
+    ["副机成品回传", duration(post.return_seconds)],
+    ["成品哈希校验", duration(post.checksum_seconds)],
+    ["制作日志路径", post.current_render_log || post.production_log],
+  ].filter(([, value]) => value);
+}
+
+async function refreshPosting(song, slug) {
+  const latest = await api("/api/concerts/" + slug + "/songs/" + song.name + "/posting");
+  if (state.song !== song) return;
+  const bili = JSON.stringify(latest.bilibili, null, 2);
+  if (song.bili_upload !== bili) {
+    song.bili_upload = bili;
+    document.querySelectorAll(".bili-post-info").forEach(pane => pane.replaceWith(postPane(song)));
+  }
+  if (JSON.stringify(song.douyin_submission) !== JSON.stringify(latest.douyin)) {
+    song.douyin_submission = latest.douyin;
+    song.douyin_cover = latest.douyin.selected_cover;
+    document.querySelectorAll(".douyin-pane").forEach(pane => pane.replaceWith(douyinPane(song)));
+  }
+}
+
+function coverPathFields(platform, selected, generated = {}) {
+  return Object.entries(selected).flatMap(([ratio, path]) => {
+    const value = path || generated[ratio]?.[0];
+    return value ? [[platform + " " + ratio + " 封面路径", value]] : [];
+  });
+}
+
 function postPane(song) {
   const post = song.bili_upload ? JSON.parse(song.bili_upload) : {};
-  const draft = song.draft || {};
-  const title = post["标题"] || draft.title || "";
-  const fields = [["标题", title], ["简介", post["简介"] || draft.intro_text],
-    ["标签", post["标签"] || draft.tags], ["分区", post["分区名称"]], ["转载来源", post["转载来源"]],
-    ["完整投稿 JSON", song.bili_upload]].filter(([, value]) => value?.length);
+  const title = post["标题"] || "";
+  const fields = [["标题", title], ["合集显示名称", post["合集显示名称"]], ["歌手中文昵称", post["歌手中文昵称"]], ["简介", post["简介"]],
+    ["标签", post["标签"]], ["分区", post["分区名称"]], ["转载来源", post["转载来源"]],
+    ...renderInfo({...post["制作记录"], render_host: post["制作机器"]}),
+    ["输入成品路径", post["视频文件"]],
+    ...coverPathFields("bili", {"4x3":post["封面4:3"], "16x9":post["封面16:9"]}, post["已生成封面路径"]),
+    ...Object.entries(post).filter(([key]) => !["标题","合集显示名称","标题字符数","简介字符数","歌手中文昵称","简介","标签","分区名称","转载来源","制作机器","制作记录","视频文件","已生成封面路径","封面16:9","封面4:3"].includes(key))
+      .map(([key,value]) => [key, value == null || value === "" ? "未设置" : typeof value === "boolean" ? (value ? "开" : "关") : String(value)]),
+    ["完整投稿 JSON", JSON.stringify(post, null, 2)]].filter(([, value]) => value?.length);
   if (!fields.length) return h("div", {class: "post-info"}, "这首歌暂无投稿内容。");
 
+  return postingFields("bili-post-info", post, fields, 80);
+}
+
+function postingFields(className, post, fields, titleLimit) {
   const rows = fields.map(([label, value]) => {
     const text = Array.isArray(value) ? value.join("、") : value;
-    const copy = h("button", {class:"btn mini", onclick: async () => {
+    const copy = h("button", {class:"btn mini posting-copy", "aria-label":"复制" + label, title:"复制" + label, onclick: async () => {
       try { await navigator.clipboard.writeText(text); copy.textContent = "已复制"; }
       catch { copy.textContent = "复制失败"; }
-    }}, "复制" + label);
+    }}, "复制");
+    const firstParagraph = label === "简介" ? text.trim().split(/\r?\n+/)[0] : text;
+    const content = label === "完整投稿 JSON" ? h("pre", {class:"json-view"}, text)
+      : h("p", {}, firstParagraph);
+    let expanded = false;
+    const toggle = label === "简介" && firstParagraph !== text.trim()
+      ? h("button", {type:"button", class:"btn mini description-toggle", "aria-expanded":"false", onclick:() => {
+          expanded = !expanded;
+          content.textContent = expanded ? text : firstParagraph;
+          toggle.textContent = expanded ? "收起" : "展开全部";
+          toggle.setAttribute("aria-expanded", String(expanded));
+        }}, "展开全部") : null;
     return h("section", {class:"post-field" + (label === "简介" ? " post-description" : "")},
       h("div", {class:"post-field-head"}, h("strong", {}, label),
-        label === "标题" ? h("small", {}, Array.from(title).length + " / 80 字符" + (Array.from(title).length > 80 ? " · 超长待精简" : "")) : null, copy),
-      label === "完整投稿 JSON" ? h("pre", {class:"json-view"}, text) : h("p", {}, text));
+        label === "简介" ? h("small", {}, Array.from(text).length + " / 2000 字符") : null,
+        (label === "标题" || label === "短标题") ? h("small", {}, (post["标题字符数"] ?? post.title_chars ?? 0) + " / " + titleLimit + " 字符") : null, toggle, copy),
+      content);
   });
-  return h("div", {class:"post-info bili-post-info"}, ...rows);
+  return h("div", {class:"post-info " + className}, ...rows);
 }
 
 function productDuration(seconds) {
@@ -209,40 +368,69 @@ function productTimeline(data) {
         ...rows)), data.engine ? h("p", {class:"hint"}, data.engine) : null);
 }
 
-function productsPlaceholder(c, song) {
-  const data = song.products || {};
-  const renderProduct = (platform, title) => {
-    const item = (data.items || []).find(item => item.platform === platform);
-    const content = h("section", {class:platform === "bilibili" ? "product-output product-horizontal" : "product-output product-portrait",
-      "aria-label":title}, h("strong", {}, title));
-    if (!item) {
-      content.append(h("p", {class:"empty"}, data.status === "running" ? (data.stage || "正在制作") : "暂无成品"));
-      return content;
+function reviewColumns(horizontalPanes, portrait, lyrics, song, players) {
+  const watermarks = h("div", {class:"review-notes preview-watermarks"}, watermarkPane(song));
+  const reviewNotes = h("div", {class:"review-notes review-side-notes"}, notesPane(song, players));
+  const horizontal = h("div", {class:"review-horizontal-videos"}, ...horizontalPanes);
+  const upper = h("div", {class:"review-horizontal-group"}, horizontal);
+  const left = h("div", {class:"review-left"}, reviewNotes, upper, lyrics);
+  const posting = h("div", {class:"review-posting"}, postingPane(song));
+  const column = h("div", {class:"review-left-column"}, left, watermarks);
+  const el = h("div", {class:"top stacked-review"}, column, portrait, posting);
+  function resizeColumns() {
+    const height = portrait.getBoundingClientRect().height;
+    if (height > 0) {
+      left.style.height = height + "px";
+      const available = window.innerHeight - posting.getBoundingClientRect().top - 16;
+      posting.style.maxHeight = Math.max(height, available) + "px";
     }
-    const video = h("video", {src:item.url, controls:true, playsinline:true, preload:"metadata", class:"product-video", "aria-label":title});
+  }
+  const observer = new ResizeObserver(resizeColumns);
+  observer.observe(portrait);
+  observer.observe(horizontal);
+  window.addEventListener("resize", resizeColumns);
+  state.cleanup.push(() => {
+    observer.disconnect();
+    window.removeEventListener("resize", resizeColumns);
+  });
+  return {el, reviewNotes};
+}
+
+function submissionVersions(c, song) {
+  const data = song.products || {};
+  const players = [];
+  const fileDetails = [];
+  function output(platform, label) {
+    const item = (data.items || []).find(item => item.platform === platform);
+    if (!item) return h("div", {class:"submission-missing " + platform},
+      data.status === "running" ? (data.stage || "正在制作") : "暂无" + label);
+    const video = h("video", {src:item.url, controls:true, playsinline:true, preload:"none",
+      class:"final-video", "aria-label":label, style:`aspect-ratio:${item.width}/${item.height}`});
+    players.push({video, offset:-(item.start || 0), start:item.start || 0,
+      end:(item.start || 0) + item.duration, delay:() => 0});
     state.cleanup.push(() => { video.pause(); video.removeAttribute("src"); video.load(); });
-    if (item.previous) content.append(h("p", {class:"hint"}, "正在更新成品，当前播放上一版"));
-    content.append(video,
+    fileDetails.push(h("section", {class:"submission-file"}, h("strong", {}, label),
+        label === "简介" ? h("small", {}, Array.from(text).length + " / 2000 字符") : null,
       h("p", {}, `${item.width}×${item.height} · ${item.fps}fps · ${(item.bytes/1024/1024).toFixed(1)} MiB`),
-      h("p", {}, `合成编码 ${productDuration(item.render_seconds)}`),
-      revealFinal(c, song, "products/" + item.file),
-      h("details", {}, h("summary", {}, "文件路径"), h("p", {}, item.path)));
-    return content;
-  };
-  const horizontal = renderProduct("bilibili", "横屏B站版");
-  const portrait = renderProduct("douyin", "竖屏抖音版");
-  const videos = [...horizontal.querySelectorAll("video"), ...portrait.querySelectorAll("video")];
-  videos.forEach(video => video.addEventListener("play", () => videos.forEach(other => { if (other !== video) other.pause(); })));
-  return h("div", {}, h("div", {class:"top stacked-review product-layout"}, horizontal, portrait),
-    data.created_local ? h("p", {class:"product-created"}, "制作时间 " + data.created_local) : null,
-    productTimeline(data));
+      item.previous ? h("p", {class:"hint"}, "正在更新成品，当前播放上一版") : null,
+      revealFinal(c, song, "products/" + item.file), h("p", {}, item.path)));
+    return video;
+  }
+  const horizontal = h("div", {class:"pane original-player"}, output("bilibili", "横屏B站版"));
+  const portrait = h("div", {class:"review-right"}, h("div", {class:"pane portrait-player"}, output("douyin", "竖屏抖音版")));
+  const lyrics = h("div", {class:"pane lyrics-pane"},
+    song.exp ? expTable(song.exp, players) : h("div", {class:"empty"}, "暂无字幕"));
+  const {el} = reviewColumns([horizontal], portrait, lyrics, song, players);
+  return h("div", {class:"submission-versions"}, el,
+    fileDetails.length ? h("details", {class:"submission-files"}, h("summary", {}, "成片文件信息"), ...fileDetails) : null,
+    data.created_local ? h("p", {class:"product-created"}, "制作时间 " + data.created_local) : null, productTimeline(data));
 }
 
 function postingPane(song) {
   const tabs = h("div", {class:"song-tabs post-tabs", role:"tablist", "aria-label":"投稿平台"});
   const panels = [
-    h("section", {role:"tabpanel", "aria-label":"抖音投稿"}, douyinPane(song)),
-    h("section", {role:"tabpanel", "aria-label":"B站投稿"}, postPane(song))
+    h("section", {role:"tabpanel", "aria-label":"B站投稿"}, postPane(song)),
+    h("section", {role:"tabpanel", "aria-label":"抖音投稿"}, douyinPane(song))
   ];
   function select(index) {
     panels.forEach((panel, i) => {
@@ -250,9 +438,9 @@ function postingPane(song) {
       tabs.children[i].setAttribute("aria-selected", String(i === index));
     });
   }
-  ["抖音投稿", "B站投稿"].forEach((label, index) =>
+  ["B站投稿", "抖音投稿"].forEach((label, index) =>
     tabs.append(h("button", {role:"tab", class:"platform-logo-tab", title:label, "aria-label":label, onclick:() => select(index)},
-      h("img", {src:index === 0 ? "icons/douyin.svg" : "icons/bilibili.svg", alt:"", "aria-hidden":"true"}))));
+      h("img", {src:index === 0 ? "icons/bilibili.svg" : "icons/douyin.svg", alt:"", "aria-hidden":"true"}))));
   select(0);
   return h("div", {class:"posting-platforms"}, tabs, ...panels);
 }
@@ -299,22 +487,16 @@ function revealFinal(c, song, file) {
 
 function douyinPane(song) {
   const post = song.douyin_submission || {};
-  const cover = song.douyin_cover;
-  function field(label, value, fallback, limit) {
-    const copy = value && h("button", {class:"btn mini", onclick: async () => {
-      try { await navigator.clipboard.writeText(value); copy.textContent = "已复制"; }
-      catch { copy.textContent = "复制失败"; }
-    }}, "复制" + label);
-    return h("div", {}, h("small", {}, limit ? label + " · " + (value || "").length + " / " + limit + " 字符" : label), h("p", {}, value || fallback), copy);
-  }
-  return h("aside", {class:"douyin-pane", "aria-label":"抖音投稿信息"},
-    h("strong", {}, "抖音投稿信息"),
-    field("短标题", post.title, "待补投稿资料", 30),
-    field("作品描述", post.description, "待补投稿资料", 1000),
-    field("竖封面路径", cover?.path, "待选竖屏封面"),
-    field("4:3 横封面路径", cover?.wide_path, "待设计"),
-    field("自主声明", post.declaration, "待补投稿资料"),
-    h("div", {}, h("small", {}, "发布设置参考"), h("p", {}, post.publish_settings || "待补投稿资料")));
+  const cover = post.selected_cover;
+  const fields = [
+    ["短标题", post.title], ["完整标题", post.title_full], ["歌手中文昵称", post.nicknames_zh],
+    ["作品描述", post.description], ["话题", post.hashtags], ...renderInfo(post),
+    ["输入成品路径", post.input_video_path],
+    ...coverPathFields("douyin", {"3x4":cover?.path, "4x3":cover?.wide_path}, post.generated_cover_paths),
+    ["自主声明", post.declaration], ["发布设置参考", post.publish_settings],
+    ["完整投稿 JSON", JSON.stringify(post, null, 2)]
+  ].filter(([, value]) => value?.length);
+  return postingFields("douyin-pane", post, fields, 30);
 }
 
 function portraitReleaseControls(c, s) {
@@ -323,8 +505,7 @@ function portraitReleaseControls(c, s) {
     return h("div", {class:"pool-selector-hint"}, h("a", {href:"#/" + c.slug + "/~covers"}, "到封面池选帧"));
   }
   const choices = h("div", {class: "portrait-cover-choices"});
-  const timing = review.first == null ? "尚无有效歌词" : "首句前保留 " + (review.released?.lead ?? 0.5) + " 秒 · 首句 " + fmt(review.first)
-    + " · 成品起点 " + fmt(review.released?.start ?? Math.max(0, review.first - 0.5));
+  const timing = review.released?.start > 0 ? "已有成品起点 " + fmt(review.released.start) : "成品范围与横屏相同";
   const dialog = h("dialog", {class: "portrait-cover-dialog", "aria-label": "竖屏封面预览",
     onclick: event => { if (event.target === dialog) dialog.close(); }});
   function preview(url, label) {
@@ -338,11 +519,11 @@ function portraitReleaseControls(c, s) {
       "aria-label":"选用封面 " + (cover.pool_frame ? "整场 " : "") + fmt(cover.time), title:"选用这张封面", onclick: async () => {
         if (choices.dataset.busy) return;
         choices.dataset.busy = "1";
-        try { const result = await api(`/api/concerts/${c.slug}/songs/${s.name}/vertical_cover`, {cover: cover.file}); s.douyin_cover = result.douyin_cover; }
+        try { await api(`/api/concerts/${c.slug}/songs/${s.name}/vertical_cover`, {cover: cover.file}); await refreshPosting(s, c.slug); }
         catch (e) { toast(e.message, false); return; }
         finally { delete choices.dataset.busy; }
         review.selected = cover.file;
-        const summary = c.songs.find(item => item.name === s.name);
+        const summary = state.concert?.slug === c.slug && state.concert.songs.find(item => item.name === s.name);
         if (summary) {
           summary.portrait_cover_selected = true;
           summary.post_ready = Boolean(s.douyin_caption && s.douyin_cover);
@@ -352,13 +533,13 @@ function portraitReleaseControls(c, s) {
           if (tabs.children[1].getAttribute("aria-selected") === "true") select(1);
           toast("已更新竖封面和 4:3 横封面");
         }
-        if (state.concert === c) renderSidebar(parseRoute());
+        if (state.concert?.slug === c.slug) renderSidebar(parseRoute());
         for (const option of choices.querySelectorAll(".cover-check")) {
           option.setAttribute("aria-pressed", String(option === pick));
         }
       }}, "✓");
     const button = h("button", {type:"button", class:"cover-preview", title:"放大预览",
-      onclick: () => preview(cover.url, "竖屏封面 " + (cover.pool_frame ? "整场 " : "") + fmt(cover.time))}, h("img", {src: cover.url, alt: "竖屏封面 " + (cover.pool_frame ? "整场 " : "") + fmt(cover.time), loading: "lazy"}),
+      onclick: () => preview(cover.url, "竖屏封面 " + (cover.pool_frame ? "整场 " : "") + fmt(cover.time))}, h("img", {src: coverThumbnail(cover.url), alt: "竖屏封面 " + (cover.pool_frame ? "整场 " : "") + fmt(cover.time), loading: "lazy"}),
       h("span", {class:"cover-time"}, (cover.pool_frame ? "整场 " : "") + fmt(cover.time)));
     choices.append(h("div", {class:"cover-choice"}, button, c.has_cover_pool ? null : pick));
   }
@@ -371,10 +552,12 @@ function portraitReleaseControls(c, s) {
     if (index === 0) {
       panel.replaceChildren(review.covers.length ? choices : h("p", {}, "暂无竖屏封面候选"));
     } else if (s.douyin_cover?.wide_path) {
-      const name = s.douyin_cover.wide_path.split("/").pop();
-      const url = "/media/" + [c.slug, "songs", s.name, "vertical", name].map(encodeURIComponent).join("/");
+      const path = s.douyin_cover.wide_path;
+      const offset = path.lastIndexOf("/covers/posting/");
+      const parts = offset >= 0 ? path.slice(offset + 1).split("/") : ["vertical", path.split("/").pop()];
+      const url = "/media/" + [c.slug, "songs", s.name, ...parts].map(encodeURIComponent).join("/");
       panel.replaceChildren(h("button", {class:"wide-cover-preview", type:"button", title:"放大预览",
-        onclick: () => preview(url, labels[index])}, h("img", {src:url, alt:s.title + " 4:3 横封面"})));
+        onclick: () => preview(url, labels[index])}, h("img", {src:coverThumbnail(url), loading:"lazy", alt:s.title + " 4:3 横封面"})));
     } else {
       panel.replaceChildren(h("p", {}, "暂无配套的 4:3 横封面"));
     }
@@ -386,20 +569,25 @@ function portraitReleaseControls(c, s) {
     c.has_cover_pool ? h("a", {href:"#/" + c.slug + "/~covers"}, "到整场封面池标记、分配封面") : null);
 }
 
-function coverDesignPane(c, s, bili) {
+function coverDesignPane(c, s) {
   const raw = h("div", {class:"cover-design-gallery"});
-  const ai = h("div", {class:"cover-design-gallery ai-cover-gallery"});
-  const variants = Array.from({length:3}, ()=>h("div", {class:"cover-design-variants"}));
-  const aiSource = h("aside", {class:"ai-cover-source"});
-  const aiStatus = h("p", {class:"hint"});
+  const ai = h("div", {class:"cover-table-scroll"});
+  const previews = h("div", {class:"cover-table-scroll"});
   const tabs = h("div", {class:"song-tabs", role:"tablist", "aria-label":"封面设计"});
   const panels = [
-    h("section", {}, c.has_cover_pool ? h("a", {class:"btn mini", href:"#/"+c.slug+"/~covers"}, "打开整场封面池") : null, raw),
-    h("section", {}, h("div", {class:"ai-cover-workspace"}, aiSource, h("div", {class:"ai-cover-results"}, h("h4", {}, "生成结果"), aiStatus, ai))), h("section", {}, variants[0], bili),
-    h("section", {}, h("p", {class:"hint"}, "AI 母图直接加字 · 3:4 / 4:3"), variants[2]),
-    h("section", {}, variants[1], portraitReleaseControls(c, s))
+    h("section", {}, ai, h("h4", {}, "B站+抖音封面预览"), previews),
+    h("section", {}, c.has_cover_pool ? h("a", {class:"btn mini", href:"#/"+c.slug+"/~covers"}, "打开整场封面池") : null, raw)
   ];
-  const labels = ["候选帧", "AI 生成", "B站封面", "抖音纯 AI 生成", "抖音旧模板生成"];
+  const labels = ["AI 生成", "候选帧"];
+  function table(columns, rows) {
+    return h("table", {class:"cover-review-table"},
+      h("thead", {}, h("tr", {}, ...columns.map(label=>h("th", {scope:"col"}, label)))),
+      h("tbody", {}, ...rows.map(cells=>h("tr", {}, ...cells.map(cell=>h("td", {}, cell))))));
+  }
+  function picture(url, label) {
+    return url ? h("button", {class:"cover-design-image", type:"button", onclick:()=>lightbox(url)},
+      h("img", {src:coverThumbnail(url), alt:label, loading:"lazy"}), h("span", {}, label)) : "暂无图片";
+  }
   let loaded = false;
   let loading = false;
   async function loadImages() {
@@ -413,47 +601,54 @@ function coverDesignPane(c, s, bili) {
         target.replaceChildren(...(rows.length ? rows.map(row =>
           h("button", {class:"cover-design-image", type:"button", title:"点击放大", onclick:()=>lightbox(row.url)},
             row.ratio ? h("span", {class:"cover-ratio-label"}, (row.ratio === "3x4" ? "竖版 " : "横版 ") + row.ratio.replace("x", ":") + (row.dimensions ? " · " + row.dimensions.join(" × ") : "")) : null,
-            h("img", {src:row.status === "source_offline" ? undefined : row.url, alt:isFrame ? "候选帧 "+hms(row.t) : row.file, loading:"lazy"}),
-            h("span", {}, isFrame ? (SHOT[row.kind] || "画面")+" · 原片 "+hms(row.t)+" · "+(row.origins || []).join(" / ")+(row.status === "source_offline" ? " · 原片离线" : "") : (row.label || row.file).replace(/\.[^.]+$/, ""))))
+            h("img", {src:row.status === "source_offline" ? undefined : coverThumbnail(row.url), alt:isFrame ? "候选帧 "+hms(row.t) : row.file, loading:"lazy"}),
+            h("span", {}, isFrame ? (SHOT[row.kind] || "画面")+" · 原片 "+hms(row.t)+" · "+(row.origins || []).join(" / ")+(row.status === "source_offline" ? " · 原片离线" : "") : (row.label || row.file.replace(/\.[^.]+$/, "")))))
           : [h("p", {class:"hint"}, empty)]));
       }
       gallery(raw, data.frames, "暂无原片候选帧", true);
-      gallery(ai, data.generated, "暂无 AI 生成图", false);
-      aiStatus.textContent = (data.failed_candidates || []).map(row=>row.label+"："+row.reason).join("；");
-      aiStatus.hidden = !aiStatus.textContent;
-      const references = [...new Map(data.generated.filter(row=>row.reference_url).map(row=>[row.reference_url,row])).values()];
-      if (references.length) aiSource.replaceChildren(
-        h("h4", {}, "已选参考帧"),
-        ...references.map(reference=>h("button", {class:"cover-design-image", type:"button", onclick:()=>lightbox(reference.reference_url)},
-          h("img", {src:reference.reference_url, alt:"已选原片参考帧"}),
-          h("span", {}, (references.length > 1 ? reference.label+" · " : "原片 · ")+hms(reference.source_time)))),
-        h("p", {class:"hint"}, "Seedream · 点击图片放大"));
-      else aiSource.replaceChildren(h("h4", {}, "参考帧"), h("p", {class:"hint"}, "尚无已选参考帧"));
-      ["bili", "douyin", "douyin-ai"].forEach((platform, index)=>{
-        const rows = (data.variants || []).filter(row=>row.platform === platform);
-        variants[index].replaceChildren(...[...new Set(rows.map(row=>row.master))].map(master=>{
-          const grid = h("div", {class:"cover-design-gallery"});
-          gallery(grid, rows.filter(row=>row.master === master), "", false);
-          const name = data.generated.find(row=>row.file === master)?.label || "AI 母图试排";
-          const note = data.generated.find(row=>row.file === master)?.quality_note;
-          return h("section", {class:"cover-variant-group"}, h("h4", {}, name), note ? h("p", {class:"hint"}, note) : null, grid);
-        }));
-        if (!rows.length) variants[index].append(h("p", {class:"hint"}, "暂无预览"));
-      });
-      for (const panel of variants) panel.querySelectorAll("img").forEach(img=>{img.style.aspectRatio="auto";});
+      const masters = data.generated.filter(row => row.model &&
+        !/seedream/i.test([row.model, row.label, row.provider].join(" ")));
+      const columns = ["已选参考帧", "生成结果", "任务信息（JSON）"];
+      ai.replaceChildren(masters.length ? table(columns, masters.map(row=>[
+        picture(row.original_reference_url || row.reference_url, "原片 · "+hms(row.source_time)),
+        picture(row.url, row.label || row.model),
+        h("pre", {}, JSON.stringify({
+          "模型或处理方法":row.model, "精度":row.precision, "运行版本":row.runtime,
+          "封面流程":row.review_workflow, "后处理":row.postprocess,
+          "生图耗时（秒）":row.generation_seconds, "任务耗时（秒）":row.elapsed_seconds,
+          "峰值内存（GB）":row.peak_process_gb, "开始时间":row.started_at,
+          "结束时间":row.finished_at, "时间来源":row.timing_estimated ? "按日志估算" : undefined,
+          "提示词模板":row.prompt_template || undefined, "提示词":row.prompt
+        }, null, 2))
+      ])) : h("p", {class:"hint"}, "暂无 AI 生成结果"));
+      const formats = [
+        ["bili-ai","16x9","B站 16:9"], ["bili-ai","4x3","B站 4:3"],
+        ["douyin-ai","3x4","抖音 3:4"], ["douyin-ai","4x3","抖音 4:3"]
+      ];
+      const groups = masters.map(master=>{
+        const images = data.variants.filter(row=>row.master === master.file);
+        if (!images.some(row=>formats.some(([platform, ratio])=>platform === row.platform && ratio === row.ratio))) return null;
+        return formats.map(([platform, ratio, label])=>{
+          const row = images.find(v=>v.platform === platform && v.ratio === ratio);
+          return row ? picture(row.url, [master.label || master.model, row.dimensions?.join(" × ")].filter(Boolean).join(" · ")) : label+" 暂无预览";
+        });
+      }).filter(Boolean);
+      previews.replaceChildren(groups.length ? table(formats.map(([platform, , label])=>
+        h("span", {class:"cover-platform-heading"},
+          h("img", {src:platform === "bili-ai" ? "icons/bilibili.svg" : "icons/douyin.svg", alt:"", width:22, height:22}), label)), groups) : h("p", {class:"hint"}, "暂无封面预览"));
       loaded = true;
     } catch (error) {
-      for (const panel of [raw, ai]) panel.replaceChildren(h("p", {class:"hint"}, "加载失败："+error.message),
+      for (const panel of [raw, ai, previews]) panel.replaceChildren(h("p", {class:"hint"}, "加载失败："+error.message),
         h("button", {class:"btn mini", onclick:loadImages}, "重试"));
     } finally { loading = false; }
   }
-  function select(index) {
+  function select(index, load = true) {
     panels.forEach((panel, i) => {
       panel.hidden = i !== index;
       tabs.children[i].setAttribute("aria-selected", String(i === index));
       tabs.children[i].tabIndex = i === index ? 0 : -1;
     });
-    loadImages();
+    if (load) loadImages();
   }
   labels.forEach((label, i) => {
     const id = "cover-design-"+i;
@@ -464,19 +659,28 @@ function coverDesignPane(c, s, bili) {
       onclick:()=>select(i), onkeydown:event=>{
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
-        const next = event.key === "Home" ? 0 : event.key === "End" ? 3 : (i + (event.key === "ArrowRight" ? 1 : 3)) % 4;
+        const next = event.key === "Home" ? 0 : event.key === "End" ? labels.length - 1 : (i + (event.key === "ArrowRight" ? 1 : -1) + labels.length) % labels.length;
         select(next); tabs.children[next].focus();
       }}, label));
   });
-  select(0);
-  return h("div", {class:"cover-design"}, tabs, ...panels);
+  select(0, false);
+  return {el:h("div", {class:"cover-design"}, tabs, ...panels), open:()=>select(0)};
 }
 
-async function viewSong(route) {
-  const c = state.concert;
-  const s = await api(`/api/concerts/${c.slug}/songs/${route.name}`);
+async function viewSong(route, prefetched) {
+  const c = prefetched?.concert || state.concert;
+  const s = prefetched || await api(`/api/concerts/${c.slug}/songs/${route.name}`);
   if (parseRoute().slug !== route.slug || parseRoute().name !== route.name) return;
   state.song = s;
+  let refreshing = false;
+  const refreshTimer = setInterval(async () => {
+    if (document.hidden || refreshing || state.song !== s) return;
+    refreshing = true;
+    try { await refreshPosting(s, route.slug); }
+    catch (error) { console.warn("投稿资料同步失败", error); }
+    finally { refreshing = false; }
+  }, 10000);
+  state.cleanup.push(() => clearInterval(refreshTimer));
   document.title = "演唱会";
   const artist = s.artist || c.info.artist;
   const groupedSingle = c.slug.startsWith("artist_") || c.slug === "singles" || c.slug.startsWith("singles_");
@@ -484,27 +688,22 @@ async function viewSong(route) {
   const version = /^official music video$/i.test(source || "") ? "官方 MV" : source;
   const context = [artist && !version?.toLowerCase().startsWith(artist.toLowerCase()) ? artist : null, version]
     .filter(Boolean).join(" · ");
-  const head = h("div", { class: "card-head" },
-    h("div", {class:"source-specs", "aria-label":"原片规格"},
+  const copyTitle = h("button", {type:"button", class:"btn mini posting-copy", "aria-label":"复制标题", onclick:async () => {
+    try { await navigator.clipboard.writeText([s.title, groupedSingle ? context : c.info.title].filter(Boolean).join(" ")); copyTitle.textContent = "已复制"; }
+    catch { copyTitle.textContent = "复制失败"; }
+  }}, "复制标题");
+  const sourceSpecs = h("div", {class:"source-specs", "aria-label":"原片规格"},
       ...(s.source_format?.files || [s.source_format || {}]).map(file =>
         h("div", {class:"source-file-specs"},
           ...[["filename", "原始文件"], ["resolution", "原片分辨率"], ["fps", "原片帧率"], ["audio", "原片音频格式"]].map(([key, label]) => {
             const value = (file[key] || "未知") + (key === "filename" && file.size_gb != null ? ` · ${file.size_gb} GB` : "");
             return h("span", {class:"source-spec" + (key === "filename" ? " source-filename" : ""), title:label + " " + value}, value);
-          })))),
-    h("div", { class: "card-title" }, s.title, context ? h("small", {}, context) : null),
-    h("div", { class: "spacer" }),
-    ...(s.genius_urls || []).map((u, i) => h("a", { href: u, target: "_blank", rel: "noopener" }, s.genius_urls.length > 1 ? `歌词 ${i + 1}` : "Genius 歌词")));
+          }))));
   // 布局：上面 左 视频 / 右 歌词和翻译（跟着播放滚动）；中间 成品 + B 站投稿 JSON；下面 候选封面（没有成品时 JSON + 封面一行）
   const player = await videoPane(c, s, route.at);
-  const covers = coverPane(s);
   // 歌词栏：逐句表格；视频上的字幕用诗意版（和成品一致），这首没有诗意版时用直译版
   const x = s.exp;
-  if (x && player.setAss) await player.setAss(x.ass_poetic || x.ass_literal || x.ass);
-  // 注释入口放在歌名旁边：显示这首有几条注释，点开是列表
-  const nNotes = x ? x.rows.filter((r) => r.note && !r.removed).length : 0;
-  if (nNotes) head.querySelector(".card-title").append(
-    h("a", { class: "notes-link", href: "javascript:void 0", onclick: () => { selectTab(0); watermarks.querySelector(".note-block").scrollIntoView({block:"nearest"}); } }, `注释 ${nNotes}`));
+  if (!s.browser_portrait && x && player.setAss) await player.setAss(x.ass_poetic || x.ass_literal || x.ass);
   const portrait = s.vertical_preview;
   const players = [];
   let portraitPane, livePortrait;
@@ -540,6 +739,7 @@ async function viewSong(route) {
       video.classList.add("shared-review-source");
       video.removeAttribute("aria-hidden");
       video.setAttribute("aria-label", s.title + " 横竖同步预览");
+      applyPreviewCrop(video, s.browser_portrait.preview_crop);
       video.controls = true;
     }
     if (video && !shared) {
@@ -567,6 +767,10 @@ async function viewSong(route) {
         const ass = parseAss(await (await fetch(x.ass_poetic || x.ass_literal || x.ass, {cache:"no-store"})).text());
         new SubOverlay(originalStage, video, ass, -source.start);
       }
+    }
+    if (shared) {
+      if (originalStage === video) originalStage = h("div", {class:"stage"}, video);
+      attachHorizontalWatermark(video.parentElement, video, s.watermark, source.start || 0, s.browser_portrait.preview_crop);
     }
     originalPanes.push(h("div", {class: "pane original-player"},
       originalStage || h("div", {class: "empty"}, "原片播放文件准备中，稍后刷新"),
@@ -612,27 +816,26 @@ async function viewSong(route) {
   const reviewLyrics = lyricsPane(players);
   const reviewPortrait = h("div", {class:"review-right"},
     portraitPane || h("div", {class:"empty"}, "暂无竖屏预览"), releasePane);
-  const watermarks = h("div", {class:"review-notes preview-watermarks"}, watermarkPane(s), notesPane(s));
-  const horizontalGroup = h("div", {class:"review-horizontal-group"},
-    watermarks, h("div", {class:"review-horizontal-videos"}, ...originalPanes));
-  const reviewLeft = h("div", {class:"review-left"}, horizontalGroup, reviewLyrics);
-  const reviewPosting = h("div", {class:"review-posting"}, postingPane(s));
-  const reviewLayout = originalPanes.length
-    ? h("div", {class:"top stacked-review"}, reviewLeft, reviewPortrait, reviewPosting)
-    : h("div", {class:releasePane ? "top vertical-review with-release" : "top vertical-review"},
-        portraitPane || h("div", {class:"empty"}, "暂无竖屏预览"), releasePane, reviewLyrics, reviewPosting, watermarks);
-  const sections = [["字幕预览", h("section", {}, reviewLayout, finishedVideos)]];
-  sections.push(["产物", h("section", {}, productsPlaceholder(c, s))],
-    ["封面设计", h("section", {}, coverDesignPane(c, s, covers.el))]);
+  const {el:reviewLayout, reviewNotes} = reviewColumns(
+    originalPanes.length ? originalPanes : [h("div", {class:"empty"}, "暂无横屏预览")],
+    reviewPortrait, reviewLyrics, s, players);
+  const coverDesign = coverDesignPane(c, s);
+  const sections = [["字幕", h("section", {}, reviewLayout, finishedVideos)]];
+  sections.push(["投稿", h("section", {}, submissionVersions(c, s))],
+    ["封面", h("section", {}, coverDesign.el)]);
   const panels = sections.map(([, panel]) => panel);
   const tabs = h("div", {class: "song-tabs", role: "tablist", "aria-label": "单曲审核"});
   function selectTab(index) {
-    state.activeReviewVideo = index === 0 ? players[0]?.video : null;
+    if (index === 2) coverDesign.open();
+    state.activeReviewVideo = index === 0 ? players[0]?.video : panels[index].querySelector("video");
     panels.forEach((panel, i) => {
       panel.hidden = i !== index;
       panel.setAttribute("role", "tabpanel");
       tabs.children[i].setAttribute("aria-selected", String(i === index));
-      if (panel.hidden) panel.querySelectorAll("video").forEach(video => video.pause());
+      panel.querySelectorAll("video").forEach(video => {
+        if (panel.hidden) video.pause();
+        else if (video.preload === "none") video.preload = "metadata";
+      });
     });
   }
   sections.forEach(([label], i) =>
@@ -642,34 +845,78 @@ async function viewSong(route) {
   if (route.at != null && players[0]?.video) {
     players[0].video.currentTime = Math.max(0, players[0].offset + route.at + players[0].delay());
   }
-  const headerTools = h("div", {class:"review-header-tools"}, tabs, head.querySelector(".source-specs"));
-  headerTools.append(...head.childNodes);
-  head.append(headerTools);
-  const card = h("div", {class: "card"}, head, ...panels);
+  const title = h("div", {class:"card-title", title:[s.title, context].filter(Boolean).join(" · ")},
+    s.title, context ? h("small", {}, context) : null);
+  const head = h("div", {class:"card-head review-header"},
+    h("div", {class:"review-header-tools"}, tabs, title, copyTitle), sourceSpecs);
+  if (s.content_review?.hold_reason) {
+    head.append(h("small", {class:"source-difference"}, s.content_review.hold_reason));
+  }
+  for (const finding of s.content_review?.findings || []) {
+    const start = Math.max(0, finding.start - (s.slice?.[0] || 0));
+    const end = Math.max(start, finding.end - (s.slice?.[0] || 0));
+    head.append(h("button", {type:"button", class:"note-jump", onclick:()=>{
+      const p = players.find(p=>p.video === state.activeReviewVideo) || players[0];
+      if (!p?.video) return;
+      p.video.currentTime = Math.max(0, start - 2 + p.offset + p.delay());
+      p.video.play().catch(error=>{ if (error.name !== "AbortError") toast(error.message, false); });
+    }}, h("strong", {}, `待核 ${fmt(start)}–${fmt(end)}`), h("span", {}, finding.reason)));
+  }
+  const card = h("div", {class: "card song-review-card"}, head, ...panels);
   if (parseRoute().slug !== route.slug || parseRoute().name !== route.name) return;
   $("#view").replaceChildren(card);
-  if (originalPanes.length) {
-    const observer = new ResizeObserver(() => {
-      const height = reviewPortrait.getBoundingClientRect().height;
-      if (height > 0) {
-        reviewLeft.style.height = height + "px";
-        reviewPosting.style.maxHeight = height + "px";
-        watermarks.style.maxHeight = originalPanes[0].getBoundingClientRect().height + "px";
-      }
-    });
-    observer.observe(reviewPortrait);
-    state.cleanup.push(() => observer.disconnect());
-  }
 
 }
 
-function notesPane(song) {
-  const notes = (song.exp?.rows || []).filter(row => row.note && !row.removed && !row.watermark);
+function notesPane(song, players) {
+  const notes = (song.exp?.rows || []).filter(row => row.note && !row.removed && !row.watermark)
+    .sort((a, b) => a.start - b.start);
+  function entry(row) {
+    const available = players.filter(p => p.video && row.start >= (p.start ?? 0) && row.start < (p.end ?? Infinity));
+    const play = () => {
+      const p = available.find(p => p.video === state.activeReviewVideo) || available[0];
+      const at = Math.max(p.start ?? 0, row.start - 2);
+      p.video.currentTime = Math.max(0, at + p.offset + p.delay());
+      p.video.play().catch(error => { if (error.name !== "AbortError") toast(error.message, false); });
+    };
+    return h("button", {type:"button", class:"note-jump", disabled:!available.length,
+      title:"从注释前 2 秒播放", onclick:play},
+      h("strong", {}, fmt(row.start) + " · " + row.text), h("span", {}, row.note));
+  }
   return h("section", {class:"post-info review-notes notes-only"},
-    h("section", {class:"note-block"}, h("h3", {}, "备注"),
-      song.notes ? h("p", {}, song.notes) : null,
-      ...notes.map(row => h("div", {}, h("strong", {}, `${fmt(row.start)} · ${row.text}`), h("p", {}, row.note))),
+    h("section", {class:"note-block"}, h("h3", {}, notes.length ? `备注（${notes.length}）` : "备注"),
+      song.notes ? h("p", {}, song.notes) : null, ...notes.map(entry),
       !song.notes && !notes.length ? h("p", {}, "暂无备注") : null));
+}
+
+function attachHorizontalWatermark(picture, video, plan, offset, crop) {
+  if (!plan?.items?.length) return;
+  const mark = h("img", {src:"adele-logo.png", class:"preview-wm", alt:""});
+  picture.append(mark);
+  const box = crop || {x:0, y:0, w:1, h:1};
+  let raf;
+  function draw() {
+    cancelAnimationFrame(raf);
+    const t = video.currentTime + offset;
+    const item = plan.items.find(m => t >= m.t && t < m.t + m.dur);
+    if (item && video.videoHeight) {
+      const ar = video.videoWidth * box.w / (video.videoHeight * box.h);
+      const w = Math.min(video.clientWidth, video.clientHeight * ar), height = w / ar;
+      const alpha = item.fade ? Math.min(1, (t-item.t)/item.fade, (item.t+item.dur-t)/item.fade) : 1;
+      Object.assign(mark.style, {left:((video.clientWidth-w)/2 + w*(item.x-box.x)/box.w)+"px",
+        top:((video.clientHeight-height)/2 + height*(item.y-box.y)/box.h)+"px",
+        width:(w*plan.width/box.w)+"px", opacity:alpha*plan.opacity});
+    } else mark.style.opacity = 0;
+    if (!video.paused && !video.ended) raf = requestAnimationFrame(draw);
+  }
+  const events = ["play", "pause", "seeked", "timeupdate", "loadedmetadata"];
+  events.forEach(event => video.addEventListener(event, draw));
+  const resize = new ResizeObserver(draw);
+  resize.observe(video);
+  state.cleanup.push(() => {
+    resize.disconnect(); cancelAnimationFrame(raf);
+    events.forEach(event => video.removeEventListener(event, draw));
+  });
 }
 
 function watermarkPane(song) {
@@ -738,13 +985,15 @@ function coverPane(s) {
           if (st.saving) return;
           st.saving = true;
           try {
-            await api(`/api/concerts/${parseRoute().slug}/songs/${s.name}/review`, { cover: x.id });
+            const slug = parseRoute().slug;
+            await api(`/api/concerts/${slug}/songs/${s.name}/review`, { cover: x.id });
             st.chosen = x.id; s.cover_selected = true; draw();
+            await refreshPosting(s, slug);
           } catch (err) { toast(`封面保存失败：${err.message || err}`, false); }
           finally { st.saving = false; }
         },
         ondblclick: () => lightbox(src),
-      }, h("img", { src, loading: "lazy" }),
+      }, h("img", { src: coverThumbnail(src), loading: "lazy" }),
       top ? h("span", { class: "rk" }, `#${x.rank}`) : null,
       x.t != null ? h("span", { class: "ct" }, `${SHOT[x.id.split("_")[0]] || ""} ${hms(x.t)}`.trim()) : null,
       x.id === st.chosen ? h("span", { class: "pick" }, "已选") : null,
@@ -759,8 +1008,10 @@ function coverPane(s) {
           if (b.classList.contains("busy")) return;
           b.classList.add("busy");
           try {
-            const r = await api(`/api/concerts/${parseRoute().slug}/songs/${s.name}/cover_download`, { id: x.id });
+            const slug = parseRoute().slug;
+            const r = await api(`/api/concerts/${slug}/songs/${s.name}/cover_download`, { id: x.id });
             st.chosen = x.id; draw();
+            await refreshPosting(s, slug);
             toast(`已保存：${r.saved.join("、")}`);
           } catch (err) {
             b.classList.remove("busy");
@@ -805,30 +1056,11 @@ async function videoPane(c, s, at) {
   const edges = { start: s.start, end: s.end };
   const video = h("video", { src: s.preview, controls: true, preload: "none", playsinline: true,
     controlslist: "nofullscreen", disablepictureinpicture: true });
+  applyPreviewCrop(video, s.browser_portrait?.preview_crop);
   // 左上角（logo_corner = right 时右上角）叠朝阳 Adele 的 logo（只是预览：和成品 render.py 一样的比例和位置——宽度约为画面的 10.25%、离画面内容左上角 15/3840；
   // 宽银幕片源上下有黑边，放在内容区域 s.box 里，不放在黑边上；不改视频文件，只是一张图片叠在播放器上）
   const stage = h("div", {class:"stage"}, video);
-  // 歌曲中间随机出现的半透明水印（预览）：按 watermark.json 的时间、位置淡入淡出
-  const wm = s.watermark && s.watermark.items && s.watermark.items.length ? s.watermark : null;
-  if (wm) {
-    const wmImg = h("img", { src: "adele-logo.png", class: "preview-wm", alt: "" });
-    stage.append(wmImg);
-    const frame = () => {
-      const t = video.currentTime - subOffset;   // 歌曲内时间
-      const it = wm.items.find((x) => t >= x.t && t < x.t + x.dur);
-      if (!it) { wmImg.style.opacity = 0; return; }
-      const a = Math.min(1, (t - it.t) / it.fade, (it.t + it.dur - t) / it.fade);
-      const W = video.clientWidth, H = video.clientHeight;
-      const ar = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
-      const cw = Math.min(W, H * ar), ch = cw / ar;
-      Object.assign(wmImg.style, { left: `${(W - cw) / 2 + cw * it.x}px`, top: `${(H - ch) / 2 + ch * it.y}px`,
-        width: `${cw * wm.width}px`, opacity: wm.opacity * Math.max(0, a) });
-    };
-    const loop = () => { frame(); if (!video.paused && stage.isConnected) requestAnimationFrame(loop); };
-    video.addEventListener("play", loop);
-    video.addEventListener("seeked", frame);
-    video.addEventListener("timeupdate", frame);
-  }
+  attachHorizontalWatermark(stage, video, s.watermark, -subOffset, s.browser_portrait?.preview_crop);
   video.addEventListener("loadedmetadata", () => seekAbs(at != null ? (s.slice ? s.slice[0] : s.start) + at : edges.start), { once: true });
   video.addEventListener("dblclick", () => toggleFullscreen(stage));
   state.video = video;
@@ -902,9 +1134,7 @@ async function videoPane(c, s, at) {
     addPeer(peer) { players.push(peer); solo(peer); }, delay: () => BAKED_LEAD - lead };
 }
 
-// 逐句表格；每行时间怎么定的（几个来源投票）在「判定」的鼠标悬停说明里
-const VERDICT = { ok: ["✓", "ok"], warn: ["黄", "warn"], bad: ["红", "bad"], miss: ["漏", "bad"], title: ["", ""],
-  unconfirmed: ["未确认", "bad"], patch: ["补", "warn"], seq: ["顺序", "warn"], calib: ["校", "ok"], live: ["改词", "warn"], wm: ["水印", "wm"], crowd: ["合唱", "ok"], crowdseg: ["检测", "crowdseg"] };
+// 逐句字幕与 Genius 原句对照
 // 语言用国旗显示（鼠标停上去看语言名）
 const LANG = { en: ["🇬🇧", "英语"], es: ["🇪🇸", "西班牙语"], it: ["🇮🇹", "意大利语"], pt: ["🇵🇹", "葡萄牙语"], fr: ["🇫🇷", "法语"],
   ja: ["🇯🇵", "日语"], zh: ["🇨🇳", "中文"], ko: ["🇰🇷", "韩语"] };
@@ -963,16 +1193,13 @@ function expTable(x, players) {
         ...(ls.length ? ls.map((l) => h("div", {}, h("span", { class: "seg-t" }, fmtMs(Math.round((l.start + (offset || 0)) * 1000))), l.text))
           : [h("div", { class: "none" }, "（没有）")]))) : [])),
   ...(hasZh3 ? [h("td", { class: "zh zh3" }, r.zh3 || "")] : []),
-  hasZh2 ? zh2Cell(r) : h("td", { class: "zh" }, r.zh || ""),
-  h("td", { class: `vd ${VERDICT[r.verdict] ? VERDICT[r.verdict][1] : ""}`, title: r.strategy },
-    (VERDICT[r.verdict] || [""])[0])));
+  hasZh2 ? zh2Cell(r) : h("td", { class: "zh" }, r.zh || "")));
   const wrap = h("div", { class: "table-wrap" }, h("table", { class: "lines-table exp-table" },
     h("thead", {}, h("tr", {}, h("th", {title:"时间 / 语言 / 唱法"}, "时间"),
       h("th", { class: "gcol" }, "Genius 原句"), h("th", {}, M.asr),
       h("th", {}, "校准字幕"),
       ...(hasZh3 ? [h("th", { title: `诗意版：${x.zh3_model || ""}` }, "诗意版")] : []),
-      h("th", { title: hasZh2 ? `翻译：${x.zh2_model || ""}` : "" }, hasZh3 ? "直译版" : "中文"),
-      h("th", {}, "判定"))),
+      h("th", { title: hasZh2 ? `翻译：${x.zh2_model || ""}` : "" }, hasZh3 ? "直译版" : "中文"))),
     h("tbody", {}, ...rows)));
   let last = -1;
   function highlight(player) {
@@ -999,33 +1226,163 @@ function expTable(x, players) {
     player.video.addEventListener("focus", () => activate(player));
     player.video.addEventListener("timeupdate", () => highlight(player));
   }
-  const n = (v) => data.filter((r) => r.verdict === v).length;
-  const p = x.profile;
-  const bits = [`${data.filter((r) => !r.removed && r.verdict !== "title" && !r.watermark && !r.crowdseg).length} 行`,
-    data.filter((r) => r.crowdseg && r.text.includes("：观众合唱")).length && `观众合唱 ${data.filter((r) => r.crowdseg && r.text.includes("：观众合唱")).length} 段`,
-    data.filter((r) => r.watermark).length && `水印 ${data.filter((r) => r.watermark).length} 次`,
-    p ? `语言 ${(p.langs || [p.main]).map(flag).join(" ")}${p.mismatch ? `（识别出来是 ${flag(p.heard_main)}）` : ""}` : "",
-    data.filter((r) => r.anchor).length && `锚点 ${data.filter((r) => r.anchor).length}`,
-    n("calib") && `校 ${n("calib")}`, n("seq") && `顺序 ${n("seq")}`, n("live") && `现场改词 ${n("live")}`,
-    n("warn") && `黄 ${n("warn")}`, n("bad") && `红 ${n("bad")}`, n("patch") && `补 ${n("patch")}`,
-    data.filter((r) => r.speech).length && `讲话 ${data.filter((r) => r.speech).length}`,
-    data.filter((r) => r.style === "rap").length && `说唱 ${data.filter((r) => r.style === "rap").length}`,
-    data.filter((r) => r.style === "crowd").length && `观众合唱? ${data.filter((r) => r.style === "crowd").length}`,
-    n("miss") && `漏 ${n("miss")}`, n("unconfirmed") && `未确认 ${n("unconfirmed")}`].filter(Boolean);
-  let showG = false;
-  try { showG = localStorage.getItem("showGenius") === "1"; } catch (e) { /* 无痕模式 */ }
-  wrap.classList.toggle("hide-genius", !showG);
-  const gBtn = h("button", { class: "btn mini", title: "展开 / 收起 Genius 原句这一列", onclick: (e) => {
-    e.preventDefault(); e.stopPropagation();
-    showG = !showG;
-    try { localStorage.setItem("showGenius", showG ? "1" : "0"); } catch (err) { /* 无痕模式 */ }
-    wrap.classList.toggle("hide-genius", !showG);
-    gBtn.textContent = showG ? "收起 Genius 原句" : "展开 Genius 原句";
-  } }, showG ? "收起 Genius 原句" : "展开 Genius 原句");
-  return h("details", { class: "lines", open: true }, h("summary", {}, bits.join(" · "), " ", gBtn), wrap);
+  return h("div", { class: "lines" }, wrap);
 }
 
 const fmtMs = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
+
+function coverThumbnail(url) {
+  return url ? url + (url.includes("?") ? "&" : "?") + "thumb=1" : undefined;
+}
+
+async function viewAlbumCovers(route) {
+  $("#view").replaceChildren(h("p", {class:"hint"}, "正在加载合集信息和封面…"));
+  const endpoint = `/api/concerts/${route.slug}/album_covers?fresh=true`;
+  const controller = new AbortController();
+  const cacheKey = "album-covers-v3:" + route.slug;
+  let revision, loading = false, collectionDirty = false;
+  try {
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      drawAlbum(JSON.parse(cached));
+      revision = cached;
+    }
+  } catch { /* 无可用缓存时从接口读取 */ }
+  async function refresh() {
+    if (loading || collectionDirty || controller.signal.aborted || document.hidden || $("#view dialog[open]")) return;
+    loading = true;
+    try {
+      const response = await fetch(endpoint, {cache:"no-store", signal:controller.signal});
+      if (!response.ok) throw new Error(String(response.status));
+      const data = await response.json();
+      if (controller.signal.aborted || parseRoute().slug !== route.slug || parseRoute().name !== route.name) return;
+      const next = JSON.stringify(data);
+      if (next !== revision && !collectionDirty && !$("#view dialog[open]")) {
+        drawAlbum(data);
+        revision = next;
+        try { localStorage.setItem(cacheKey, next); } catch { /* 浏览器存储不可用 */ }
+      }
+    } catch (error) {
+      if (error.name !== "AbortError" && !revision) throw error;
+    } finally { loading = false; }
+  }
+  const recheck = () => refresh().catch(error => toast("封面刷新失败：" + error.message, false));
+  const clickAlbum = event => {
+    const link = event.target.closest("a");
+    if (link && link.hash === location.hash) recheck();
+  };
+  document.addEventListener("click", clickAlbum);
+  state.cleanup.push(() => {
+    controller.abort();
+    document.removeEventListener("click", clickAlbum);
+  });
+  await refresh();
+
+  function drawAlbum(data) {
+    const dialog = h("dialog", {class:"album-cover-dialog", "aria-label":"封面放大预览",
+      onclose:recheck, onclick:event => { if (event.target === dialog) dialog.close(); }});
+    function enlarge(cover) {
+      dialog.replaceChildren(h("img", {src:cover.url, alt:cover.title}),
+        h("a", {class:"btn mini", href:cover.url, download:cover.title + "-" + cover.url.split("?")[0].split("/").pop()}, "下载当前封面"),
+        h("button", {type:"button", class:"pool-frame-close", "aria-label":"关闭放大", onclick:()=>dialog.close()}, "×"));
+      dialog.showModal();
+    }
+    const info = data.collection;
+    const collection = h("section", {class:"collection-panel"});
+    if (info) {
+      const status = h("span", {class:"hint", role:"status", "aria-live":"polite"});
+      const dirty = () => { collectionDirty = true; status.textContent = "有未保存的修改"; };
+      const title = h("input", {id:"collection-title", value:info.title, required:true,
+        oninput:() => { title.value = Array.from(title.value).slice(0, 50).join(""); dirty(); updateCounts(); }});
+      const description = h("textarea", {id:"collection-description", rows:5,
+        oninput:() => { description.value = Array.from(description.value).slice(0, 500).join(""); dirty(); updateCounts(); }}, info.description);
+      const titleCount = h("small", {class:"collection-count"});
+      const descriptionCount = h("small", {class:"collection-count"});
+      function updateCounts() {
+        titleCount.textContent = `${Array.from(title.value).length}/50`;
+        descriptionCount.textContent = `${Array.from(description.value).length}/500`;
+      }
+      updateCounts();
+      const copyField = (label, input) => h("button", {type:"button", class:"btn mini posting-copy", onclick:async event => {
+        const button = event.currentTarget;
+        try { await navigator.clipboard.writeText(input.value); button.textContent = "已复制"; }
+        catch { toast("复制失败", false); }
+      }}, label);
+      let sectionsEnabled = info.sections_enabled;
+      const sectionOptions = h("fieldset", {class:"collection-sections"}, h("legend", {}, "分组（小节）"),
+        ...[[true, "开启"], [false, "关闭"]].map(([value, label]) => h("label", {},
+          h("input", {type:"radio", name:"collection-sections", value:String(value), checked:sectionsEnabled === value,
+            onchange:() => { sectionsEnabled = value; dirty(); }}), label)));
+      const preview = h("div", {class:"collection-cover-preview"});
+      const showCover = (url, path) => {
+        preview.replaceChildren(...(url ? [h("button", {type:"button", class:"album-cover-image landscape",
+          onclick:()=>enlarge({url, title:title.value + " · 合集封面"})}, h("img", {src:url, alt:title.value + " 合集封面", onerror:()=>{ status.textContent = "合集封面加载失败，请重新保存或刷新重试"; }})),
+          h("a", {class:"btn mini", href:url, download:"B站合集封面.jpg"}, "下载合集封面"),
+          h("div", {class:"collection-image-path"}, h("small", {class:"hint"}, "图片路径"),
+            h("code", {}, path || "—"), copyField("复制图片路径", {value:path || ""}))] :
+          [h("p", {class:"hint"}, "当前还没有 B站横屏封面对应的 AI 原始帧，生成后将自动使用第一张。")]));
+      };
+      showCover(info.cover_url, info.cover_path);
+      const save = h("button", {type:"submit", class:"btn primary"}, "保存合集信息并更新封面");
+      const form = h("form", {class:"collection-form", onsubmit:async event => {
+        event.preventDefault();
+        if (!title.value.trim() || Array.from(title.value).length > 50 || Array.from(description.value).length > 500) {
+          toast("请填写 50 字符以内的标题和 500 字符以内的简介", false); return;
+        }
+        save.disabled = true;
+        try {
+          const saved = await api(`/api/concerts/${route.slug}/collection`, {title:title.value,
+            description:description.value, sections_enabled:sectionsEnabled});
+          title.value = saved.title;
+          updateCounts();
+          collectionDirty = false;
+          // Keep the saved fields in cache even when returning to this page offline.
+          data.collection = saved;
+          revision = JSON.stringify(data);
+          try { localStorage.setItem(cacheKey, revision); } catch { /* 无可用存储 */ }
+          showCover(saved.cover_url, saved.cover_path);
+          status.textContent = "已保存";
+        } catch (error) { status.textContent = "保存失败：" + error.message; }
+        finally { save.disabled = false; }
+      }},
+        h("div", {class:"collection-field"}, h("label", {for:"collection-title"}, "合集标题 *"), title,
+          h("div", {class:"collection-field-meta"}, titleCount, copyField("复制标题", title))),
+        h("div", {class:"collection-field"}, h("label", {for:"collection-description"}, "合集简介"), description,
+          h("div", {class:"collection-field-meta"}, descriptionCount, copyField("复制简介", description))),
+        sectionOptions,
+        h("div", {class:"collection-actions"}, save, status));
+      collection.append(h("h3", {}, "B站合集信息"), h("div", {class:"collection-layout"}, form,
+        h("div", {}, h("h4", {}, "合集封面 · B站 16:9"), preview)));
+    }
+    const numberedCovers = data.covers.map((cover, index) => ({...cover,
+      number:Number.isInteger(cover.number) ? cover.number : index}))
+      .sort((a, b) => a.number - b.number);
+    const grid = h("div", {class:"album-cover-grid"}, ...numberedCovers.map(cover => {
+      const copy = h("button", {type:"button", class:"btn mini posting-copy album-copy-name", "aria-label":"复制名字 " + cover.title,
+        onclick:async () => {
+          try { await navigator.clipboard.writeText([cover.title, data.title].filter(Boolean).join(" ")); copy.textContent = "已复制"; }
+          catch { copy.textContent = "复制失败"; }
+        }}, "复制");
+      return h("article", {class:"album-cover-item"},
+        ...[[cover.url, "B站 16:9", "landscape"], [cover.portrait_url, "抖音 3:4", "portrait"]].map(([url, label, layout]) => {
+          const title = cover.title + " · " + label;
+          return url ? h("button", {type:"button", class:"album-cover-image " + layout, title,
+            onclick:()=>enlarge({url, title})}, h("img", {src:coverThumbnail(url), alt:title, loading:"lazy", decoding:"async"}))
+            : h("div", {class:"album-cover-missing " + layout}, "暂无" + label + "封面");
+        }),
+        h("div", {class:"album-cover-caption"},
+          h("a", {href:`#/${route.slug}/${cover.name}`, title:cover.title}, String(cover.number).padStart(2,"0") + " " + cover.title), copy));
+    }));
+    const copyConcert = h("button", {type:"button", class:"btn mini posting-copy", "aria-label":"复制演唱会名称", onclick:async () => {
+      try { await navigator.clipboard.writeText(data.title); copyConcert.textContent = "已复制"; }
+      catch { copyConcert.textContent = "复制失败"; }
+    }}, "复制演唱会名称");
+    $("#view").replaceChildren(h("section", {class:"card album-covers"},
+      h("div", {class:"card-head"}, h("strong", {}, "合集信息和全部封面信息"),
+        h("small", {}, data.title + " · 上方 B站 16:9 · 下方 抖音 3:4 · 两版齐全 " + data.covers.filter(cover=>cover.url && cover.portrait_url).length + "/" + data.covers.length), copyConcert),
+      collection, h("h3", {class:"album-all-heading"}, "全部封面信息"), grid, dialog));
+  }
+}
 
 // ---------------------------------------------------------------- 封面池（整场挑封面）
 
@@ -1075,7 +1432,7 @@ async function viewCoverPool(route) {
   }
   const card = f => h("div",{class:`cover pool-frame-card${f.marked?" on":""}`,onclick:()=>enlarge(f)},
     h("button",{type:"button",class:"pool-frame-image",title:f.why||"点击放大原片帧"},
-      h("img",{src:f.url,alt:"原片候选帧 "+hms(f.t),loading:"lazy"})),
+      h("img",{src:coverThumbnail(f.url),alt:"原片候选帧 "+hms(f.t),loading:"lazy"})),
     h("span",{class:"ct"},hms(f.t)),pickButton(f));
   const draw = () => {
     kindBar.replaceChildren(...[["all", "全部"], ["closeup", "特写"], ["half", "半身"], ["scene", "舞台"]].map(([k, l]) =>
@@ -1099,7 +1456,7 @@ async function viewCoverPool(route) {
     result.replaceChildren(...rows.filter(x => !wide || x.file_4x3).map(x => {
       const url = wide ? x.file_4x3 : x.file;
       return h("button", {class:"cover", title:x.title, onclick:() => lightbox(url)},
-        h("img", {src:url, alt:x.title, loading:"lazy"}), h("span", {class:"ct"}, x.title));
+        h("img", {src:coverThumbnail(url), alt:x.title, loading:"lazy"}), h("span", {class:"ct"}, x.title));
     }));
   };
   ["竖封面3:4", "横封面4:3"].forEach((label, i) => ratioTabs.append(h("button", {type:"button", role:"tab",
@@ -1137,12 +1494,22 @@ function parseRoute() {
   return { slug: group?.slug || slug || (state.concerts[0] || {}).slug, name: name || null, at: at ? +at : null };
 }
 
+let concertRequest = 0;
+// Confirmed loading standard: every route starts navigation independently of
+// the library index, cover data and song details. Keep cold artist routes working.
 async function refreshConcert(slug) {
+  const request = ++concertRequest;
   slug = slug || state.concert.slug;
-  const concert = await api(`/api/concerts/${slug}`);
-  if (parseRoute().slug !== slug) return;
+  const concert = await api(`/api/concerts/${slug}?navigation=true`);
+  if (parseRoute().slug !== slug || request !== concertRequest) return;
   state.concert = concert;
   renderSidebar(parseRoute());
+  // Only the status badges need the expensive per-song scan.
+  api(`/api/concerts/${slug}`).then(details => {
+    if (parseRoute().slug !== slug || request !== concertRequest) return;
+    state.concert = details;
+    renderSidebar(parseRoute());
+  }).catch(error => console.warn("曲目详细状态读取失败", error));
 }
 
 async function render() {
@@ -1151,11 +1518,45 @@ async function render() {
   if (state.video) { state.video.pause(); state.video.removeAttribute("src"); state.video.load(); state.video = null; }
   state.activeReviewVideo = null;
   const route = parseRoute();
+  const singleGroup = state.concerts.find(group => group.slug === route.slug)?.kind
+    || /^(?:artist_|singles(?:_|$)|super_bowl_halftime$)/.test(route.slug || "");
+  if (route.slug && !route.name && !singleGroup) {
+    route.name = "~album-covers";
+    history.replaceState(null, "", `#/${route.slug}/${route.name}`);
+  }
   if (route.name) $("#sidebar").classList.remove("open");
   if (!route.slug) { $("#view").replaceChildren(h("div", { class: "empty" }, "concerts/ 下还没有场次")); return; }
   try {
     const requestedHash = location.hash;
-    await refreshConcert(route.slug);
+    const needConcert = state.concert?.slug !== route.slug;
+    let navigationReady;
+    if (needConcert) {
+      state.concert = null;
+      renderSidebar(route);
+      $("#songs").textContent = "正在读取曲目…";
+      navigationReady = refreshConcert(route.slug).catch(err => {
+        if (parseRoute().slug === route.slug && !state.concert) $("#songs").textContent = "曲目加载失败：" + err.message;
+        throw err;
+      });
+      // Attach a handler immediately even while the main view is still loading.
+      navigationReady.catch(() => {});
+    }
+    if (route.name === "~album-covers") {
+      if (!needConcert) renderSidebar(route);
+      await viewAlbumCovers(route);
+      return;
+    }
+    if (route.name && route.name !== "~covers") {
+      if (!needConcert) renderSidebar(route);
+      const song = await api(`/api/concerts/${route.slug}/songs/${route.name}`);
+      if (needConcert) await navigationReady;
+      if (location.hash !== requestedHash) return;
+      await viewSong(route, song);
+
+      return;
+    }
+    if (needConcert) await navigationReady;
+    else renderSidebar(route);
     if (location.hash !== requestedHash) return;
     if (route.name === "~covers" && !state.concert.has_cover_pool) route.name = null;
     if (route.name === "~covers") await viewCoverPool(route);
@@ -1187,7 +1588,7 @@ window.addEventListener("keydown", (e) => {
   const tag = (e.target && e.target.tagName) || "";
   if (/INPUT|TEXTAREA|SELECT/.test(tag) || e.metaKey || e.ctrlKey || e.altKey) return;
   const v = state.activeReviewVideo || state.video;
-  if (!v || v.closest("[hidden]") || e.target.closest?.(".song-tabs")) return;
+  if (!v || v.closest("[hidden]") || e.target.closest?.(".song-tabs, .flow-tabs")) return;
   if (e.code === "Space" || e.key === " ") {
     e.preventDefault();
     e.stopPropagation();
@@ -1198,6 +1599,24 @@ window.addEventListener("keydown", (e) => {
 window.addEventListener("hashchange", render);
 
 (async () => {
-  try { state.concerts = await api("/api/concerts"); } catch (err) { state.concerts = []; }
-  render();
+  const indexKey = "concert-index-v2";
+  try {
+    const cached = JSON.parse(localStorage.getItem(indexKey));
+    if (Array.isArray(cached)) state.concerts = cached;
+  } catch { /* 浏览器可能禁用存储 */ }
+  const initial = parseRoute();
+  const direct = Boolean(initial.slug);
+  // Start the current view and the library independently. Slow external-disk
+  // metadata must not hold back navigation or the cached cover thumbnails.
+  if (direct) render();
+  try {
+    state.concerts = await api("/api/concerts?progress=true");
+    try { localStorage.setItem(indexKey, JSON.stringify(state.concerts)); } catch { /* 存储空间不足 */ }
+    if (!direct || !parseRoute().slug || initial.slug !== parseRoute().slug) render();
+    else renderSidebar(parseRoute());
+  } catch (err) {
+    $("#concerts").textContent = "场次列表加载失败：" + err.message;
+    if (!direct && !state.concerts.length) $("#view").replaceChildren(h("div", {class:"empty"},
+      "场次列表暂时无法读取。", h("button", {class:"btn", onclick:() => location.reload()}, "重新加载")));
+  }
 })();

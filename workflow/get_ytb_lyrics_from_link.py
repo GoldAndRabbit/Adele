@@ -201,18 +201,20 @@ def main(argv=None):
                     title, artist = args.title or title, args.artist if args.artist is not None else artist
                 if not title.strip():
                     raise ValueError("无法识别歌名，请提供 --title 和 --artist")
-                print(f"搜索：{artist} — {title}")
-                song = search_song(session, title, artist, os.environ.get("GENIUS_ACCESS_TOKEN"))
-                title = song["title"]
-                artist = song.get("primary_artist", {}).get("name", artist)
-                genius_url = validate_url(song["url"], genius=True)
+                genius_url = None
+            # Also support invoking this file directly from outside the repository.
+            if str(ROOT) not in sys.path:
+                sys.path.insert(0, str(ROOT))
+            from workflow.live.lyrics import fetch_part
+            genius_url, plain, sections, fact = fetch_part(session, title, artist, genius_url)
+            if not args.genius_url and fact:
+                artist = fact.get("primary_artist") or artist
+                title = fact.get("title") or title
             dest = output_path(args.name or f"{artist} - {title}".strip(" -"))
             if dest.exists() and not args.overwrite:
                 raise FileExistsError(f"文件已存在：{dest}；如需覆盖请添加 --overwrite")
             print(f"歌词页：{genius_url}")
-            response = session.get(genius_url, timeout=TIMEOUT)
-            response.raise_for_status()
-            lyrics = extract_lyrics(response.text, args.keep_sections)
+            lyrics = sections if args.keep_sections else plain
         dest.parent.mkdir(parents=True, exist_ok=True)
         with dest.open("w" if args.overwrite else "x", encoding="utf-8") as handle:
             handle.write(lyrics)

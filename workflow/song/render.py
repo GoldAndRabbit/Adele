@@ -128,6 +128,8 @@ def wm_image(wm, work):
 
 
 def render(d, work, out, frames=None, t_in=0.0, enc=None, log=None):
+    from workflow.content_check import require_directory
+    require_directory(d)
     render_ass(d, work)
     wm = read_json(d / "watermark.json", {}) or {}
     items = wm.get("items") or []
@@ -186,6 +188,8 @@ def song_seconds(d, span):
 def prepare(spec, reserve=0.0, wait_encode=None):
     """插帧前的所有步骤 + 插帧。返回 (d, out, 时长秒)，已有成品返回 None。
     reserve：正在编码的那首还要写多少（4K 成品，字节）；磁盘不够时先 wait_encode() 等它做完再算一次。"""
+    from workflow.content_check import require_spec
+    require_spec(spec)
     d, span, posts = song_of(spec)
     print(f"\n========== {d.name} ==========", flush=True)
     out = d / "post" / f"{d.name} 4K60FPS Sub-WaterMark.mp4"
@@ -195,7 +199,10 @@ def prepare(spec, reserve=0.0, wait_encode=None):
     ensure_subs(spec, d)
     ensure_watermark(spec, d)
     if span and not (d / "source.mp4").exists():   # 整场演唱会的歌：从整场视频切
-        (d / "source.mp4").symlink_to(Concert(spec.split(":")[1]).source)
+        concert=Concert(spec.split(":")[1])
+        from workflow.content_check import selection
+        original=selection(concert,concert.item(spec.split(":")[2]))['source']
+        (d / "source.mp4").symlink_to(original)
     seconds = song_seconds(d, span)
     need = disk_need(d, seconds)
     if shutil.disk_usage(d).free - reserve < need and wait_encode:
@@ -217,6 +224,8 @@ def prepare(spec, reserve=0.0, wait_encode=None):
 def finish(d, out, enc=DEFAULT_ENCODER):
     """编码成 4K 成品，做完删这首的帧和中间视频。"""
     import time
+    from workflow.content_check import require_directory
+    require_directory(d)
     (d / "post").mkdir(exist_ok=True)
     (d / "logs").mkdir(exist_ok=True)
     log = d / "logs" / f"render_{time.strftime('%Y%m%d-%H%M%S')}.log"

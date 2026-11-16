@@ -1,11 +1,11 @@
 {
-  "version": "dark-horse-20261106",
+  "version": "white-header-thin-subtitles-20261109",
   "english_font": "Arial Rounded MT Bold",
   "chinese_font": "PingFang SC",
   "english_size": 36,
   "chinese_size": 72,
   "subtitle_color": "#FFFFFF",
-  "subtitle_outline": 4,
+  "subtitle_outline": 2,
   "subtitle_y": 1272,
   "header": [
     [
@@ -30,7 +30,7 @@
       "event",
       600,
       44,
-      "#D99A00"
+      "#FFFFFF"
     ]
   ],
   "title_outline": 3,
@@ -38,5 +38,12 @@
   "header_outline_color": "#000000",
   "event_color": "#D99A00",
   "portrait_soft_lower_edge": true,
-  "horizontal_caption_band": true
+  "horizontal_caption_band": true,
+  "annotation": {
+    "color": "#CCFF00",
+    "portrait_size": 46,
+    "landscape_size": 58,
+    "outline_ratio": 0.05,
+    "top_inset": 3
+  }
 }

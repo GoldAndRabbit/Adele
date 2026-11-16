@@ -27,7 +27,8 @@ class SeedreamTrialTest(unittest.TestCase):
             Image.new('RGB', (64, 36)).save(image, format='PNG')
             response = Mock(ok=True, headers={}, json=lambda: {'data': [{'url': 'https://example.com/image'}]})
             download = Mock(content=image.getvalue())
-            def render(c, item, output, label):
+            def render(c, item, output, label, *, compact):
+                self.assertFalse(compact)
                 return [{'master': label + '.png'}]
             with patch.dict('os.environ', {'ARK_API_KEY': 'test-only'}), \
                  patch('workflow.seedream_cover.requests.post', return_value=response) as post, \

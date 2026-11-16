@@ -15,8 +15,10 @@ pysubs2
 openai
 pykakasi
 rapidfuzz
+regex
 pillow
 opencv-python-headless==4.11.0.86
+psutil>=7
 fastapi
 uvicorn[standard]
 pyobjc-framework-Vision==12.2.2   # ocr_subs.py：macOS 自带文字识别（从烧在画面里的字幕抄歌词）
