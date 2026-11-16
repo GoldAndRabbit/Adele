@@ -71,7 +71,7 @@
 | 正文拼接、旧字段兼容 | [post_bili.upload.description](/Users/gold/repos/adele/post_bili/upload.py) |
 | 人工简介优先，并同步两平台 | [delivery_bundle.submission_records](/Users/gold/repos/adele/workflow/delivery_bundle.py) |
 
-三部分齐全时它们是正文来源；`intro_text` 只是旧格式兼容字段。人工审稿简介 `review.json...intro` 优先。已有 `bili_upload.json` 等导出文件不能反过来锁住旧占位正文。
+三部分齐全时它们是正文来源；`intro_text` 只是旧格式兼容字段。人工审稿简介 `review.json...intro` 优先。已有 `bili_upload.json` 等导出文件不能反过来锁住旧占位正文。`templates.posting_issues` 检查实际导出的最终文案；人工修改不合规范时保留原文并标记待审，继续准备预览和封面，不把合格草稿冒认成合格投稿结果。已确认的成品制作不会重复执行这项文案检查。
 
 ## 3. 标签与抖音派生文案
 
