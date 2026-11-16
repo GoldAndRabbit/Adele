@@ -209,7 +209,8 @@ class StandardWorkflowTests(unittest.TestCase):
             with patch.object(pipeline, "ROOT", root), patch.object(pipeline, "Concert", return_value=concert), patch.object(
                     pipeline, "existing_workers", return_value={}), patch.object(pipeline, "write_collections"), patch.object(
                     pipeline, "products_ready", side_effect=lambda path, platforms: path.name in ready), patch.object(
-                    pipeline.subprocess, "run", side_effect=subprocess_run):
+                    pipeline.subprocess, "run", side_effect=subprocess_run), patch.object(
+                    pipeline, "HostPool", side_effect=lambda *args, **kwargs: HostPool(*args, cache=root / "cache", **kwargs)):
                 result = pipeline.run_batch(batch, ["delivery"], {"confirmed": True})
             self.assertEqual(result["status"], "ready")
             self.assertEqual(result["completed"], 3)
